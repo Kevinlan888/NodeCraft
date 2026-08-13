@@ -20,7 +20,7 @@ using NodeCraft;
 using NodeCraft.Pages;
 using NodeCraft.Plugins;
 
-internal static class Program
+internal static partial class Program
 {
     private static int _failures;
     private static readonly HashSet<string> DeferredCleanupDirectories
@@ -51,6 +51,8 @@ internal static class Program
 
     private static async Task<int> Main()
     {
+        RunVisualContractTests();
+
         Run("NodeCraft Flow owns its localization resources", () =>
         {
             var original = LanguageManager.Language;

@@ -13,6 +13,10 @@ namespace NodeCraft.Flow
         public static readonly FlowDataType Any = new FlowDataType("*", typeof(object));
         public static readonly FlowDataType MatchType = new FlowDataType("MATCH_TYPE", typeof(object));
         public static readonly FlowDataType Control = new FlowDataType("control", typeof(FlowControlSignal));
+        public static readonly FlowDataType Image = new FlowDataType("image", typeof(FlowImage));
+        public static readonly FlowDataType CameraCalibration = new FlowDataType(
+            "camera-calibration",
+            typeof(NodeCraft.Flow.CameraCalibration));
 
         public FlowDataType(string key, Type clrType = null)
         {
@@ -122,6 +126,16 @@ namespace NodeCraft.Flow
             if (string.Equals(typeName, Control.Key, StringComparison.OrdinalIgnoreCase))
             {
                 return Control;
+            }
+
+            if (string.Equals(typeName, Image.Key, StringComparison.OrdinalIgnoreCase))
+            {
+                return Image;
+            }
+
+            if (string.Equals(typeName, CameraCalibration.Key, StringComparison.OrdinalIgnoreCase))
+            {
+                return CameraCalibration;
             }
 
             return new FlowDataType(typeName);
