@@ -12,8 +12,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\NodeCraft.Flow\NodeCraft.Flow.csproj" Private="false" />
+    <None Include="Build\StereoCameraRuntimeFiles.txt" />
+    <None Include="Build\StereoCameraPackaging.targets" />
     <None Update="plugin.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <Import Project="Build\StereoCameraPackaging.targets" />
 </Project>
