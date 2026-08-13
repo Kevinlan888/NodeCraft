@@ -57,6 +57,32 @@ internal static partial class Program
             }
         });
 
+        await RunAsync("graph session stop during blocked start never revives or leaks", async () =>
+        {
+            var fixture = CreateBlockedStartFixture();
+            await using var session = fixture.Executor.CreateSession();
+
+            var startTask = session.StartAsync(CancellationToken.None);
+            await fixture.ExecutorInstance.StartEntered.Task;
+            var stopTask = session.StopAsync();
+            fixture.ExecutorInstance.ReleaseStart.TrySetResult(true);
+            var startCanceled = false;
+            try
+            {
+                await startTask;
+            }
+            catch (OperationCanceledException)
+            {
+                startCanceled = true;
+            }
+
+            await stopTask;
+            return startCanceled
+                && fixture.ExecutorInstance.StopCount == 1
+                && session.State == GraphExecutionSessionState.Stopped
+                && session.StopAsync().IsCompleted;
+        });
+
         await RunAsync("graph session rejects duplicate workflow node ids before creating executors", async () =>
         {
             var registry = new FlowNodeRegistry();
@@ -225,6 +251,24 @@ internal static partial class Program
         return new BlockedSourceFixture(new GraphExecutor(workflow, registry), executor);
     }
 
+    private static BlockedStartFixture CreateBlockedStartFixture()
+    {
+        var registry = new FlowNodeRegistry();
+        var executor = new BlockedStartExecutor();
+        registry.Register(new FlowNodeRegistration(
+            CreateDefinition("test.session.blocked-start"),
+            () => executor));
+
+        var workflow = new WorkflowDocument();
+        workflow.Nodes.Add(new WorkflowNode
+        {
+            Id = "blocked-start",
+            TypeKey = "test.session.blocked-start",
+        });
+
+        return new BlockedStartFixture(new GraphExecutor(workflow, registry), executor);
+    }
+
     private static LifecycleFixture CreateLifecycleFixture(
         List<string> calls,
         string failingTypeKey = null)
@@ -333,6 +377,19 @@ internal static partial class Program
         public GraphExecutor Executor { get; }
 
         public BlockedSourceExecutor ExecutorInstance { get; }
+    }
+
+    private sealed class BlockedStartFixture
+    {
+        public BlockedStartFixture(GraphExecutor executor, BlockedStartExecutor executorInstance)
+        {
+            Executor = executor;
+            ExecutorInstance = executorInstance;
+        }
+
+        public GraphExecutor Executor { get; }
+
+        public BlockedStartExecutor ExecutorInstance { get; }
     }
 
     private sealed class RecordingSessionExecutor : IFlowNodeExecutor, IFlowNodeSessionLifecycle
@@ -519,6 +576,40 @@ internal static partial class Program
         public void ReleasePrepare()
         {
             _releasePrepare.TrySetResult(true);
+        }
+    }
+
+    private sealed class BlockedStartExecutor : IFlowNodeExecutor, IFlowNodeSessionLifecycle
+    {
+        public TaskCompletionSource<bool> StartEntered { get; }
+            = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> ReleaseStart { get; }
+            = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int StopCount { get; private set; }
+
+        public async Task StartSessionAsync(FlowNodeSessionContext context, CancellationToken cancellationToken)
+        {
+            StartEntered.TrySetResult(true);
+            await ReleaseStart.Task.ConfigureAwait(false);
+        }
+
+        public Task StopSessionAsync(FlowNodeSessionContext context, CancellationToken cancellationToken)
+        {
+            StopCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyDictionary<string, object>> ExecuteAsync(
+            FlowExecutionContext context,
+            WorkflowNode node,
+            FlowNodeDefinition definition,
+            IReadOnlyDictionary<string, object> inputs,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<IReadOnlyDictionary<string, object>>(
+                new Dictionary<string, object> { ["output"] = 1 });
         }
     }
 }

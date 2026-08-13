@@ -19,6 +19,7 @@ namespace NodeCraft.Flow
         private readonly SemaphoreSlim _iterationGate = new SemaphoreSlim(1, 1);
         private readonly List<StartedLifecycle> _startedLifecycles = new List<StartedLifecycle>();
         private GraphExecutionSessionState _state = GraphExecutionSessionState.Created;
+        private CancellationTokenSource _startupCancellation;
         private Task _startTask;
         private Task _stopTask;
 
@@ -88,7 +89,10 @@ namespace NodeCraft.Flow
                 {
                     case GraphExecutionSessionState.Created:
                         _state = GraphExecutionSessionState.Starting;
-                        _startTask = StartCoreAsync(cancellationToken);
+                        _startupCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                            cancellationToken,
+                            _stopCancellation.Token);
+                        _startTask = StartCoreAsync(_startupCancellation.Token, _startupCancellation);
                         return _startTask;
                     case GraphExecutionSessionState.Starting:
                         return _startTask ?? Task.CompletedTask;
@@ -118,7 +122,7 @@ namespace NodeCraft.Flow
 
                 _state = GraphExecutionSessionState.Stopping;
                 _stopCancellation.Cancel();
-                _stopTask = StopCoreAsync();
+                _stopTask = StopCoreAsync(_startTask);
                 return _stopTask;
             }
         }
@@ -141,7 +145,9 @@ namespace NodeCraft.Flow
 
         internal CancellationToken StopToken => _stopCancellation.Token;
 
-        private async Task StartCoreAsync(CancellationToken cancellationToken)
+        private async Task StartCoreAsync(
+            CancellationToken cancellationToken,
+            CancellationTokenSource startupCancellation)
         {
             try
             {
@@ -154,40 +160,103 @@ namespace NodeCraft.Flow
                         continue;
                     }
 
-                    await lifecycle.StartSessionAsync(_sessionContexts[node.Id], cancellationToken)
+                    var context = _sessionContexts[node.Id];
+                    await lifecycle.StartSessionAsync(context, cancellationToken)
                         .ConfigureAwait(false);
+
+                    var cleanupStartedLifecycle = false;
                     lock (_stateGate)
                     {
-                        _startedLifecycles.Add(new StartedLifecycle(lifecycle, _sessionContexts[node.Id]));
+                        if (_state == GraphExecutionSessionState.Starting
+                            && !cancellationToken.IsCancellationRequested)
+                        {
+                            _startedLifecycles.Add(new StartedLifecycle(lifecycle, context));
+                        }
+                        else
+                        {
+                            cleanupStartedLifecycle = true;
+                        }
+                    }
+
+                    if (cleanupStartedLifecycle)
+                    {
+                        await lifecycle.StopSessionAsync(context, CancellationToken.None)
+                            .ConfigureAwait(false);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        throw new OperationCanceledException(cancellationToken);
                     }
                 }
 
                 lock (_stateGate)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (_state != GraphExecutionSessionState.Starting)
+                    {
+                        throw new OperationCanceledException(cancellationToken);
+                    }
+
                     _state = GraphExecutionSessionState.Running;
                 }
             }
             catch (Exception)
             {
+                var stopInProgress = false;
                 lock (_stateGate)
                 {
-                    _state = GraphExecutionSessionState.Faulted;
+                    stopInProgress = _state == GraphExecutionSessionState.Stopping
+                        || _state == GraphExecutionSessionState.Stopped;
+                    if (!stopInProgress)
+                    {
+                        _state = GraphExecutionSessionState.Faulted;
+                    }
                 }
 
-                try
+                if (!stopInProgress)
                 {
-                    await StopCoreAsync().ConfigureAwait(false);
-                }
-                catch (Exception cleanupException)
-                {
-                    _logger.LogError(cleanupException, "Graph session cleanup failed after start failure.");
+                    try
+                    {
+                        await StopStartedLifecyclesCoreAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        _logger.LogError(cleanupException, "Graph session cleanup failed after start failure.");
+                    }
                 }
 
                 throw;
             }
+            finally
+            {
+                lock (_stateGate)
+                {
+                    if (ReferenceEquals(_startupCancellation, startupCancellation))
+                    {
+                        _startupCancellation = null;
+                    }
+                }
+
+                startupCancellation.Dispose();
+            }
         }
 
-        private async Task StopCoreAsync()
+        private async Task StopCoreAsync(Task startTask)
+        {
+            if (startTask != null)
+            {
+                try
+                {
+                    await startTask.ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    _logger.LogDebug(exception, "Graph session startup ended before stop cleanup.");
+                }
+            }
+
+            await StopStartedLifecyclesCoreAsync().ConfigureAwait(false);
+        }
+
+        private async Task StopStartedLifecyclesCoreAsync()
         {
             await _iterationGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             List<StartedLifecycle> started;
