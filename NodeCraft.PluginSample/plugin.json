@@ -1,0 +1,7 @@
+{
+  "id": "company.sample.nodes",
+  "entryAssembly": "NodeCraft.PluginSample.dll",
+  "entryType": "NodeCraft.PluginSample.Plugin.SamplePlugin",
+  "apiVersion": "1.0",
+  "privateLibraryPath": "lib"
+}

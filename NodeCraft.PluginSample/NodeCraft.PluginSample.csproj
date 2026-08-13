@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <LangVersion>9.0</LangVersion>
+    <RootNamespace>NodeCraft.PluginSample</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NodeCraft.Flow\NodeCraft.Flow.csproj" Private="false" />
+    <ProjectReference Include="PrivateDependency\PluginPrivateDependency.csproj" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="PrivateDependency\**\*.cs" />
+    <EmbeddedResource Remove="PrivateDependency\**\*" />
+    <None Remove="PrivateDependency\**\*" />
+    <Page Remove="PrivateDependency\**\*.xaml" />
+    <Page Remove="Views\SampleValueEditor.xaml" />
+    <EmbeddedResource Include="Views\SampleValueEditor.xaml" />
+    <None Update="plugin.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <Target Name="StageSamplePluginPackage" AfterTargets="Build">
+    <MakeDir Directories="$(TargetDir)lib" />
+    <Copy
+      SourceFiles="$(MSBuildThisFileDirectory)PrivateDependency\bin\$(Configuration)\$(TargetFramework)\NodeCraft.PluginSample.PrivateDependency.dll"
+      DestinationFolder="$(TargetDir)lib"
+      SkipUnchangedFiles="true" />
+    <Delete Files="$(TargetDir)NodeCraft.PluginSample.PrivateDependency.dll;$(TargetDir)NodeCraft.Flow.dll;$(TargetDir)CommonControls.WPF.dll;$(TargetDir)lib\NodeCraft.Flow.dll;$(TargetDir)lib\CommonControls.WPF.dll" />
+  </Target>
+</Project>

@@ -1,0 +1,52 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NodeCraft", "NodeCraft\NodeCraft.csproj", "{9DFAC924-8006-48A3-B113-F59DBA7688F6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NodeCraft.Flow", "NodeCraft.Flow\NodeCraft.Flow.csproj", "{3A61CA7B-5853-4287-B27F-0EEA883F1B28}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NodeCraft.PluginSample", "NodeCraft.PluginSample\NodeCraft.PluginSample.csproj", "{D086B852-CB51-4811-A2AB-4F0323689758}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NodeCraft.Cli", "NodeCraft.Cli\NodeCraft.Cli.csproj", "{D3FF4EFA-120D-46FE-85E9-49B277E5284D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NodeCraft.Cli.Tests", "NodeCraft.Cli.Tests\NodeCraft.Cli.Tests.csproj", "{6D937E71-6AA6-4E27-A4A8-F41A7CDA888E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NodeCraft.Tests", "NodeCraft.Tests\NodeCraft.Tests.csproj", "{702F9D72-08FC-4EC0-BD7E-5AB29A0EEE28}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9DFAC924-8006-48A3-B113-F59DBA7688F6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9DFAC924-8006-48A3-B113-F59DBA7688F6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9DFAC924-8006-48A3-B113-F59DBA7688F6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9DFAC924-8006-48A3-B113-F59DBA7688F6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3A61CA7B-5853-4287-B27F-0EEA883F1B28}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3A61CA7B-5853-4287-B27F-0EEA883F1B28}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3A61CA7B-5853-4287-B27F-0EEA883F1B28}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3A61CA7B-5853-4287-B27F-0EEA883F1B28}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D086B852-CB51-4811-A2AB-4F0323689758}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D086B852-CB51-4811-A2AB-4F0323689758}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D086B852-CB51-4811-A2AB-4F0323689758}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D086B852-CB51-4811-A2AB-4F0323689758}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D3FF4EFA-120D-46FE-85E9-49B277E5284D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D3FF4EFA-120D-46FE-85E9-49B277E5284D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D3FF4EFA-120D-46FE-85E9-49B277E5284D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D3FF4EFA-120D-46FE-85E9-49B277E5284D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6D937E71-6AA6-4E27-A4A8-F41A7CDA888E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6D937E71-6AA6-4E27-A4A8-F41A7CDA888E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6D937E71-6AA6-4E27-A4A8-F41A7CDA888E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6D937E71-6AA6-4E27-A4A8-F41A7CDA888E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{702F9D72-08FC-4EC0-BD7E-5AB29A0EEE28}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{702F9D72-08FC-4EC0-BD7E-5AB29A0EEE28}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{702F9D72-08FC-4EC0-BD7E-5AB29A0EEE28}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{702F9D72-08FC-4EC0-BD7E-5AB29A0EEE28}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,107 @@
+﻿<UserControl x:Class="NodeCraft.Pages.FlowPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+      xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+      xmlns:wpf="clr-namespace:NodeCraft.Flow;assembly=NodeCraft.Flow"
+      mc:Ignorable="d"
+      d:Background="#fff"
+      d:DesignHeight="720"
+      d:DesignWidth="1280"
+
+      Loaded="FlowPage_Loaded">
+
+    <Grid Margin="20">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="320" />
+            <ColumnDefinition Width="16" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+
+        <ScrollViewer>
+            <StackPanel>
+                <Border Padding="18"
+                        CornerRadius="10"
+                        Background="{DynamicResource colorSubtleBackground}">
+                    <StackPanel>
+                        <TextBlock Text="NodeCraft Flow Editor"
+                                FontSize="24"
+                                FontWeight="SemiBold" />
+                        <TextBlock Margin="0,8,0,0"
+                                Foreground="{DynamicResource colorNeutralForeground3}"
+                                TextWrapping="Wrap"
+                                Text="在画布中组织、连接并执行节点流程，支持拖拽创建、移动、连线、多选和调整大小。" />
+                        <TextBlock x:Name="TxtCurrentFilePath"
+                                Margin="0,10,0,0"
+                                Foreground="{DynamicResource colorNeutralForeground3}"
+                                TextWrapping="Wrap"
+                                Text="当前文件: 未保存" />
+                    </StackPanel>
+                </Border>
+
+                <Border Margin="0,16,0,0">
+                    <wpf:FlowNodePalette x:Name="NodePalette" />
+                </Border>
+
+                <Border Margin="0,16,0,0"
+                        Padding="16"
+                        CornerRadius="10"
+                        Background="{DynamicResource colorNeutralBackground1}"
+                        BorderBrush="{DynamicResource colorNeutralStroke1}"
+                        BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="使用说明"
+                                FontSize="18"
+                                FontWeight="SemiBold" />
+                        <TextBlock Margin="0,10,0,0"
+                                Foreground="{DynamicResource colorNeutralForeground3}"
+                                TextWrapping="Wrap"
+                                Text="1. 将左侧节点拖到画布中的目标位置以创建节点。" />
+                        <TextBlock Margin="0,6,0,0"
+                                Foreground="{DynamicResource colorNeutralForeground3}"
+                                TextWrapping="Wrap"
+                                Text="2. 从节点边缘拖到另一节点边缘，可建立字符串端口连接。" />
+                        <TextBlock Margin="0,6,0,0"
+                                Foreground="{DynamicResource colorNeutralForeground3}"
+                                TextWrapping="Wrap"
+                                Text="3. 在空白处拖动可以框选，多选后可一起移动。" />
+                        <TextBlock Margin="0,6,0,0"
+                                Foreground="{DynamicResource colorNeutralForeground3}"
+                                TextWrapping="Wrap"
+                                Text="4. 使用鼠标滚轮缩放画布，按住鼠标中键拖动视图。" />
+                    </StackPanel>
+                </Border>
+
+                <Border Margin="0,16,0,0"
+                        Padding="16"
+                        CornerRadius="10"
+                        Background="{DynamicResource colorNeutralBackground1}"
+                        BorderBrush="{DynamicResource colorNeutralStroke1}"
+                        BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="执行结果"
+                                FontSize="18"
+                                FontWeight="SemiBold" />
+                        <TextBox Name="TxtExecutionResult"
+                                Margin="0,12,0,0"
+                                MinHeight="180"
+                                AcceptsReturn="True"
+                                IsReadOnly="True"
+                                TextWrapping="Wrap"
+                                VerticalScrollBarVisibility="Auto"
+                                HorizontalScrollBarVisibility="Auto" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border x:Name="CanvasHost"
+                Grid.Column="2"
+                Padding="12"
+                CornerRadius="10"
+                Background="{DynamicResource colorNeutralBackground1}"
+                BorderBrush="{DynamicResource colorNeutralStroke1}"
+                BorderThickness="1" />
+    </Grid>
+</UserControl>

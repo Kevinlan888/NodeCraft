@@ -1,0 +1,14 @@
+<Application x:Class="NodeCraft.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:wpf="clr-namespace:CommonControls.WPF;assembly=CommonControls.WPF">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <wpf:CommonControlTheme Theme="Light" />
+                <ResourceDictionary Source="pack://application:,,,/CommonControls.WPF;component/Themes/FluentDesign.Defaults.xaml" />
+                <ResourceDictionary Source="/NodeCraft.Flow;component/Themes/Flow.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
