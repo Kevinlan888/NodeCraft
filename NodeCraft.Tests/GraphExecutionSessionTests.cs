@@ -501,7 +501,8 @@ internal static partial class Program
         public async Task PrepareIterationAsync(FlowNodeSessionContext context, CancellationToken cancellationToken)
         {
             PrepareEntered.TrySetResult(true);
-            await _releasePrepare.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await _releasePrepare.Task.ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         public Task<IReadOnlyDictionary<string, object>> ExecuteAsync(

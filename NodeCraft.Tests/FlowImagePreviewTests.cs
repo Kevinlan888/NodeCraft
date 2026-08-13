@@ -55,9 +55,9 @@ internal static partial class Program
                     1, 1, 3, FlowPixelFormat.Rgb24, FlowImageKind.Color, new byte[] { 1, 2, 3 }));
                 var mono = FlowImageBitmapConverter.Convert(CreatePreviewImage(
                     1, 1, 1, FlowPixelFormat.Mono8, FlowImageKind.Color, new byte[] { 4 }));
-                return bgr.Bitmap.Format == PixelFormats.Bgr24
-                    && rgb.Bitmap.Format == PixelFormats.Rgb24
-                    && mono.Bitmap.Format == PixelFormats.Gray8
+                return bgr.Bitmap.Format.Equals(PixelFormats.Bgr24)
+                    && rgb.Bitmap.Format.Equals(PixelFormats.Rgb24)
+                    && mono.Bitmap.Format.Equals(PixelFormats.Gray8)
                     && bgr.Bitmap.IsFrozen
                     && rgb.Bitmap.IsFrozen
                     && mono.Bitmap.IsFrozen;

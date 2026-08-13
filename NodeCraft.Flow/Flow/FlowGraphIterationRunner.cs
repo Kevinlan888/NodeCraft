@@ -18,6 +18,8 @@ namespace NodeCraft.Flow
             ILogger logger,
             CancellationToken cancellationToken)
         {
+            logger.LogInformation("Graph execution started ({NodeCount} nodes).", sortedNodes.Count);
+
             foreach (var node in sortedNodes)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -72,6 +74,7 @@ namespace NodeCraft.Flow
             }
 
             logger.LogInformation("Graph iteration finished.");
+            logger.LogInformation("Graph execution finished.");
         }
 
         private static Dictionary<string, object> ResolveInputs(

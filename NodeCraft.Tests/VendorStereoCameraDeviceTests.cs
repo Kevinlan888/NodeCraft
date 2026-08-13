@@ -25,7 +25,7 @@ internal static partial class Program
         {
             return VendorStereoCameraImageHelpers.DeriveStride(4, 2, FlowPixelFormat.Bgr24, 28) == 14
                 && Throws<InvalidDataException>(() =>
-                    VendorStereoCameraImageHelpers.DeriveStride(4, 2, FlowPixelFormat.Bgr24, 26))
+                    VendorStereoCameraImageHelpers.DeriveStride(4, 2, FlowPixelFormat.Bgr24, 22))
                 && Throws<InvalidDataException>(() =>
                     VendorStereoCameraImageHelpers.DeriveStride(4, 2, FlowPixelFormat.Bgr24, 8));
         });
