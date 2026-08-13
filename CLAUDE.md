@@ -66,7 +66,7 @@ NodeCraft.sln
 
 ## 依赖
 
-- `CommonControls.WPF` 通过 NuGet `PackageReference` 引用（版本 `1.0.0`），本地包位于 `Packages/`。更新方式：在 CommonControls.WPF 仓库 `dotnet pack`，将新 nupkg 覆盖到 `Packages/` 并同步 `nuget.config`。
+- `CommonControls.WPF` 通过 NuGet `PackageReference` 引用（版本 `1.0.0`），本地包位于 `Packages/`。更新方式：在 CommonControls.WPF 仓库 `dotnet pack`，将新 nupkg 覆盖到 `Packages/`，并同步更新 `NodeCraft/NodeCraft.csproj` 与 `NodeCraft.Flow/NodeCraft.Flow.csproj` 中的 `CommonControls.WPF` `PackageReference` 版本。
 - 宿主使用 `Microsoft.Extensions.*` + NLog 6；`NodeCraft.Flow` 仅依赖 `Microsoft.Extensions.Logging.Abstractions` 与 `CommonControls.WPF`。
 - 更新本地包后需在 Windows 上重新 `dotnet build NodeCraft.sln` 并跑 `NodeCraft.Tests` 确认 ALL PASS。
 

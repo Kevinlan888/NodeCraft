@@ -13,7 +13,7 @@ namespace NodeCraft.Cli.Tests
 
         /// <summary>
         /// Walks up from the current directory to locate the repository's
-        /// NodeCraft.Flow.csproj (same pattern as CommonControls.WPF.Flow.Tests).
+        /// NodeCraft.Flow.csproj (same pattern as NodeCraft.Tests).
         /// </summary>
         private static string FindFlowProjectPath()
         {

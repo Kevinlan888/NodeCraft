@@ -8,6 +8,8 @@
 dotnet build NodeCraft.sln
 ```
 
+> WPF 项目需在 Windows 上构建（Linux 缺少 WindowsDesktop SDK）。
+
 ## 运行
 
 ```bash
