@@ -18,6 +18,7 @@ namespace NodeCraft.Flow
         private readonly CancellationTokenSource _stopCancellation = new CancellationTokenSource();
         private readonly SemaphoreSlim _iterationGate = new SemaphoreSlim(1, 1);
         private readonly List<StartedLifecycle> _startedLifecycles = new List<StartedLifecycle>();
+        private readonly List<Exception> _startupCleanupErrors = new List<Exception>();
         private GraphExecutionSessionState _state = GraphExecutionSessionState.Created;
         private CancellationTokenSource _startupCancellation;
         private Task _startTask;
@@ -180,8 +181,25 @@ namespace NodeCraft.Flow
 
                     if (cleanupStartedLifecycle)
                     {
-                        await lifecycle.StopSessionAsync(context, CancellationToken.None)
-                            .ConfigureAwait(false);
+                        try
+                        {
+                            await lifecycle.StopSessionAsync(context, CancellationToken.None)
+                                .ConfigureAwait(false);
+                        }
+                        catch (Exception exception)
+                        {
+                            lock (_stateGate)
+                            {
+                                _startupCleanupErrors.Add(exception);
+                            }
+
+                            _logger.LogError(
+                                exception,
+                                "Graph session cleanup failed for node '{NodeId}'.",
+                                context.Node.Id);
+                            throw;
+                        }
+
                         cancellationToken.ThrowIfCancellationRequested();
                         throw new OperationCanceledException(cancellationToken);
                     }
@@ -260,15 +278,17 @@ namespace NodeCraft.Flow
         {
             await _iterationGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             List<StartedLifecycle> started;
+            List<Exception> cleanupErrors;
             try
             {
                 lock (_stateGate)
                 {
                     started = _startedLifecycles.AsEnumerable().Reverse().ToList();
                     _startedLifecycles.Clear();
+                    cleanupErrors = _startupCleanupErrors.ToList();
+                    _startupCleanupErrors.Clear();
                 }
 
-                var cleanupErrors = new List<Exception>();
                 foreach (var item in started)
                 {
                     try

@@ -83,6 +83,67 @@ internal static partial class Program
                 && session.StopAsync().IsCompleted;
         });
 
+        await RunAsync("graph session stop during blocked start reports inline cleanup failure", async () =>
+        {
+            var fixture = CreateBlockedStartFixture(failStop: true);
+            var session = fixture.Executor.CreateSession();
+            var expectedMessage = "stop failed: blocked-start";
+
+            try
+            {
+                var startTask = session.StartAsync(CancellationToken.None);
+                await fixture.ExecutorInstance.StartEntered.Task;
+                var stopTask = session.StopAsync();
+                fixture.ExecutorInstance.ReleaseStart.TrySetResult(true);
+
+                var startFailed = false;
+                try
+                {
+                    await startTask;
+                }
+                catch (InvalidOperationException ex)
+                    when (ex.Message == expectedMessage)
+                {
+                    startFailed = true;
+                }
+
+                var stopFailed = false;
+                try
+                {
+                    await stopTask;
+                }
+                catch (AggregateException ex)
+                    when (ex.InnerExceptions.Count == 1
+                        && ex.InnerExceptions[0] is InvalidOperationException inner
+                        && inner.Message == expectedMessage)
+                {
+                    stopFailed = true;
+                }
+
+                return startFailed
+                    && stopFailed
+                    && fixture.ExecutorInstance.StopCount == 1
+                    && session.State == GraphExecutionSessionState.Stopped;
+            }
+            finally
+            {
+                try
+                {
+                    await session.DisposeAsync();
+                }
+                catch (InvalidOperationException ex)
+                    when (ex.Message == expectedMessage)
+                {
+                }
+                catch (AggregateException ex)
+                    when (ex.InnerExceptions.Count == 1
+                        && ex.InnerExceptions[0] is InvalidOperationException inner
+                        && inner.Message == expectedMessage)
+                {
+                }
+            }
+        });
+
         await RunAsync("graph session rejects duplicate workflow node ids before creating executors", async () =>
         {
             var registry = new FlowNodeRegistry();
@@ -251,10 +312,10 @@ internal static partial class Program
         return new BlockedSourceFixture(new GraphExecutor(workflow, registry), executor);
     }
 
-    private static BlockedStartFixture CreateBlockedStartFixture()
+    private static BlockedStartFixture CreateBlockedStartFixture(bool failStop = false)
     {
         var registry = new FlowNodeRegistry();
-        var executor = new BlockedStartExecutor();
+        var executor = new BlockedStartExecutor(failStop);
         registry.Register(new FlowNodeRegistration(
             CreateDefinition("test.session.blocked-start"),
             () => executor));
@@ -581,6 +642,13 @@ internal static partial class Program
 
     private sealed class BlockedStartExecutor : IFlowNodeExecutor, IFlowNodeSessionLifecycle
     {
+        private readonly bool _failStop;
+
+        public BlockedStartExecutor(bool failStop)
+        {
+            _failStop = failStop;
+        }
+
         public TaskCompletionSource<bool> StartEntered { get; }
             = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -598,6 +666,11 @@ internal static partial class Program
         public Task StopSessionAsync(FlowNodeSessionContext context, CancellationToken cancellationToken)
         {
             StopCount++;
+            if (_failStop)
+            {
+                throw new InvalidOperationException("stop failed: blocked-start");
+            }
+
             return Task.CompletedTask;
         }
 
