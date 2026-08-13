@@ -59,6 +59,7 @@ internal static partial class Program
         RunVendorStereoCameraDeviceTests();
         await RunStereoCameraCaptureTestsAsync();
         await RunStereoCameraPluginTestsAsync();
+        await RunFlowImagePreviewTestsAsync();
         await RunGraphExecutionSessionLifecycleTestsAsync();
         await RunGraphExecutionSessionIterationTestsAsync();
         await RunFlowExecutionControllerTestsAsync();

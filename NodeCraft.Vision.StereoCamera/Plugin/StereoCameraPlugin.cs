@@ -6,6 +6,7 @@ using NodeCraft.Flow;
 using NodeCraft.Vision.StereoCamera.Camera;
 using NodeCraft.Vision.StereoCamera.Nodes;
 using NodeCraft.Vision.StereoCamera.Runtime;
+using NodeCraft.Vision.StereoCamera.Preview;
 using NodeCraft.Vision.StereoCamera.Views;
 
 namespace NodeCraft.Vision.StereoCamera.Plugin
@@ -142,6 +143,7 @@ namespace NodeCraft.Vision.StereoCamera.Plugin
                 NodeFactory = () => new FlowImagePreviewNodeModel(),
                 PaletteDisplayName = "Image Preview (FlowImage)",
                 PaletteDescription = "Displays a FlowImage without copying or changing the value.",
+                ContentFactory = FlowImagePreviewView.CreateContent,
                 RefreshContentAfterExecution = false,
                 ExecutionResultHandler = (node, executionContext) =>
                 {
