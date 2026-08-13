@@ -21,9 +21,17 @@ namespace NodeCraft.Vision.StereoCamera.Camera
             var size = handles.Length;
             try
             {
-                StereoCameraNativeException.ThrowIfError(
-                    "scDiscovery",
-                    NativeMethods.scDiscovery(ScInterfaceType.All, handles, ref size));
+                try
+                {
+                    StereoCameraNativeException.ThrowIfError(
+                        "scDiscovery",
+                        NativeMethods.scDiscovery(ScInterfaceType.All, handles, ref size));
+                }
+                catch (Exception exception)
+                {
+                    throw new InvalidOperationException("StereoCamera discovery failed.", exception);
+                }
+
                 if (size < 0 || size > handles.Length)
                 {
                     throw new InvalidOperationException(
@@ -54,7 +62,15 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                     "StereoCamera discovery must complete before opening a camera by IP.");
             }
 
-            var handle = NativeMethods.scGetCamera(ipAddress, ScCameraDataType.IP);
+            IntPtr handle;
+            try
+            {
+                handle = NativeMethods.scGetCamera(ipAddress, ScCameraDataType.IP);
+            }
+            catch (Exception exception)
+            {
+                throw new InvalidOperationException("StereoCamera camera lookup failed.", exception);
+            }
             if (handle == IntPtr.Zero)
             {
                 throw new InvalidOperationException(
