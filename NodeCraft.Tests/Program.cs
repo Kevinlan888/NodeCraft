@@ -52,6 +52,7 @@ internal static partial class Program
     private static async Task<int> Main()
     {
         RunVisualContractTests();
+        await RunGraphExecutionSessionLifecycleTestsAsync();
 
         Run("NodeCraft Flow owns its localization resources", () =>
         {

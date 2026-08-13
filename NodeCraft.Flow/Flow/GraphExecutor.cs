@@ -113,6 +113,24 @@ namespace NodeCraft.Flow
             return result;
         }
 
+        public GraphExecutionSession CreateSession()
+        {
+            var validation = Validate();
+            if (!validation.IsValid)
+            {
+                _logger.LogError("Graph validation failed with {ErrorCount} errors.", validation.Errors.Count);
+                throw new InvalidOperationException(string.Join(
+                    Environment.NewLine,
+                    validation.Errors.Select(error => error.Message)));
+            }
+
+            return new GraphExecutionSession(
+                _workflow,
+                _registry,
+                TopologicalSort(_workflow),
+                _logger);
+        }
+
         public async Task<FlowExecutionContext> ExecuteAsync(CancellationToken cancellationToken = default)
         {
             var validation = Validate();
