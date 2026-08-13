@@ -17,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\CommonControls.WPF\CommonControls.WPF.csproj" />
+    <PackageReference Include="CommonControls.WPF" Version="1.0.0" />
     <ProjectReference Include="..\NodeCraft.Flow\NodeCraft.Flow.csproj" />
   </ItemGroup>
 
