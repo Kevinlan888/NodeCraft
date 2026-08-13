@@ -872,6 +872,7 @@ internal static partial class Program
             var flowPageCode = File.ReadAllText(flowPageCodePath);
             var project = XDocument.Load(hostProjectPath);
             var propertyGroup = project.Root?.Elements("PropertyGroup").FirstOrDefault();
+            var stopMenuBody = ExtractMethodBody(mainWindowCode, "MenuStop_Click");
 
             return mainWindowXaml.Contains("Header=\"执行一次\"", StringComparison.Ordinal)
                 && mainWindowXaml.Contains("Header=\"持续运行\"", StringComparison.Ordinal)
@@ -879,6 +880,9 @@ internal static partial class Program
                 && mainWindowXaml.Contains("Closing=\"MainWindow_Closing\"", StringComparison.Ordinal)
                 && mainWindowCode.Contains("async void MainWindow_Closing", StringComparison.Ordinal)
                 && mainWindowCode.Contains("await FlowEditor.StopExecutionAsync()", StringComparison.Ordinal)
+                && stopMenuBody.Contains("try", StringComparison.Ordinal)
+                && stopMenuBody.Contains("catch (Exception", StringComparison.Ordinal)
+                && stopMenuBody.Contains("NotificationService.ShowNotification", StringComparison.Ordinal)
                 && mainWindowCode.Contains("MenuRunOnce.IsEnabled = idle", StringComparison.Ordinal)
                 && mainWindowCode.Contains("MenuStop.IsEnabled = !idle", StringComparison.Ordinal)
                 && flowPageCode.Contains("Task RunOnceAsync", StringComparison.Ordinal)
@@ -3536,6 +3540,49 @@ internal static partial class Program
             .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             .Any(segment => string.Equals(segment, "bin", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(segment, "obj", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ExtractMethodBody(string source, string methodName)
+    {
+        var methodIndex = source.IndexOf(methodName, StringComparison.Ordinal);
+        if (methodIndex < 0)
+        {
+            return string.Empty;
+        }
+
+        var bodyStart = source.IndexOf('{', methodIndex);
+        var expressionStart = source.IndexOf("=>", methodIndex, StringComparison.Ordinal);
+        if (expressionStart >= 0 && (bodyStart < 0 || expressionStart < bodyStart))
+        {
+            var expressionEnd = source.IndexOf(';', expressionStart);
+            return expressionEnd < 0
+                ? source.Substring(expressionStart)
+                : source.Substring(expressionStart, expressionEnd - expressionStart + 1);
+        }
+
+        if (bodyStart < 0)
+        {
+            return string.Empty;
+        }
+
+        var depth = 0;
+        for (var index = bodyStart; index < source.Length; index++)
+        {
+            if (source[index] == '{')
+            {
+                depth++;
+            }
+            else if (source[index] == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return source.Substring(bodyStart, index - bodyStart + 1);
+                }
+            }
+        }
+
+        return string.Empty;
     }
 
     private static bool RunOnSta(Func<bool> assertion)

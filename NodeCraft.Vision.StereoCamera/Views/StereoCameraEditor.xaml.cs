@@ -21,7 +21,9 @@ namespace NodeCraft.Vision.StereoCamera.Views
             _node = node ?? throw new ArgumentNullException(nameof(node));
 
             var root = LoadEditorRoot();
-            Content = root.Content;
+            var parsedContent = root.Content;
+            root.Content = null;
+            Content = parsedContent;
             _ipAddressEditor = root.FindName("IpAddressEditor") as TextBox
                 ?? throw new InvalidOperationException("StereoCameraEditor is missing IpAddressEditor.");
             _ipAddressEditor.TextChanged += IpAddressEditor_TextChanged;

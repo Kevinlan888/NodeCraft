@@ -108,7 +108,20 @@ namespace NodeCraft
 
         private async void MenuRunContinuous_Click(object sender, RoutedEventArgs e) => await FlowEditor.RunContinuouslyAsync();
 
-        private async void MenuStop_Click(object sender, RoutedEventArgs e) => await FlowEditor.StopExecutionAsync();
+        private async void MenuStop_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                await FlowEditor.StopExecutionAsync();
+            }
+            catch (Exception exception)
+            {
+                NotificationService.ShowNotification(
+                    "nodecraft-flow-stop",
+                    $"停止流程时发生错误: {exception.Message}",
+                    5000);
+            }
+        }
 
         private void MenuExit_Click(object sender, RoutedEventArgs e) => Close();
 

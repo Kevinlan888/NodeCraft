@@ -22,7 +22,9 @@ namespace NodeCraft.Vision.StereoCamera.Views
         {
             _node = node ?? throw new ArgumentNullException(nameof(node));
             var root = LoadViewRoot();
-            Content = root.Content;
+            var parsedContent = root.Content;
+            root.Content = null;
+            Content = parsedContent;
             _previewImage = root.FindName("PreviewImage") as Image
                 ?? throw new InvalidOperationException("FlowImagePreviewView is missing PreviewImage.");
             _frameText = root.FindName("FrameText") as TextBlock

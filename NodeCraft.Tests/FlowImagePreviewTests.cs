@@ -8,7 +8,9 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using NodeCraft.Flow;
+using NodeCraft.Vision.StereoCamera.Nodes;
 using NodeCraft.Vision.StereoCamera.Preview;
+using NodeCraft.Vision.StereoCamera.Views;
 
 internal static partial class Program
 {
@@ -128,6 +130,21 @@ internal static partial class Program
                 && code.Contains("LatestPreviewRenderQueue", StringComparison.Ordinal)
                 && code.Contains("_renderQueue.Dispose()", StringComparison.Ordinal);
         });
+
+        Run("stereo camera content factories detach parsed WPF roots", () =>
+            RunOnSta(() =>
+            {
+                var canvas = new FlowCanvas();
+                object cameraContent = StereoCameraEditor.CreateContent(
+                    canvas,
+                    new StereoCameraNodeModel { IpAddress = "192.168.1.10" });
+                object previewContent = FlowImagePreviewView.CreateContent(
+                    canvas,
+                    new FlowImagePreviewNodeModel());
+
+                return cameraContent is FrameworkElement
+                    && previewContent is FrameworkElement;
+            }));
     }
 
     private static FlowImage CreatePreviewImage(
