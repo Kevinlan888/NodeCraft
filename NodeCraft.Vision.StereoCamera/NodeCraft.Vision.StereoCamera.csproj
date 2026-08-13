@@ -12,6 +12,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\NodeCraft.Flow\NodeCraft.Flow.csproj" Private="false" />
+    <Page Remove="Views\StereoCameraEditor.xaml" />
+    <EmbeddedResource Include="Views\StereoCameraEditor.xaml" />
     <None Include="Build\StereoCameraRuntimeFiles.txt" />
     <None Include="Build\StereoCameraPackaging.targets" />
     <None Update="plugin.json">
