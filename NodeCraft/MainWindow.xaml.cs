@@ -1,4 +1,6 @@
 using CommonControls.WPF;
+using System;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using NodeCraft.Pages;
@@ -12,13 +14,16 @@ namespace NodeCraft
         private bool _notificationServiceRegistered;
         private bool _pluginFailureNotificationShown;
         private bool _startupGraphLoaded;
+        private bool _allowClose;
 
         public MainWindow(FlowPage flowPage)
         {
             InitializeComponent();
             FlowEditor = flowPage;
+            FlowEditor.ExecutionStateChanged += FlowEditor_ExecutionStateChanged;
             RootGrid.Children.Add(FlowEditor);
             Grid.SetRow(FlowEditor, 1);
+            UpdateExecutionCommandState();
         }
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -46,11 +51,45 @@ namespace NodeCraft
             var path = (Application.Current as App)?.StartupGraphFilePath;
             if (!string.IsNullOrWhiteSpace(path))
                 FlowEditor.TryLoadGraphFile(path);
+
+            UpdateExecutionCommandState();
+        }
+
+        private void FlowEditor_ExecutionStateChanged(object sender, EventArgs e)
+        {
+            UpdateExecutionCommandState();
         }
 
         private void MainWindow_Closed(object sender, System.EventArgs e)
         {
+            FlowEditor.ExecutionStateChanged -= FlowEditor_ExecutionStateChanged;
             NotificationService.Unregister();
+        }
+
+        private async void MainWindow_Closing(object sender, CancelEventArgs e)
+        {
+            if (_allowClose || !FlowEditor.IsExecutionActive)
+            {
+                return;
+            }
+
+            e.Cancel = true;
+            try
+            {
+                await FlowEditor.StopExecutionAsync();
+            }
+            catch (Exception exception)
+            {
+                NotificationService.ShowNotification(
+                    "nodecraft-flow-close",
+                    $"停止流程时发生错误: {exception.Message}",
+                    5000);
+            }
+            finally
+            {
+                _allowClose = true;
+                Close();
+            }
         }
 
         private void MenuNewGraph_Click(object sender, RoutedEventArgs e) => FlowEditor.NewGraph();
@@ -65,7 +104,11 @@ namespace NodeCraft
 
         private void MenuValidateGraph_Click(object sender, RoutedEventArgs e) => FlowEditor.ValidateGraph();
 
-        private void MenuRunGraph_Click(object sender, RoutedEventArgs e) => FlowEditor.RunGraph();
+        private async void MenuRunOnce_Click(object sender, RoutedEventArgs e) => await FlowEditor.RunOnceAsync();
+
+        private async void MenuRunContinuous_Click(object sender, RoutedEventArgs e) => await FlowEditor.RunContinuouslyAsync();
+
+        private async void MenuStop_Click(object sender, RoutedEventArgs e) => await FlowEditor.StopExecutionAsync();
 
         private void MenuExit_Click(object sender, RoutedEventArgs e) => Close();
 
@@ -93,6 +136,25 @@ namespace NodeCraft
                     return;
                 }
             }
+        }
+
+        private void UpdateExecutionCommandState()
+        {
+            if (MenuNewGraph == null)
+            {
+                return;
+            }
+
+            var idle = !FlowEditor.IsExecutionActive;
+            MenuNewGraph.IsEnabled = idle;
+            MenuClearGraph.IsEnabled = idle;
+            MenuLoadGraph.IsEnabled = idle;
+            MenuSaveGraph.IsEnabled = idle;
+            MenuSaveGraphAs.IsEnabled = idle;
+            MenuValidateGraph.IsEnabled = idle;
+            MenuRunOnce.IsEnabled = idle;
+            MenuRunContinuous.IsEnabled = idle;
+            MenuStop.IsEnabled = !idle;
         }
     }
 }

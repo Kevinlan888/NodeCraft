@@ -1,4 +1,5 @@
-﻿using NodeCraft.Flow;
+﻿using NodeCraft;
+using NodeCraft.Flow;
 using NodeCraft.Flow.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
@@ -7,6 +8,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
+using System.Windows.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -21,14 +24,21 @@ namespace NodeCraft.Pages
         private readonly ILogger<FlowPage> _logger;
         private readonly ILoggerFactory _loggerFactory;
         private readonly FlowCanvas _nodeCanvas;
+        private readonly FlowExecutionController _executionController;
         private bool _starterLayoutLoaded;
         private int _nextNodeIndex;
         private string _currentGraphFilePath;
+
+        public event EventHandler ExecutionStateChanged;
+
+        public bool IsExecutionActive => _executionController.State != FlowRunState.Idle;
 
         public FlowPage(ILoggerFactory loggerFactory)
         {
             _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
             _logger = loggerFactory.CreateLogger<FlowPage>();
+            _executionController = new FlowExecutionController();
+            _executionController.StateChanged += ExecutionController_StateChanged;
             InitializeComponent();
 
             _nodeCanvas = new FlowCanvas(loggerFactory.CreateLogger<FlowCanvas>())
@@ -187,6 +197,39 @@ namespace NodeCraft.Pages
 
         public async void RunGraph()
         {
+            await RunOnceAsync().ConfigureAwait(true);
+        }
+
+        public Task RunOnceAsync(CancellationToken cancellationToken = default)
+        {
+            return RunWithControllerAsync(continuous: false, cancellationToken);
+        }
+
+        public Task RunContinuouslyAsync(CancellationToken cancellationToken = default)
+        {
+            return RunWithControllerAsync(continuous: true, cancellationToken);
+        }
+
+        public async Task StopExecutionAsync()
+        {
+            try
+            {
+                await _executionController.StopAsync().ConfigureAwait(true);
+                if (!IsExecutionActive)
+                {
+                    TxtExecutionResult.Text = "已停止。";
+                }
+            }
+            catch (Exception ex)
+            {
+                ReportExecutionFailure(ex, "Graph execution stop failed.");
+                throw;
+            }
+        }
+
+        private async Task RunWithControllerAsync(bool continuous, CancellationToken cancellationToken)
+        {
+            GraphExecutionSession session = null;
             try
             {
                 var workflow = BuildWorkflowDocument();
@@ -198,14 +241,50 @@ namespace NodeCraft.Pages
                     return;
                 }
 
-                var context = await executor.ExecuteAsync();
-                ApplyExecutionResults(context);
-                TxtExecutionResult.Text = FormatExecution(context, workflow);
+                session = executor.CreateSession();
+                Func<FlowExecutionContext, long, TimeSpan, Task> callback = (context, iteration, elapsed) =>
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        ApplyExecutionResults(context);
+                        TxtExecutionResult.Text = FormatExecution(
+                            context,
+                            workflow,
+                            continuous ? "持续运行" : "执行一次",
+                            iteration,
+                            elapsed);
+                    }).Task;
+
+                Task runTask;
+                try
+                {
+                    runTask = continuous
+                        ? _executionController.RunContinuouslyAsync(session, callback, cancellationToken)
+                        : _executionController.RunOnceAsync(session, callback, cancellationToken);
+                }
+                catch
+                {
+                    await session.DisposeAsync().ConfigureAwait(true);
+                    session = null;
+                    throw;
+                }
+
+                session = null;
+                await runTask.ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+                TxtExecutionResult.Text = "已停止。";
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Graph execution failed.");
-                TxtExecutionResult.Text = ex.ToString();
+                ReportExecutionFailure(ex, "Graph execution failed.");
+            }
+            finally
+            {
+                if (session != null)
+                {
+                    await session.DisposeAsync().ConfigureAwait(true);
+                }
             }
         }
 
@@ -336,11 +415,19 @@ namespace NodeCraft.Pages
             return builder.ToString();
         }
 
-        private static string FormatExecution(FlowExecutionContext context, WorkflowDocument workflow)
+        private static string FormatExecution(
+            FlowExecutionContext context,
+            WorkflowDocument workflow,
+            string runMode,
+            long iteration,
+            TimeSpan elapsed)
         {
             var nodeLookup = workflow?.Nodes?.ToDictionary(node => node.Id, node => node) ?? new Dictionary<string, WorkflowNode>();
             var builder = new StringBuilder();
-            builder.AppendLine("Execution Result:");
+            builder.AppendLine($"运行模式: {runMode}");
+            builder.AppendLine($"迭代: {iteration}");
+            builder.AppendLine($"耗时: {elapsed.TotalMilliseconds:0.0} ms");
+            builder.AppendLine();
 
             foreach (var node in workflow?.Nodes ?? Enumerable.Empty<WorkflowNode>())
             {
@@ -458,6 +545,16 @@ namespace NodeCraft.Pages
                 return "<null>";
             }
 
+            if (value is FlowImage image)
+            {
+                return $"{image.Kind} {image.Width}x{image.Height} {image.PixelFormat}, frame {image.FrameId}";
+            }
+
+            if (value is CameraCalibration calibration)
+            {
+                return $"Calibration {calibration.ImageWidth}x{calibration.ImageHeight}, left-reference={calibration.IsLeftReference}";
+            }
+
             if (value is System.Collections.IEnumerable enumerable && value is not string)
             {
                 var items = new List<string>();
@@ -490,8 +587,35 @@ namespace NodeCraft.Pages
             var updatedNodes = NodeExecutorFactory.Registry.ApplyExecutionResults(_nodeCanvas.GraphModel?.Nodes ?? Enumerable.Empty<NodeModel>(), context);
             foreach (var node in updatedNodes)
             {
-                RefreshNodePresentation(node);
+                if (NodeExecutorFactory.Registry.ShouldRefreshContentAfterExecution(node))
+                {
+                    RefreshNodePresentation(node);
+                }
             }
+        }
+
+        private void ExecutionController_StateChanged(object sender, EventArgs e)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.InvokeAsync(() => ExecutionController_StateChanged(sender, e));
+                return;
+            }
+
+            if (ExecutionInputBlocker != null)
+            {
+                ExecutionInputBlocker.Visibility = IsExecutionActive
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            }
+
+            ExecutionStateChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void ReportExecutionFailure(Exception exception, string message)
+        {
+            _logger.LogError(exception, message);
+            TxtExecutionResult.Text = exception.ToString();
         }
     }
 }

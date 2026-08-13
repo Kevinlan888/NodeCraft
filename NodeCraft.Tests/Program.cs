@@ -736,7 +736,7 @@ internal static partial class Program
                     if (topLevelHeaders == null
                         || operationHeaders == null
                         || !topLevelHeaders.SequenceEqual(new[] { "文件", "流程", "视图" })
-                        || !new[] { "新建", "清空", "加载", "保存", "另存为", "退出", "校验", "执行", "深色主题" }
+                        || !new[] { "新建", "清空", "加载", "保存", "另存为", "退出", "校验", "执行一次", "持续运行", "停止", "深色主题" }
                             .All(header => operationHeaders.Contains(header))
                         || darkThemeMenuItem == null
                         || !darkThemeMenuItem.IsCheckable
@@ -827,10 +827,16 @@ internal static partial class Program
             var document = XDocument.Load(pagePath);
             XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
             XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
-            var rightSideBorder = document.Root?
+            var canvasColumn = document.Root?
                 .Element(presentation + "Grid")?
-                .Elements(presentation + "Border")
+                .Elements(presentation + "Grid")
                 .SingleOrDefault(element => (string?)element.Attribute("Grid.Column") == "2");
+            var rightSideBorder = canvasColumn?
+                .Elements(presentation + "Border")
+                .SingleOrDefault(element => (string?)element.Attribute(xaml + "Name") == "CanvasHost");
+            var inputBlocker = canvasColumn?
+                .Elements(presentation + "Border")
+                .SingleOrDefault(element => (string?)element.Attribute(xaml + "Name") == "ExecutionInputBlocker");
             var directChildren = rightSideBorder?.Elements().ToArray() ?? Array.Empty<XElement>();
 
             return pageXaml.Contains("Text=\"4. 使用鼠标滚轮缩放画布，按住鼠标中键拖动视图。\"")
@@ -838,10 +844,48 @@ internal static partial class Program
                 && !pageXaml.Contains("Height=\"1200\"")
                 && rightSideBorder != null
                 && (string?)rightSideBorder.Attribute(xaml + "Name") == "CanvasHost"
+                && inputBlocker != null
+                && (string?)inputBlocker.Attribute("Background") == "Transparent"
                 && directChildren.Length == 0
                 && code.Contains("new FlowCanvas(", StringComparison.Ordinal)
                 && code.Contains("CanvasHost.Child", StringComparison.Ordinal)
                 && !rightSideBorder.Descendants(presentation + "ScrollViewer").Any();
+        });
+        Run("NodeCraft exposes awaited single and continuous flow controls", () =>
+        {
+            var mainWindowPath = FindRepositoryFile("NodeCraft", "MainWindow.xaml");
+            var mainWindowCodePath = FindRepositoryFile("NodeCraft", "MainWindow.xaml.cs");
+            var flowPageCodePath = FindRepositoryFile("NodeCraft", "Pages", "FlowPage.xaml.cs");
+            var hostProjectPath = FindRepositoryFile("NodeCraft", "NodeCraft.csproj");
+            var mainWindowXaml = File.ReadAllText(mainWindowPath);
+            var mainWindowCode = File.ReadAllText(mainWindowCodePath);
+            var flowPageCode = File.ReadAllText(flowPageCodePath);
+            var project = XDocument.Load(hostProjectPath);
+            var propertyGroup = project.Root?.Elements("PropertyGroup").FirstOrDefault();
+
+            return mainWindowXaml.Contains("Header=\"执行一次\"", StringComparison.Ordinal)
+                && mainWindowXaml.Contains("Header=\"持续运行\"", StringComparison.Ordinal)
+                && mainWindowXaml.Contains("Header=\"停止\"", StringComparison.Ordinal)
+                && mainWindowXaml.Contains("Closing=\"MainWindow_Closing\"", StringComparison.Ordinal)
+                && mainWindowCode.Contains("async void MainWindow_Closing", StringComparison.Ordinal)
+                && mainWindowCode.Contains("await FlowEditor.StopExecutionAsync()", StringComparison.Ordinal)
+                && mainWindowCode.Contains("MenuRunOnce.IsEnabled = idle", StringComparison.Ordinal)
+                && mainWindowCode.Contains("MenuStop.IsEnabled = !idle", StringComparison.Ordinal)
+                && flowPageCode.Contains("Task RunOnceAsync", StringComparison.Ordinal)
+                && flowPageCode.Contains("Task RunContinuouslyAsync", StringComparison.Ordinal)
+                && flowPageCode.Contains("Task StopExecutionAsync", StringComparison.Ordinal)
+                && string.Equals((string?)propertyGroup?.Element("PlatformTarget"), "x64", StringComparison.OrdinalIgnoreCase)
+                && string.Equals((string?)propertyGroup?.Element("Prefer32Bit"), "false", StringComparison.OrdinalIgnoreCase);
+        });
+        Run("Flow node registrations can preserve visual content after execution", () =>
+        {
+            var registration = CreateTestRegistration("test.refresh-policy");
+            var defaultPolicy = registration.RefreshContentAfterExecution;
+            registration.RefreshContentAfterExecution = false;
+            var registry = new FlowNodeRegistry();
+            registry.Register(registration);
+            var node = new NodeModel { ExecutorType = "test.refresh-policy" };
+            return defaultPolicy && !registry.ShouldRefreshContentAfterExecution(node);
         });
         Run("plugin registration accepts multiple nodes atomically", () =>
         {

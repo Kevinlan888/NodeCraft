@@ -96,12 +96,17 @@
             </StackPanel>
         </ScrollViewer>
 
-        <Border x:Name="CanvasHost"
-                Grid.Column="2"
-                Padding="12"
-                CornerRadius="10"
-                Background="{DynamicResource colorNeutralBackground1}"
-                BorderBrush="{DynamicResource colorNeutralStroke1}"
-                BorderThickness="1" />
+        <Grid Grid.Column="2">
+            <Border x:Name="CanvasHost"
+                    Padding="12"
+                    CornerRadius="10"
+                    Background="{DynamicResource colorNeutralBackground1}"
+                    BorderBrush="{DynamicResource colorNeutralStroke1}"
+                    BorderThickness="1" />
+            <Border x:Name="ExecutionInputBlocker"
+                    Panel.ZIndex="10"
+                    Background="Transparent"
+                    Visibility="Collapsed" />
+        </Grid>
     </Grid>
 </UserControl>

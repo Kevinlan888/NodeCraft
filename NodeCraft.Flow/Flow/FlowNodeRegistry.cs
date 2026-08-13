@@ -34,6 +34,8 @@ namespace NodeCraft.Flow
         public Func<FlowCanvas, NodeModel, FrameworkElement> ContentFactory { get; set; }
 
         public Action<NodeModel, FlowExecutionContext> ExecutionResultHandler { get; set; }
+
+        public bool RefreshContentAfterExecution { get; set; } = true;
     }
 
     public class FlowNodeRegistry
@@ -102,7 +104,8 @@ namespace NodeCraft.Flow
             bool isPaletteCategoryExpanded = true,
             string paletteDisplayName = null,
             Func<FlowCanvas, NodeModel, FrameworkElement> contentFactory = null,
-            Action<NodeModel, FlowExecutionContext> executionResultHandler = null)
+            Action<NodeModel, FlowExecutionContext> executionResultHandler = null,
+            bool refreshContentAfterExecution = true)
         {
             Register(registration);
             ConfigureNodeEditor(
@@ -114,7 +117,8 @@ namespace NodeCraft.Flow
                 isPaletteCategoryExpanded,
                 paletteDisplayName,
                 contentFactory,
-                executionResultHandler);
+                executionResultHandler,
+                refreshContentAfterExecution);
         }
 
         public void ConfigureNodeEditor(
@@ -126,7 +130,8 @@ namespace NodeCraft.Flow
             bool isPaletteCategoryExpanded = true,
             string paletteDisplayName = null,
             Func<FlowCanvas, NodeModel, FrameworkElement> contentFactory = null,
-            Action<NodeModel, FlowExecutionContext> executionResultHandler = null)
+            Action<NodeModel, FlowExecutionContext> executionResultHandler = null,
+            bool refreshContentAfterExecution = true)
         {
             var registration = Resolve(typeKey);
             registration.NodeModelType = nodeModelType ?? throw new ArgumentNullException(nameof(nodeModelType));
@@ -139,6 +144,7 @@ namespace NodeCraft.Flow
                 : paletteDisplayName;
             registration.ContentFactory = contentFactory;
             registration.ExecutionResultHandler = executionResultHandler;
+            registration.RefreshContentAfterExecution = refreshContentAfterExecution;
 
             RegisterNodeTypeMapping(nodeModelType, typeKey);
         }
@@ -298,6 +304,13 @@ namespace NodeCraft.Flow
             }
 
             return updatedNodes;
+        }
+
+        public bool ShouldRefreshContentAfterExecution(NodeModel node)
+        {
+            return node != null
+                && TryResolve(node.ExecutorType, out var registration)
+                && registration.RefreshContentAfterExecution;
         }
 
         private void ValidatePluginRegistration(

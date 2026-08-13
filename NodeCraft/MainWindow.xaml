@@ -6,6 +6,7 @@
                        Title="NodeCraft — Visual Flow Editor"
                        Height="720"
                        Width="1200"
+                       Closing="MainWindow_Closing"
                        Closed="MainWindow_Closed"
                        Loaded="MainWindow_Loaded">
     <Grid x:Name="RootGrid">
@@ -16,18 +17,20 @@
 
         <Menu Grid.Row="0">
             <MenuItem Header="文件">
-                <MenuItem Header="新建" Click="MenuNewGraph_Click" />
-                <MenuItem Header="清空" Click="MenuClearGraph_Click" />
+                <MenuItem x:Name="MenuNewGraph" Header="新建" Click="MenuNewGraph_Click" />
+                <MenuItem x:Name="MenuClearGraph" Header="清空" Click="MenuClearGraph_Click" />
                 <Separator />
-                <MenuItem Header="加载" Click="MenuLoadGraph_Click" />
-                <MenuItem Header="保存" Click="MenuSaveGraph_Click" />
-                <MenuItem Header="另存为" Click="MenuSaveGraphAs_Click" />
+                <MenuItem x:Name="MenuLoadGraph" Header="加载" Click="MenuLoadGraph_Click" />
+                <MenuItem x:Name="MenuSaveGraph" Header="保存" Click="MenuSaveGraph_Click" />
+                <MenuItem x:Name="MenuSaveGraphAs" Header="另存为" Click="MenuSaveGraphAs_Click" />
                 <Separator />
-                <MenuItem Header="退出" Click="MenuExit_Click" />
+                <MenuItem x:Name="MenuExit" Header="退出" Click="MenuExit_Click" />
             </MenuItem>
             <MenuItem Header="流程">
-                <MenuItem Header="校验" Click="MenuValidateGraph_Click" />
-                <MenuItem Header="执行" Click="MenuRunGraph_Click" />
+                <MenuItem x:Name="MenuValidateGraph" Header="校验" Click="MenuValidateGraph_Click" />
+                <MenuItem x:Name="MenuRunOnce" Header="执行一次" Click="MenuRunOnce_Click" />
+                <MenuItem x:Name="MenuRunContinuous" Header="持续运行" Click="MenuRunContinuous_Click" />
+                <MenuItem x:Name="MenuStop" Header="停止" Click="MenuStop_Click" />
             </MenuItem>
             <MenuItem Header="视图">
                 <MenuItem x:Name="DarkThemeMenuItem"
