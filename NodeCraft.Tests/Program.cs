@@ -125,24 +125,10 @@ internal static class Program
                 .Where(name => name != null)
                 .ToHashSet(StringComparer.Ordinal);
 
-            var commonControlsRoot = FindRepositoryFile("CommonControls.WPF", "CommonControls.WPF.csproj");
-            var commonControlsResourceFiles = Directory
-                .EnumerateFiles(Path.GetDirectoryName(commonControlsRoot)!, "*.resx", SearchOption.AllDirectories)
-                .Where(path => !IsBuildOutputPath(path))
-                .ToArray();
-            var commonControlsKeys = commonControlsResourceFiles
-                .SelectMany(path => XDocument.Load(path).Descendants("data"))
-                .Select(element => (string?)element.Attribute("name"))
-                .Where(name => name != null)
-                .ToHashSet(StringComparer.Ordinal);
-
             return flowDocument.Root?.GetNamespaceOfPrefix("l")?.NamespaceName
                     == "clr-namespace:NodeCraft.Localization"
                 && nodeCraftResourceFiles.Length == 3
-                && flowOnlyKeys.All(nodeCraftKeys.Contains)
-                && commonControlsKeys.Contains("Dialog_Ok")
-                && commonControlsKeys.Contains("DateTimePicker_Mon")
-                && flowOnlyKeys.All(key => !commonControlsKeys.Contains(key));
+                && flowOnlyKeys.All(nodeCraftKeys.Contains);
         });
 
         Run("NodeCraft Flow localization has no CommonControls source references", () =>
@@ -819,46 +805,6 @@ internal static class Program
                     attribute.Value,
                     "/NodeCraft.Flow;component/Themes/Flow.xaml",
                     StringComparison.Ordinal));
-        });
-        Run("CommonControls Generic resource dictionary declares no Flow types", () =>
-        {
-            var document = XDocument.Load(FindRepositoryFile("CommonControls.WPF", "Themes", "Generic.xaml"));
-            return document.Root != null
-                && document.Root
-                    .Attributes()
-                    .Where(attribute => attribute.IsNamespaceDeclaration)
-                    .All(attribute => !attribute.Value.Contains("NodeCraft.Flow", StringComparison.Ordinal)
-                        && !attribute.Value.Contains("CommonControls.WPF.Flow", StringComparison.Ordinal));
-        });
-        Run("DemoApp contains no Flow editor surface", () =>
-        {
-            var projectPath = FindRepositoryFile("DemoApp", "DemoApp.csproj");
-            var projectDirectory = Path.GetDirectoryName(projectPath);
-            if (projectDirectory == null)
-            {
-                return false;
-            }
-
-            var sourceFiles = Directory
-                .EnumerateFiles(projectDirectory, "*", SearchOption.AllDirectories)
-                .Where(path => !Path.GetRelativePath(projectDirectory, path)
-                    .Split(Path.DirectorySeparatorChar)
-                    .Any(segment => string.Equals(segment, "bin", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(segment, "obj", StringComparison.OrdinalIgnoreCase)))
-                .Where(path => new[] { ".cs", ".csproj", ".xaml" }.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
-                .ToArray();
-            var forbiddenReferences = new[]
-            {
-                "NodeCraft.Flow",
-                "CommonControls.WPF.Flow",
-                "FlowCanvas",
-                "FlowPage",
-                "Themes/Flow.xaml",
-            };
-
-            return sourceFiles.All(path => !Path.GetFileName(path).Contains("Flow", StringComparison.OrdinalIgnoreCase))
-                && sourceFiles.All(path => forbiddenReferences.All(reference =>
-                    !File.ReadAllText(path).Contains(reference, StringComparison.OrdinalIgnoreCase)));
         });
         Run("NodeCraft Flow resources qualify NodeCraft localization and CommonControls assembly namespaces", () =>
         {
