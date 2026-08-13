@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +24,8 @@ namespace NodeCraft
 
         public string StartupGraphFilePath { get; private set; }
 
+        private static Microsoft.Extensions.Logging.ILogger _fatalLogger;
+
         private IConfiguration _configuration;
 
         protected override void OnStartup(StartupEventArgs e)
@@ -41,9 +44,15 @@ namespace NodeCraft
                         builder.AddNLog(_configuration);
                         return;
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        // NLog 段解析失败时回退到程序化默认目标。
+                        var fallback = BuildFallbackLoggingConfiguration();
+                        LogManager.Configuration = fallback;
+                        builder.AddNLog(fallback);
+                        LogManager.GetLogger("NodeCraft.Logging").Error(
+                            ex,
+                            "Failed to initialize logging from appsettings.json; using fallback file logging.");
+                        return;
                     }
                 }
 
@@ -58,6 +67,9 @@ namespace NodeCraft
             services.AddTransient<MainWindow>();
 
             Services = services.BuildServiceProvider();
+            _fatalLogger = Services.GetRequiredService<ILoggerFactory>().CreateLogger("NodeCraft.App");
+            AttachUnhandledExceptionHandlers();
+
             PluginLoadReport = Services.GetRequiredService<PluginLoader>().LoadAll(
                 Path.Combine(AppContext.BaseDirectory, "Plugins"));
 
@@ -65,6 +77,30 @@ namespace NodeCraft
             MainWindow = window;
             window.Show();
             base.OnStartup(e);
+        }
+
+        private void AttachUnhandledExceptionHandlers()
+        {
+            DispatcherUnhandledException += (_, args) =>
+                LogUnhandledException(_fatalLogger, "Dispatcher", args.Exception);
+            AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+                LogUnhandledException(_fatalLogger, "AppDomain", args.ExceptionObject as Exception);
+            TaskScheduler.UnobservedTaskException += (_, args) =>
+            {
+                LogUnhandledException(_fatalLogger, "TaskScheduler", args.Exception);
+                args.SetObserved();
+            };
+        }
+
+        private static void LogUnhandledException(Microsoft.Extensions.Logging.ILogger logger, string source, Exception exception)
+        {
+            try
+            {
+                logger?.LogError(exception, "Unhandled exception ({Source}).", source);
+            }
+            catch
+            {
+            }
         }
 
         protected override void OnExit(ExitEventArgs e)
@@ -96,7 +132,7 @@ namespace NodeCraft
             var fileTarget = new FileTarget("nodecraft-fallback-file")
             {
                 FileName = Path.Combine(DefaultLogDirectory(), "nodecraft-${shortdate}.log"),
-                Layout = "${longdate}|${level:uppercase=true}|${logger}|${message}${onexception:inner= |${exception:format=tostring}}",
+                Layout = "${longdate}|${level:uppercase=true}|${processid}|${threadid}|${logger}|${message}${onexception:inner= |${exception:format=tostring}}",
                 KeepFileOpen = false,
                 Encoding = System.Text.Encoding.UTF8,
                 ArchiveEvery = FileArchivePeriod.Day,

@@ -2452,6 +2452,185 @@ internal static class Program
             }
         });
 
+        Run("FlowPage logs graph validation failure through ILogger", () =>
+            RunOnSta(() =>
+            {
+                var logDirectory = Path.Combine(
+                    Path.GetTempPath(),
+                    "nodecraft-flowpage-validate-log-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(logDirectory);
+
+                try
+                {
+                    var nlogConfig = new LoggingConfiguration();
+                    var fileTarget = new FileTarget("flowpage-validate-log")
+                    {
+                        FileName = Path.Combine(logDirectory, "flowpage.log"),
+                        Layout = "${logger}|${level:uppercase=true}|${message}${onexception:inner= |${exception:format=tostring}}",
+                    };
+                    nlogConfig.AddTarget(fileTarget);
+                    nlogConfig.AddRule(NLog.LogLevel.Debug, NLog.LogLevel.Fatal, fileTarget);
+
+                    using var loggerFactory = LoggerFactory.Create(builder => builder.AddNLog(nlogConfig));
+                    var page = new FlowPage(loggerFactory);
+                    var canvas = GetNodeCanvas(page);
+                    canvas.GraphModel = CreateDuplicateIdGraph();
+                    page.ValidateGraph();
+
+                    LogManager.Shutdown();
+                    var contents = File.ReadAllText(Path.Combine(logDirectory, "flowpage.log"));
+                    return contents.Contains("Failed to validate graph", StringComparison.Ordinal)
+                        && contents.Contains("duplicate node Id", StringComparison.Ordinal)
+                        && GetExecutionResult(page).Text.Contains("duplicate node Id", StringComparison.Ordinal);
+                }
+                finally
+                {
+                    LogManager.Shutdown();
+                    if (Directory.Exists(logDirectory))
+                    {
+                        Directory.Delete(logDirectory, recursive: true);
+                    }
+                }
+            }));
+
+        Run("FlowPage logs graph run failure through ILogger", () =>
+            RunOnSta(() =>
+            {
+                var logDirectory = Path.Combine(
+                    Path.GetTempPath(),
+                    "nodecraft-flowpage-run-log-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(logDirectory);
+
+                try
+                {
+                    var nlogConfig = new LoggingConfiguration();
+                    var fileTarget = new FileTarget("flowpage-run-log")
+                    {
+                        FileName = Path.Combine(logDirectory, "flowpage.log"),
+                        Layout = "${logger}|${level:uppercase=true}|${message}${onexception:inner= |${exception:format=tostring}}",
+                    };
+                    nlogConfig.AddTarget(fileTarget);
+                    nlogConfig.AddRule(NLog.LogLevel.Debug, NLog.LogLevel.Fatal, fileTarget);
+
+                    using var loggerFactory = LoggerFactory.Create(builder => builder.AddNLog(nlogConfig));
+                    var page = new FlowPage(loggerFactory);
+                    var canvas = GetNodeCanvas(page);
+                    canvas.GraphModel = CreateDuplicateIdGraph();
+                    page.RunGraph();
+
+                    LogManager.Shutdown();
+                    var contents = File.ReadAllText(Path.Combine(logDirectory, "flowpage.log"));
+                    return contents.Contains("Graph execution failed", StringComparison.Ordinal)
+                        && contents.Contains("duplicate node Id", StringComparison.Ordinal)
+                        && GetExecutionResult(page).Text.Contains("duplicate node Id", StringComparison.Ordinal);
+                }
+                finally
+                {
+                    LogManager.Shutdown();
+                    if (Directory.Exists(logDirectory))
+                    {
+                        Directory.Delete(logDirectory, recursive: true);
+                    }
+                }
+            }));
+
+        Run("NodeCraft logs unhandled exceptions with their source", () =>
+        {
+            var logDirectory = Path.Combine(
+                Path.GetTempPath(),
+                "nodecraft-unhandled-log-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(logDirectory);
+
+            try
+            {
+                var nlogConfig = new LoggingConfiguration();
+                var fileTarget = new FileTarget("unhandled-log")
+                {
+                    FileName = Path.Combine(logDirectory, "unhandled.log"),
+                    Layout = "${logger}|${level:uppercase=true}|${message}${onexception:inner= |${exception:format=tostring}}",
+                };
+                nlogConfig.AddTarget(fileTarget);
+                nlogConfig.AddRule(NLog.LogLevel.Debug, NLog.LogLevel.Fatal, fileTarget);
+
+                using var loggerFactory = LoggerFactory.Create(builder => builder.AddNLog(nlogConfig));
+                var logger = loggerFactory.CreateLogger("NodeCraft.App");
+                var method = typeof(App).GetMethod(
+                    "LogUnhandledException",
+                    BindingFlags.Static | BindingFlags.NonPublic);
+                if (method == null)
+                {
+                    return false;
+                }
+
+                method.Invoke(null, new object[] { logger, "Dispatcher", new InvalidOperationException("boom-marker") });
+                LogManager.Shutdown();
+
+                var contents = File.ReadAllText(Path.Combine(logDirectory, "unhandled.log"));
+                return contents.Contains("Unhandled exception (Dispatcher)", StringComparison.Ordinal)
+                    && contents.Contains("boom-marker", StringComparison.Ordinal);
+            }
+            finally
+            {
+                LogManager.Shutdown();
+                if (Directory.Exists(logDirectory))
+                {
+                    Directory.Delete(logDirectory, recursive: true);
+                }
+            }
+        });
+
+        Run("NodeCraft fallback logging configuration writes exceptions to the log directory", () =>
+        {
+            var method = typeof(App).GetMethod(
+                "BuildFallbackLoggingConfiguration",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            if (method == null)
+            {
+                return false;
+            }
+
+            var fallbackConfiguration = method.Invoke(null, null) as LoggingConfiguration;
+            if (fallbackConfiguration == null)
+            {
+                return false;
+            }
+
+            var target = fallbackConfiguration.FindTargetByName<FileTarget>("nodecraft-fallback-file");
+            if (target == null)
+            {
+                return false;
+            }
+
+            var layoutEvent = new LogEventInfo(NLog.LogLevel.Error, "NodeCraft.Test", "Layout test.");
+            layoutEvent.Exception = new InvalidOperationException("layout-marker");
+            var renderedLayout = target.Layout.Render(layoutEvent);
+            var layoutIncludesProcessContext = renderedLayout.Contains(
+                Environment.ProcessId.ToString(),
+                StringComparison.Ordinal)
+                && renderedLayout.Contains("layout-marker", StringComparison.Ordinal);
+
+            LogManager.Configuration = fallbackConfiguration;
+            LogManager.GetLogger("NodeCraft.Logging")
+                .Error(new InvalidOperationException("fallback-marker"), "Fallback log write.");
+            LogManager.Shutdown();
+
+            var logPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "NodeCraft",
+                "Logs",
+                "nodecraft-" + DateTime.Now.ToString("yyyy-MM-dd") + ".log");
+
+            if (!File.Exists(logPath))
+            {
+                return false;
+            }
+
+            var contents = File.ReadAllText(logPath);
+            return layoutIncludesProcessContext
+                && contents.Contains("Fallback log write.", StringComparison.Ordinal)
+                && contents.Contains("fallback-marker", StringComparison.Ordinal);
+        });
+
         Console.WriteLine(_failures == 0 ? "ALL PASS" : $"{_failures} FAILURES");
         return _failures == 0 ? 0 : 1;
     }
@@ -3111,6 +3290,27 @@ internal static class Program
                     X = 100,
                     Y = 100,
                     ValueText = "preserve this graph",
+                },
+            },
+            Links = new System.Collections.Generic.List<GraphLink>(),
+        };
+    }
+
+    private static GraphModel CreateDuplicateIdGraph()
+    {
+        return new GraphModel
+        {
+            Nodes = new System.Collections.Generic.List<NodeModel>
+            {
+                new StringValueNodeModel
+                {
+                    Id = "dup",
+                    Name = "A",
+                },
+                new StringValueNodeModel
+                {
+                    Id = "dup",
+                    Name = "B",
                 },
             },
             Links = new System.Collections.Generic.List<GraphLink>(),

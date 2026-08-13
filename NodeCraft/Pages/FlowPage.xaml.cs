@@ -96,6 +96,7 @@ namespace NodeCraft.Pages
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Failed to save graph.");
                 TxtExecutionResult.Text = ex.ToString();
             }
         }
@@ -108,6 +109,7 @@ namespace NodeCraft.Pages
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Failed to save graph as.");
                 TxtExecutionResult.Text = ex.ToString();
             }
         }
@@ -178,6 +180,7 @@ namespace NodeCraft.Pages
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Failed to validate graph.");
                 TxtExecutionResult.Text = ex.ToString();
             }
         }
@@ -201,6 +204,7 @@ namespace NodeCraft.Pages
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Graph execution failed.");
                 TxtExecutionResult.Text = ex.ToString();
             }
         }
