@@ -1,0 +1,50 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Xml.Linq;
+
+internal static partial class Program
+{
+    private static void RunStereoCameraProjectTests()
+    {
+        Run("stereo camera project targets Windows x64 without legacy wrapper references", () =>
+        {
+            var projectPath = FindRepositoryFile(
+                "NodeCraft.Vision.StereoCamera",
+                "NodeCraft.Vision.StereoCamera.csproj");
+            var projectText = File.ReadAllText(projectPath);
+            var project = XDocument.Load(projectPath);
+            var propertyGroup = project.Root?.Elements("PropertyGroup").FirstOrDefault();
+            var projectReference = project
+                .Descendants("ProjectReference")
+                .SingleOrDefault();
+
+            return string.Equals((string?)propertyGroup?.Element("TargetFramework"), "net8.0-windows", StringComparison.OrdinalIgnoreCase)
+                && string.Equals((string?)propertyGroup?.Element("UseWPF"), "true", StringComparison.OrdinalIgnoreCase)
+                && string.Equals((string?)propertyGroup?.Element("LangVersion"), "9.0", StringComparison.Ordinal)
+                && string.Equals((string?)propertyGroup?.Element("PlatformTarget"), "x64", StringComparison.OrdinalIgnoreCase)
+                && string.Equals((string?)propertyGroup?.Element("Prefer32Bit"), "false", StringComparison.OrdinalIgnoreCase)
+                && string.Equals((string?)projectReference?.Attribute("Private"), "false", StringComparison.OrdinalIgnoreCase)
+                && projectReference?.Attribute("Include")?.Value.EndsWith("NodeCraft.Flow.csproj", StringComparison.OrdinalIgnoreCase) == true
+                && !projectText.Contains("StereoCamera.Net", StringComparison.Ordinal)
+                && !projectText.Contains("System.Drawing.Common", StringComparison.Ordinal);
+        });
+
+        Run("stereo camera project manifest has the stable plugin identity", () =>
+        {
+            var manifestPath = FindRepositoryFile(
+                "NodeCraft.Vision.StereoCamera",
+                "plugin.json");
+            var json = File.ReadAllText(manifestPath);
+            using var manifest = JsonDocument.Parse(json);
+            var root = manifest.RootElement;
+            return json.Contains("\"id\": \"nodecraft.vision.stereo-camera\"", StringComparison.Ordinal)
+                && json.Contains("\"entryAssembly\": \"NodeCraft.Vision.StereoCamera.dll\"", StringComparison.Ordinal)
+                && json.Contains("\"entryType\": \"NodeCraft.Vision.StereoCamera.Plugin.StereoCameraPlugin\"", StringComparison.Ordinal)
+                && json.Contains("\"apiVersion\": \"1.0\"", StringComparison.Ordinal)
+                && json.Contains("\"privateLibraryPath\": \"lib\"", StringComparison.Ordinal)
+                && root.GetProperty("id").GetString() == "nodecraft.vision.stereo-camera";
+        });
+    }
+}
