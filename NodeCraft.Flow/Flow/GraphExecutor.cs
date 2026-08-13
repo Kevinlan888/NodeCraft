@@ -133,61 +133,42 @@ namespace NodeCraft.Flow
 
         public async Task<FlowExecutionContext> ExecuteAsync(CancellationToken cancellationToken = default)
         {
-            var validation = Validate();
-            if (!validation.IsValid)
+            GraphExecutionSession session = null;
+            Exception primaryException = null;
+            try
             {
-                _logger.LogError("Graph validation failed with {ErrorCount} errors.", validation.Errors.Count);
-                throw new InvalidOperationException(string.Join(Environment.NewLine, validation.Errors.Select(error => error.Message)));
+                session = CreateSession();
+                await session.StartAsync(cancellationToken).ConfigureAwait(false);
+                return await session.ExecuteIterationAsync(cancellationToken).ConfigureAwait(false);
             }
-
-            var context = new FlowExecutionContext();
-            var sorted = TopologicalSort(_workflow);
-            _logger.LogInformation("Graph execution started ({NodeCount} nodes).", sorted.Count);
-
-            foreach (var node in sorted)
+            catch (Exception exception)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var registration = _registry.Resolve(node.TypeKey);
-                var inputs = ResolveInputs(node, registration.Definition, context);
-                var executor = registration.ExecutorFactory();
-
-                if (ShouldSkipNode(node, registration.Definition, inputs))
+                primaryException = exception;
+                throw;
+            }
+            finally
+            {
+                if (session != null)
                 {
-                    context.MarkSkipped(node.Id);
-                    _logger.LogDebug("Skipping node '{NodeId}'.", node.Id);
-                    continue;
-                }
-
-                context.MarkRunning(node.Id);
-                _logger.LogDebug("Executing node '{NodeId}' ({TypeKey}).", node.Id, node.TypeKey);
-
-                IReadOnlyDictionary<string, object> outputs;
-                try
-                {
-                    outputs = await executor.ExecuteAsync(context, node, registration.Definition, inputs, cancellationToken);
-                    context.MarkSucceeded(node.Id);
-                }
-                catch (Exception ex)
-                {
-                    context.MarkFailed(node.Id, ex);
-                    _logger.LogError(ex, "Node '{NodeId}' failed.", node.Id);
-                    throw;
-                }
-
-                foreach (var pair in outputs)
-                {
-                    var slot = FindOutputSlot(registration.Definition, pair.Key);
-                    if (slot >= 0)
+                    try
                     {
-                        context.SetPortValue(node.Id, slot, pair.Value);
+                        await session.StopAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception cleanupException) when (primaryException != null)
+                    {
+                        _logger.LogError(cleanupException, "Graph cleanup failed after a primary execution failure.");
+                    }
+
+                    try
+                    {
+                        await session.DisposeAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception cleanupException) when (primaryException != null)
+                    {
+                        _logger.LogError(cleanupException, "Graph session disposal failed after a primary execution failure.");
                     }
                 }
             }
-
-            _logger.LogInformation("Graph execution finished.");
-
-            return context;
         }
 
         public List<WorkflowNode> TopologicalSort(WorkflowDocument workflow)
@@ -260,126 +241,10 @@ namespace NodeCraft.Flow
             }
         }
 
-        private Dictionary<string, object> ResolveInputs(WorkflowNode node, FlowNodeDefinition definition, FlowExecutionContext context)
-        {
-            var inputs = new Dictionary<string, object>();
-
-            foreach (var inputPort in definition.InputPorts)
-            {
-                if (!node.Inputs.TryGetValue(inputPort.Id, out var configured))
-                {
-                    continue;
-                }
-
-                if (configured is LinkRef linkRef)
-                {
-                    // 上游被跳过时此处取不到值 → 输入缺失 → 下游也跳过（跳过状态自然传播）。
-                    if (context.TryGetPortValue(linkRef.SourceNodeId, linkRef.SourceSlot, out var portValue))
-                    {
-                        inputs[inputPort.Id] = portValue;
-                    }
-                }
-                else
-                {
-                    inputs[inputPort.Id] = configured;
-                }
-            }
-
-            return inputs;
-        }
-
-        private bool ShouldSkipNode(WorkflowNode node, FlowNodeDefinition definition, IReadOnlyDictionary<string, object> inputs)
-        {
-            return !HasActiveControlInput(node, definition, inputs)
-                || HasMissingRequiredRuntimeInput(definition, inputs);
-        }
-
-        private bool HasActiveControlInput(WorkflowNode node, FlowNodeDefinition definition, IReadOnlyDictionary<string, object> inputs)
-        {
-            var controlInputIds = definition.InputPorts
-                .Where(port => port.IsControlPort)
-                .Select(port => port.Id)
-                .ToList();
-
-            if (controlInputIds.Count == 0)
-            {
-                return true;
-            }
-
-            var hasControlLink = controlInputIds.Any(id =>
-                node.Inputs.TryGetValue(id, out var value) && value is LinkRef);
-
-            if (!hasControlLink)
-            {
-                return true;
-            }
-
-            foreach (var portId in controlInputIds)
-            {
-                if (inputs.TryGetValue(portId, out var value) && IsActiveControlValue(value))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static bool HasMissingRequiredRuntimeInput(FlowNodeDefinition definition, IReadOnlyDictionary<string, object> inputs)
-        {
-            foreach (var inputPort in definition.InputPorts)
-            {
-                if (!inputPort.IsRequired || inputPort.IsControlPort)
-                {
-                    continue;
-                }
-
-                if (!inputs.ContainsKey(inputPort.Id))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static bool IsActiveControlValue(object value)
-        {
-            if (value is FlowControlSignal signal)
-            {
-                return signal == FlowControlSignal.Active;
-            }
-
-            if (value is System.Collections.IEnumerable values && value is not string)
-            {
-                foreach (var item in values)
-                {
-                    if (IsActiveControlValue(item))
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        }
-
         private static FlowPortDefinition GetPortAtSlot(IReadOnlyList<FlowPortDefinition> ports, int slot)
         {
             return slot >= 0 && slot < ports.Count ? ports[slot] : null;
         }
 
-        private static int FindOutputSlot(FlowNodeDefinition definition, string portId)
-        {
-            for (int i = 0; i < definition.OutputPorts.Count; i++)
-            {
-                if (string.Equals(definition.OutputPorts[i].Id, portId, System.StringComparison.Ordinal))
-                {
-                    return i;
-                }
-            }
-
-            return -1;
-        }
     }
 }

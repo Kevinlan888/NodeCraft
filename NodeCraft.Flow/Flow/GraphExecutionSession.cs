@@ -16,6 +16,7 @@ namespace NodeCraft.Flow
         private readonly Dictionary<string, FlowNodeSessionContext> _sessionContexts;
         private readonly ILogger _logger;
         private readonly CancellationTokenSource _stopCancellation = new CancellationTokenSource();
+        private readonly SemaphoreSlim _iterationGate = new SemaphoreSlim(1, 1);
         private readonly List<StartedLifecycle> _startedLifecycles = new List<StartedLifecycle>();
         private GraphExecutionSessionState _state = GraphExecutionSessionState.Created;
         private Task _startTask;
@@ -129,8 +130,7 @@ namespace NodeCraft.Flow
 
         public Task<FlowExecutionContext> ExecuteIterationAsync(CancellationToken cancellationToken)
         {
-            throw new NotSupportedException(
-                "Graph iteration execution is added by the graph iteration runner task.");
+            return ExecuteIterationCoreAsync(cancellationToken);
         }
 
         internal IReadOnlyList<WorkflowNode> OrderedNodes => _orderedNodes;
@@ -167,7 +167,7 @@ namespace NodeCraft.Flow
                     _state = GraphExecutionSessionState.Running;
                 }
             }
-            catch (Exception exception)
+            catch (Exception)
             {
                 lock (_stateGate)
                 {
@@ -189,39 +189,119 @@ namespace NodeCraft.Flow
 
         private async Task StopCoreAsync()
         {
+            await _iterationGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             List<StartedLifecycle> started;
+            try
+            {
+                lock (_stateGate)
+                {
+                    started = _startedLifecycles.AsEnumerable().Reverse().ToList();
+                    _startedLifecycles.Clear();
+                }
+
+                var cleanupErrors = new List<Exception>();
+                foreach (var item in started)
+                {
+                    try
+                    {
+                        await item.Lifecycle.StopSessionAsync(item.Context, CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception exception)
+                    {
+                        cleanupErrors.Add(exception);
+                        _logger.LogError(
+                            exception,
+                            "Graph session cleanup failed for node '{NodeId}'.",
+                            item.Context.Node.Id);
+                    }
+                }
+
+                lock (_stateGate)
+                {
+                    _state = GraphExecutionSessionState.Stopped;
+                }
+
+                if (cleanupErrors.Count > 0)
+                {
+                    throw new AggregateException("One or more graph session cleanup operations failed.", cleanupErrors);
+                }
+            }
+            finally
+            {
+                _iterationGate.Release();
+            }
+        }
+
+        private async Task<FlowExecutionContext> ExecuteIterationCoreAsync(CancellationToken cancellationToken)
+        {
             lock (_stateGate)
             {
-                started = _startedLifecycles.AsEnumerable().Reverse().ToList();
-                _startedLifecycles.Clear();
-            }
-
-            var cleanupErrors = new List<Exception>();
-            foreach (var item in started)
-            {
-                try
+                if (_state != GraphExecutionSessionState.Running)
                 {
-                    await item.Lifecycle.StopSessionAsync(item.Context, CancellationToken.None)
-                        .ConfigureAwait(false);
-                }
-                catch (Exception exception)
-                {
-                    cleanupErrors.Add(exception);
-                    _logger.LogError(
-                        exception,
-                        "Graph session cleanup failed for node '{NodeId}'.",
-                        item.Context.Node.Id);
+                    throw new InvalidOperationException(
+                        $"Graph execution session cannot execute an iteration from state '{_state}'.");
                 }
             }
 
-            lock (_stateGate)
+            await _iterationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                _stopCancellation.Token);
+            try
             {
-                _state = GraphExecutionSessionState.Stopped;
-            }
+                lock (_stateGate)
+                {
+                    if (_state != GraphExecutionSessionState.Running)
+                    {
+                        throw new InvalidOperationException(
+                            $"Graph execution session cannot execute an iteration from state '{_state}'.");
+                    }
+                }
 
-            if (cleanupErrors.Count > 0)
+                foreach (var node in _orderedNodes)
+                {
+                    linkedCancellation.Token.ThrowIfCancellationRequested();
+                    if (_executors[node.Id] is IFlowIterationSource source)
+                    {
+                        await source.PrepareIterationAsync(
+                                _sessionContexts[node.Id],
+                                linkedCancellation.Token)
+                            .ConfigureAwait(false);
+                    }
+                }
+
+                var context = new FlowExecutionContext();
+                await FlowGraphIterationRunner.ExecuteAsync(
+                        _orderedNodes,
+                        _executors,
+                        Registry,
+                        context,
+                        _logger,
+                        linkedCancellation.Token)
+                    .ConfigureAwait(false);
+                return context;
+            }
+            catch (Exception exception)
             {
-                throw new AggregateException("One or more graph session cleanup operations failed.", cleanupErrors);
+                var stopping = _stopCancellation.IsCancellationRequested;
+                var callerCancelled = cancellationToken.IsCancellationRequested;
+                if (!stopping && !(exception is OperationCanceledException && callerCancelled))
+                {
+                    lock (_stateGate)
+                    {
+                        if (_state == GraphExecutionSessionState.Running)
+                        {
+                            _state = GraphExecutionSessionState.Faulted;
+                        }
+                    }
+                }
+
+                throw;
+            }
+            finally
+            {
+                _iterationGate.Release();
             }
         }
 
@@ -234,6 +314,7 @@ namespace NodeCraft.Flow
             finally
             {
                 _stopCancellation.Dispose();
+                _iterationGate.Dispose();
             }
         }
 
