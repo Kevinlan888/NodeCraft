@@ -10,6 +10,13 @@ namespace NodeCraft.Plugins
 {
     public sealed class PluginLoadContext : AssemblyLoadContext
     {
+        private static readonly HashSet<string> AllowedSystemNativeLibraryNames =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "kernel32",
+            "kernel32.dll",
+        };
+
         private static readonly HashSet<string> FrameworkFallbackExactAssemblyNames =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -146,6 +153,17 @@ namespace NodeCraft.Plugins
             if (probedPath != null)
             {
                 return LoadUnmanagedDllFromPath(probedPath);
+            }
+
+            if (OperatingSystem.IsWindows()
+                && AllowedSystemNativeLibraryNames.Contains(unmanagedDllName)
+                && NativeLibrary.TryLoad(
+                    unmanagedDllName,
+                    typeof(PluginLoadContext).Assembly,
+                    DllImportSearchPath.System32,
+                    out var systemLibraryHandle))
+            {
+                return systemLibraryHandle;
             }
 
             throw new DllNotFoundException(

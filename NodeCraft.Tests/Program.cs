@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.Loader;
 using System.Threading.Tasks;
 using System.Xml.Linq;
@@ -1409,6 +1410,45 @@ internal static partial class Program
             finally
             {
                 UnloadAssemblyLoadContext(context!);
+                DeleteDirectoryIfExists(pluginDirectory);
+            }
+        });
+        Run("plugin load context resolves Windows system native libraries", () =>
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return true;
+            }
+
+            var pluginDirectory = CreateTemporaryPluginDirectory("nodecraft-plugin-context-system-native-");
+            PluginLoadContext context = null;
+            IntPtr handle = IntPtr.Zero;
+            try
+            {
+                var pluginRoot = Path.GetFullPath(pluginDirectory);
+                var entryAssemblyPath = CopyFileToDirectory(
+                    Assembly.GetExecutingAssembly().Location,
+                    pluginRoot);
+                var privateLibraryDirectory = Path.Combine(pluginRoot, "lib");
+                Directory.CreateDirectory(privateLibraryDirectory);
+
+                context = new PluginLoadContext(
+                    entryAssemblyPath,
+                    pluginRoot,
+                    privateLibraryDirectory,
+                    CreateSharedAssemblyNames());
+
+                handle = InvokeNativeLoad(context, "kernel32.dll");
+                return handle != IntPtr.Zero;
+            }
+            finally
+            {
+                if (handle != IntPtr.Zero)
+                {
+                    NativeLibrary.Free(handle);
+                }
+
+                UnloadAssemblyLoadContext(context);
                 DeleteDirectoryIfExists(pluginDirectory);
             }
         });
@@ -2929,6 +2969,16 @@ internal static partial class Program
         return probeMethod == null
             ? null
             : probeMethod.Invoke(context, new object[] { unmanagedDllName }) as string;
+    }
+
+    private static IntPtr InvokeNativeLoad(PluginLoadContext context, string unmanagedDllName)
+    {
+        var loadMethod = typeof(PluginLoadContext).GetMethod(
+            "LoadUnmanagedDll",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        return loadMethod?.Invoke(context, new object[] { unmanagedDllName }) is IntPtr handle
+            ? handle
+            : IntPtr.Zero;
     }
 
     private static Assembly? InvokeManagedLoad(PluginLoadContext context, AssemblyName assemblyName)
