@@ -1248,6 +1248,7 @@ namespace NodeCraft.Flow
                 IsHitTestVisible = false
             };
 
+            Panel.SetZIndex(_tempLine, -1);
             _canvas.Children.Add(_tempLine);
         }
 
@@ -1488,28 +1489,6 @@ namespace NodeCraft.Flow
 
         private List<Point> Route(Point start, Point end)
         {
-            var obstacles = new List<Rect>();
-
-            foreach (var child in _canvas.Children)
-            {
-                if (child is NodeView node)
-                {
-                    var bounds = new Rect(
-                        Canvas.GetLeft(node),
-                        Canvas.GetTop(node),
-                        node.ActualWidth,
-                        node.ActualHeight);
-                    obstacles.Add(bounds);
-                }
-            }
-
-            var canvasBounds = new Rect(0, 0, WorldCanvasSize, WorldCanvasSize);
-            var result = OrthogonalRouter.Route(start, end, obstacles, canvasBounds, CellSize, padding: 6);
-            if (result.Success)
-            {
-                return result.Points;
-            }
-
             return new List<Point> { start, end };
         }
 
@@ -1531,6 +1510,7 @@ namespace NodeCraft.Flow
                 Tag = connectionId,
             };
 
+            Panel.SetZIndex(connectionLine, -1);
             connectionLine.MouseEnter += Line_MouseEnter;
             connectionLine.MouseLeave += Line_MouseLeave;
             connectionLine.ContextMenu = _lineContextMenu;
