@@ -280,8 +280,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                         rawFrame.Color.Buffer,
                         rawFrame.FrameId,
                         rawFrame.DeviceTimestamp,
-                        capturedAtUtc,
-                        _colorCalibration);
+                        capturedAtUtc);
                     var depthImage = FlowImage.FromOwnedBuffer(
                         rawFrame.Depth.Width,
                         rawFrame.Depth.Height,
@@ -291,8 +290,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                         rawFrame.Depth.Buffer,
                         rawFrame.FrameId,
                         rawFrame.DeviceTimestamp,
-                        capturedAtUtc,
-                        _depthCalibration);
+                        capturedAtUtc);
                     var sequence = checked(++_sequence);
                     var bundle = new FrameBundle(
                         sequence,

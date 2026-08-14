@@ -25,9 +25,25 @@ internal static partial class Program
                 && !calibration.IsLeftReference;
         });
 
+        Run("FlowImage does not own camera calibration", () =>
+        {
+            var image = FlowImage.CopyFrom(
+                2,
+                1,
+                2,
+                FlowPixelFormat.Mono8,
+                FlowImageKind.Color,
+                new byte[] { 7, 8 },
+                1,
+                2,
+                DateTimeOffset.UtcNow);
+            return typeof(FlowImage).GetProperty("Calibration") == null
+                && image.Width == 2
+                && image.Buffer.Span.SequenceEqual(new byte[] { 7, 8 });
+        });
+
         Run("FlowImage copy and ownership factories have distinct copy behavior", () =>
         {
-            var calibration = CreateTestCalibration(2, 1);
             var copiedSource = new byte[] { 1, 2, 3, 4, 5, 6 };
             var copied = FlowImage.CopyFrom(
                 2,
@@ -38,8 +54,7 @@ internal static partial class Program
                 copiedSource,
                 7,
                 8,
-                DateTimeOffset.UnixEpoch,
-                calibration);
+                DateTimeOffset.UnixEpoch);
             copiedSource[0] = 42;
 
             var ownedSource = new byte[] { 7, 8, 9, 10 };
@@ -52,8 +67,7 @@ internal static partial class Program
                 ownedSource,
                 9,
                 10,
-                DateTimeOffset.UnixEpoch,
-                calibration);
+                DateTimeOffset.UnixEpoch);
             MemoryMarshal.TryGetArray(owned.Buffer, out var ownedSegment);
 
             return copied.Buffer.Span[0] == 1
@@ -75,8 +89,7 @@ internal static partial class Program
                     new byte[3],
                     1,
                     2,
-                    DateTimeOffset.UnixEpoch,
-                    CreateTestCalibration(2, 1));
+                    DateTimeOffset.UnixEpoch);
                 return false;
             }
             catch (ArgumentException)

@@ -13,10 +13,9 @@ namespace NodeCraft.Flow
             byte[] buffer,
             ulong frameId,
             ulong deviceTimestamp,
-            DateTimeOffset capturedAtUtc,
-            CameraCalibration calibration)
+            DateTimeOffset capturedAtUtc)
         {
-            Validate(width, height, stride, pixelFormat, buffer, calibration);
+            Validate(width, height, stride, pixelFormat, buffer);
             Width = width;
             Height = height;
             Stride = stride;
@@ -26,7 +25,6 @@ namespace NodeCraft.Flow
             FrameId = frameId;
             DeviceTimestamp = deviceTimestamp;
             CapturedAtUtc = capturedAtUtc;
-            Calibration = calibration;
         }
 
         public int Width { get; }
@@ -47,8 +45,6 @@ namespace NodeCraft.Flow
 
         public DateTimeOffset CapturedAtUtc { get; }
 
-        public CameraCalibration Calibration { get; }
-
         public static FlowImage CopyFrom(
             int width,
             int height,
@@ -58,8 +54,7 @@ namespace NodeCraft.Flow
             ReadOnlySpan<byte> buffer,
             ulong frameId,
             ulong deviceTimestamp,
-            DateTimeOffset capturedAtUtc,
-            CameraCalibration calibration)
+            DateTimeOffset capturedAtUtc)
         {
             return new FlowImage(
                 width,
@@ -70,8 +65,7 @@ namespace NodeCraft.Flow
                 buffer.ToArray(),
                 frameId,
                 deviceTimestamp,
-                capturedAtUtc,
-                calibration);
+                capturedAtUtc);
         }
 
         public static FlowImage FromOwnedBuffer(
@@ -83,8 +77,7 @@ namespace NodeCraft.Flow
             byte[] buffer,
             ulong frameId,
             ulong deviceTimestamp,
-            DateTimeOffset capturedAtUtc,
-            CameraCalibration calibration)
+            DateTimeOffset capturedAtUtc)
         {
             if (buffer == null)
             {
@@ -100,8 +93,7 @@ namespace NodeCraft.Flow
                 buffer,
                 frameId,
                 deviceTimestamp,
-                capturedAtUtc,
-                calibration);
+                capturedAtUtc);
         }
 
         private static void Validate(
@@ -109,8 +101,7 @@ namespace NodeCraft.Flow
             int height,
             int stride,
             FlowPixelFormat pixelFormat,
-            byte[] buffer,
-            CameraCalibration calibration)
+            byte[] buffer)
         {
             if (width <= 0)
             {
@@ -130,11 +121,6 @@ namespace NodeCraft.Flow
             if (buffer == null)
             {
                 throw new ArgumentNullException(nameof(buffer));
-            }
-
-            if (calibration == null)
-            {
-                throw new ArgumentNullException(nameof(calibration));
             }
 
             var bytesPerPixel = GetBytesPerPixel(pixelFormat);

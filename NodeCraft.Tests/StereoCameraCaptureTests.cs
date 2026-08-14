@@ -109,8 +109,8 @@ internal static partial class Program
             await session.StopAsync();
             return item.Value.ColorImage.FrameId == 2
                 && item.Value.DepthImage.FrameId == 2
-                && ReferenceEquals(item.Value.ColorImage.Calibration, item.Value.ColorCalibration)
-                && ReferenceEquals(item.Value.DepthImage.Calibration, item.Value.DepthCalibration);
+                && item.Value.ColorCalibration.ImageWidth == 640
+                && item.Value.DepthCalibration.ImageWidth == 320;
         });
 
         await RunAsync("stereo camera capture faults on malformed image and clears mailbox", async () =>
@@ -204,9 +204,13 @@ internal static partial class Program
             await executor.StopSessionAsync(context, CancellationToken.None);
             var color = (FlowImage)outputs["colorImage"];
             var depth = (FlowImage)outputs["depthImage"];
+            var colorCalibration = (CameraCalibration)outputs["colorCalibration"];
+            var depthCalibration = (CameraCalibration)outputs["depthCalibration"];
             return outputs.Keys.SequenceEqual(new[] { "colorImage", "depthImage", "colorCalibration", "depthCalibration" })
-                && ReferenceEquals(color.Calibration, outputs["colorCalibration"])
-                && ReferenceEquals(depth.Calibration, outputs["depthCalibration"]);
+                && colorCalibration.ImageWidth == 640
+                && depthCalibration.ImageWidth == 320
+                && !ReferenceEquals(color, (object)colorCalibration)
+                && !ReferenceEquals(depth, (object)depthCalibration);
         });
     }
 

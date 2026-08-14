@@ -37,20 +37,6 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                 throw new ArgumentException("Color and depth images must belong to the same frame.");
             }
 
-            if (!ReferenceEquals(colorImage.Calibration, colorCalibration))
-            {
-                throw new ArgumentException(
-                    "The color image must reference the independent color calibration slot.",
-                    nameof(colorCalibration));
-            }
-
-            if (!ReferenceEquals(depthImage.Calibration, depthCalibration))
-            {
-                throw new ArgumentException(
-                    "The depth image must reference the independent depth calibration slot.",
-                    nameof(depthCalibration));
-            }
-
             Sequence = sequence;
             ColorImage = colorImage;
             DepthImage = depthImage;

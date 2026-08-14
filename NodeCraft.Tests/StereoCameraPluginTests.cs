@@ -91,7 +91,6 @@ internal static partial class Program
         {
             var node = new FlowImagePreviewNodeModel();
             node.SetStatusText("Depth16 2x1");
-            var calibration = CreatePluginCalibration();
             node.SetCurrentImage(FlowImage.CopyFrom(
                 2,
                 1,
@@ -101,8 +100,7 @@ internal static partial class Program
                 new byte[] { 1, 0, 2, 0 },
                 1,
                 2,
-                DateTimeOffset.UtcNow,
-                calibration));
+                DateTimeOffset.UtcNow));
             var path = Path.Combine(Path.GetTempPath(), "nodecraft-preview-node-" + Guid.NewGuid().ToString("N") + ".flow.xml");
             try
             {
@@ -126,7 +124,6 @@ internal static partial class Program
 
         await RunAsync("image preview executor preserves FlowImage object identity", async () =>
         {
-            var calibration = CreatePluginCalibration();
             var image = FlowImage.CopyFrom(
                 1,
                 1,
@@ -136,8 +133,7 @@ internal static partial class Program
                 new byte[] { 1, 2, 3 },
                 1,
                 2,
-                DateTimeOffset.UtcNow,
-                calibration);
+                DateTimeOffset.UtcNow);
             var output = await new FlowImagePreviewExecutor().ExecuteAsync(
                 new FlowExecutionContext(),
                 new WorkflowNode { Id = "preview" },
@@ -157,7 +153,6 @@ internal static partial class Program
             var registry = new FlowNodeRegistry();
             registry.RegisterPlugin(plugin.Metadata.Id, context.Registrations);
             var node = new FlowImagePreviewNodeModel();
-            var calibration = CreatePluginCalibration();
             var image = FlowImage.CopyFrom(
                 1,
                 1,
@@ -167,8 +162,7 @@ internal static partial class Program
                 new byte[] { 3 },
                 1,
                 2,
-                DateTimeOffset.UtcNow,
-                calibration);
+                DateTimeOffset.UtcNow);
             var execution = new FlowExecutionContext();
             execution.SetPortValue(node.Id, 0, image);
             registry.ApplyExecutionResults(new[] { node }, execution);
@@ -178,16 +172,6 @@ internal static partial class Program
         });
     }
 
-    private static CameraCalibration CreatePluginCalibration()
-    {
-        return new CameraCalibration(
-            2,
-            1,
-            new double[9],
-            new double[12],
-            new double[16],
-            false);
-    }
 }
 
 internal static class WorkflowNodeListExtensions

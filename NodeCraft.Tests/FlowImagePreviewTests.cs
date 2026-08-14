@@ -293,13 +293,6 @@ internal static partial class Program
         byte[] buffer,
         ulong frameId = 1)
     {
-        var calibration = new CameraCalibration(
-            width,
-            height,
-            new double[9],
-            new double[12],
-            new double[16],
-            false);
         return FlowImage.CopyFrom(
             width,
             height,
@@ -309,8 +302,7 @@ internal static partial class Program
             buffer,
             frameId,
             frameId,
-            DateTimeOffset.UtcNow,
-            calibration);
+            DateTimeOffset.UtcNow);
     }
 
     private static byte[] CopyGray8Pixels(BitmapSource bitmap)
