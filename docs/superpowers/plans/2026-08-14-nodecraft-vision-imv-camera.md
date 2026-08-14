@@ -209,9 +209,9 @@ Run: `dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj -f net8.0-wind
 
 Expected: compile failure because the `Imv*` types and exception do not exist.
 
-- [ ] **Step 3: Implement the enums and structs.** Define `ImvInterfaceType.All = 0xffffffff`, `ImvCreateHandleMode.ByIpAddress = 3`, `ImvBayerDemosaic.Bilinear = 1`, `ImvError.Timeout = -119`, and the explicit pixel values from `IMVDefines.h`.
+- [ ] **Step 3: Implement the enums and structs.** Define `ImvInterfaceType.All = 0` and `ImvInterfaceType.Invalid = 0xffffffff` as declared by the supplied header, together with `ImvCreateHandleMode.ByIpAddress = 3`, `ImvBayerDemosaic.Bilinear = 1`, `ImvError.Timeout = -119`, and the explicit pixel values from `IMVDefines.h`.
 
-- [ ] **Step 4: Implement the native seam and production forwarding.** Add `ImvNativeMethods` P/Invokes for the ten methods in the interface with `MVSDKmd.dll`, `StdCall`, and exact spelling. Use ANSI marshaling for `SetEnumFeatureSymbol` strings only; keep `CreateHandle`'s `void*` identifier as `IntPtr` so the device adapter controls allocation lifetime.
+- [ ] **Step 4: Implement the native seam and production forwarding.** Add `ImvNativeMethods` P/Invokes for the eleven methods in the interface with `MVSDKmd.dll`, `StdCall`, and exact spelling. Use ANSI marshaling for `SetEnumFeatureSymbol` strings only; keep `CreateHandle`'s `void*` identifier as `IntPtr` so the device adapter controls allocation lifetime.
 
 - [ ] **Step 5: Implement error translation and the device safe handle.** `VisionNativeException.ThrowIfError` returns on zero and throws with operation/code otherwise. `VisionCameraSafeHandle.ReleaseHandle` calls the injected destroy delegate and returns true only for `IMV_OK`; explicit device methods still perform Stop/Close before disposing this handle.
 
