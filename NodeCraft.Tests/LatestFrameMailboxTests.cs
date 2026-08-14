@@ -1,7 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using NodeCraft.Vision.StereoCamera.Camera;
+using NodeCraft.Vision.Camera;
 
 internal static partial class Program
 {

@@ -7,9 +7,8 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NodeCraft.Flow;
-using NodeCraft.Vision.Camera;
 
-namespace NodeCraft.Vision.StereoCamera.Camera
+namespace NodeCraft.Vision.Camera
 {
     internal interface IMonotonicClock
     {
@@ -23,9 +22,14 @@ namespace NodeCraft.Vision.StereoCamera.Camera
         public TimeSpan Now => Stopwatch.GetElapsedTime(_origin);
     }
 
-    internal sealed class StereoCameraCaptureOptions
+    internal interface ICameraRuntimeScopeFactory
     {
-        internal StereoCameraCaptureOptions(
+        IDisposable Acquire();
+    }
+
+    internal sealed class VisionCameraCaptureOptions
+    {
+        internal VisionCameraCaptureOptions(
             uint pollTimeoutMilliseconds = 100,
             TimeSpan? noValidFrameTimeout = null)
         {
@@ -47,16 +51,16 @@ namespace NodeCraft.Vision.StereoCamera.Camera
         internal TimeSpan NoValidFrameTimeout { get; }
     }
 
-    internal sealed class StereoCameraCaptureSession
+    internal sealed class VisionCameraCaptureSession
     {
         private readonly object _gate = new object();
         private readonly string _ipAddress;
-        private readonly IStereoCameraDeviceFactory _deviceFactory;
+        private readonly IVisionCameraDeviceFactory _deviceFactory;
         private readonly ICameraRuntimeScopeFactory _runtimeScopeFactory;
         private readonly IMonotonicClock _clock;
-        private readonly StereoCameraCaptureOptions _options;
+        private readonly VisionCameraCaptureOptions _options;
         private readonly ILogger _logger;
-        private readonly LatestFrameMailbox<FrameBundle> _mailbox = new LatestFrameMailbox<FrameBundle>();
+        private readonly LatestFrameMailbox<FlowImage> _mailbox = new LatestFrameMailbox<FlowImage>();
 
         private Task _startTask;
         private Task _stopTask;
@@ -64,35 +68,28 @@ namespace NodeCraft.Vision.StereoCamera.Camera
         private CancellationTokenSource _captureCancellation;
         private CancellationTokenRegistration _callerCancellationRegistration;
         private IDisposable _runtimeScope;
-        private IStereoCameraDevice _device;
+        private IVisionCameraDevice _device;
         private bool _deviceConnected;
-        private bool _callbackRegistered;
         private bool _grabbing;
         private bool _started;
         private bool _stopped;
         private long _sequence;
-        private CameraCalibration _colorCalibration;
-        private CameraCalibration _depthCalibration;
 
-        internal StereoCameraCaptureSession(
+        internal VisionCameraCaptureSession(
             string ipAddress,
-            IStereoCameraDeviceFactory deviceFactory,
+            IVisionCameraDeviceFactory deviceFactory,
             ICameraRuntimeScopeFactory runtimeScopeFactory,
             IMonotonicClock clock,
-            StereoCameraCaptureOptions options = null,
+            VisionCameraCaptureOptions options = null,
             ILogger logger = null)
         {
             _ipAddress = ipAddress ?? throw new ArgumentNullException(nameof(ipAddress));
             _deviceFactory = deviceFactory ?? throw new ArgumentNullException(nameof(deviceFactory));
             _runtimeScopeFactory = runtimeScopeFactory ?? throw new ArgumentNullException(nameof(runtimeScopeFactory));
             _clock = clock ?? throw new ArgumentNullException(nameof(clock));
-            _options = options ?? new StereoCameraCaptureOptions();
+            _options = options ?? new VisionCameraCaptureOptions();
             _logger = logger ?? NullLogger.Instance;
         }
-
-        internal CameraCalibration ColorCalibration => _colorCalibration;
-
-        internal CameraCalibration DepthCalibration => _depthCalibration;
 
         internal Task StartAsync(CancellationToken cancellationToken)
         {
@@ -100,7 +97,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
             {
                 if (_stopped)
                 {
-                    throw new InvalidOperationException("The StereoCamera capture session has stopped.");
+                    throw new InvalidOperationException("The Vision capture session has stopped.");
                 }
 
                 if (_startTask == null)
@@ -112,7 +109,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
             }
         }
 
-        internal Task<LatestFrameMailbox<FrameBundle>.LatestFrame<FrameBundle>> WaitForNextAsync(
+        internal Task<LatestFrameMailbox<FlowImage>.LatestFrame<FlowImage>> WaitForNextAsync(
             long afterSequence,
             CancellationToken cancellationToken)
         {
@@ -120,7 +117,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
             {
                 if (!_started && _startTask == null)
                 {
-                    throw new InvalidOperationException("The StereoCamera capture session has not started.");
+                    throw new InvalidOperationException("The Vision capture session has not started.");
                 }
             }
 
@@ -144,34 +141,31 @@ namespace NodeCraft.Vision.StereoCamera.Camera
         {
             try
             {
-                VendorStereoCameraDeviceFactory.ValidateIpv4(_ipAddress);
-                cancellationToken.ThrowIfCancellationRequested();
+                if (!VisionCameraDeviceFactory.IsValidIpv4(_ipAddress))
+                {
+                    throw new ArgumentException(
+                        "The camera IP address must be a four-component dotted-decimal IPv4 literal.",
+                        nameof(_ipAddress));
+                }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 _runtimeScope = _runtimeScopeFactory.Acquire();
                 cancellationToken.ThrowIfCancellationRequested();
+
                 var discovered = _deviceFactory.Discover();
                 if (discovered < 0)
                 {
-                    throw new InvalidOperationException("StereoCamera discovery returned a negative device count.");
+                    throw new InvalidOperationException("Vision discovery returned a negative device count.");
                 }
 
                 _device = _deviceFactory.OpenByIp(_ipAddress);
                 if (_device == null)
                 {
-                    throw new InvalidOperationException("StereoCamera device factory returned null.");
+                    throw new InvalidOperationException("Vision device factory returned null.");
                 }
 
                 _device.Connect();
                 _deviceConnected = true;
-                _device.RegisterDisconnectCallback(OnDeviceDisconnect);
-                _callbackRegistered = true;
-                _colorCalibration = _device.ReadCalibration(CameraStream.Color, isLeftReference: false);
-                _depthCalibration = _device.ReadCalibration(CameraStream.Depth, isLeftReference: false);
-                if (_colorCalibration == null || _depthCalibration == null)
-                {
-                    throw new InvalidOperationException("StereoCamera calibration was not available.");
-                }
-
                 _device.StartGrabbing();
                 _grabbing = true;
                 _captureCancellation = new CancellationTokenSource();
@@ -199,7 +193,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                 }
                 catch (Exception cleanupException)
                 {
-                    _logger.LogError(cleanupException, "StereoCamera startup cleanup failed.");
+                    _logger.LogError(cleanupException, "Vision startup cleanup failed.");
                 }
 
                 ExceptionDispatchInfo.Capture(exception).Throw();
@@ -234,7 +228,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                     }
                     catch (Exception exception)
                     {
-                        _logger.LogError(exception, "StereoCamera capture loop stopped after a fault.");
+                        _logger.LogError(exception, "Vision capture loop stopped after a fault.");
                     }
                 }
 
@@ -260,46 +254,30 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                     cancellationToken.ThrowIfCancellationRequested();
                     var rawFrame = _device.TryGetFrame(_options.PollTimeoutMilliseconds);
                     var now = _clock.Now;
-                    if (rawFrame == null || !rawFrame.IsComplete)
+                    if (rawFrame == null)
                     {
                         if (now - lastCompleteFrameAt >= _options.NoValidFrameTimeout)
                         {
                             throw new TimeoutException(
-                                $"No valid stereo frame was received within {_options.NoValidFrameTimeout}.");
+                                $"No valid Vision frame was received within {_options.NoValidFrameTimeout}.");
                         }
 
                         continue;
                     }
 
                     var capturedAtUtc = DateTimeOffset.UtcNow;
-                    var colorImage = FlowImage.FromOwnedBuffer(
-                        rawFrame.Color.Width,
-                        rawFrame.Color.Height,
-                        rawFrame.Color.Stride,
-                        rawFrame.Color.PixelFormat,
-                        rawFrame.Color.Kind,
-                        rawFrame.Color.Buffer,
-                        rawFrame.FrameId,
-                        rawFrame.DeviceTimestamp,
-                        capturedAtUtc);
-                    var depthImage = FlowImage.FromOwnedBuffer(
-                        rawFrame.Depth.Width,
-                        rawFrame.Depth.Height,
-                        rawFrame.Depth.Stride,
-                        rawFrame.Depth.PixelFormat,
-                        rawFrame.Depth.Kind,
-                        rawFrame.Depth.Buffer,
+                    var image = FlowImage.FromOwnedBuffer(
+                        rawFrame.Image.Width,
+                        rawFrame.Image.Height,
+                        rawFrame.Image.Stride,
+                        rawFrame.Image.PixelFormat,
+                        rawFrame.Image.Kind,
+                        rawFrame.Image.Buffer,
                         rawFrame.FrameId,
                         rawFrame.DeviceTimestamp,
                         capturedAtUtc);
                     var sequence = checked(++_sequence);
-                    var bundle = new FrameBundle(
-                        sequence,
-                        colorImage,
-                        depthImage,
-                        _colorCalibration,
-                        _depthCalibration);
-                    _mailbox.Publish(sequence, bundle);
+                    _mailbox.Publish(sequence, image);
                     lastCompleteFrameAt = now;
                 }
             }
@@ -317,34 +295,11 @@ namespace NodeCraft.Vision.StereoCamera.Camera
             return Task.CompletedTask;
         }
 
-        private void OnDeviceDisconnect(Exception exception)
-        {
-            var disconnectException = exception
-                ?? new InvalidOperationException("StereoCamera disconnected.");
-            _mailbox.Fault(disconnectException);
-            _captureCancellation?.Cancel();
-        }
-
         private Task CleanupAsync()
         {
             var cleanupErrors = new List<Exception>();
             _callerCancellationRegistration.Dispose();
             _callerCancellationRegistration = default;
-
-            if (_callbackRegistered && _device != null)
-            {
-                try
-                {
-                    _device.UnregisterDisconnectCallback();
-                }
-                catch (Exception exception)
-                {
-                    cleanupErrors.Add(exception);
-                    _logger.LogError(exception, "StereoCamera disconnect callback cleanup failed.");
-                }
-
-                _callbackRegistered = false;
-            }
 
             if (_grabbing && _device != null)
             {
@@ -355,7 +310,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                 catch (Exception exception)
                 {
                     cleanupErrors.Add(exception);
-                    _logger.LogError(exception, "StereoCamera grabbing cleanup failed.");
+                    _logger.LogError(exception, "Vision grabbing cleanup failed.");
                 }
 
                 _grabbing = false;
@@ -370,7 +325,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                 catch (Exception exception)
                 {
                     cleanupErrors.Add(exception);
-                    _logger.LogError(exception, "StereoCamera disconnect cleanup failed.");
+                    _logger.LogError(exception, "Vision disconnect cleanup failed.");
                 }
 
                 _deviceConnected = false;
@@ -385,7 +340,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                 catch (Exception exception)
                 {
                     cleanupErrors.Add(exception);
-                    _logger.LogError(exception, "StereoCamera device disposal failed.");
+                    _logger.LogError(exception, "Vision device disposal failed.");
                 }
 
                 _device = null;
@@ -404,19 +359,16 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                 catch (Exception exception)
                 {
                     cleanupErrors.Add(exception);
-                    _logger.LogError(exception, "StereoCamera native runtime cleanup failed.");
+                    _logger.LogError(exception, "Vision native runtime cleanup failed.");
                 }
 
                 _runtimeScope = null;
             }
 
-            _colorCalibration = null;
-            _depthCalibration = null;
-
             if (cleanupErrors.Count > 0)
             {
                 throw new AggregateException(
-                    "One or more StereoCamera capture cleanup operations failed.",
+                    "One or more Vision capture cleanup operations failed.",
                     cleanupErrors);
             }
 

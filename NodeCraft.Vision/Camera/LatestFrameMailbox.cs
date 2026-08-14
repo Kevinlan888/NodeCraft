@@ -4,7 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace NodeCraft.Vision.StereoCamera.Camera
+namespace NodeCraft.Vision.Camera
 {
     internal sealed class LatestFrameMailbox<T>
     {
@@ -73,11 +73,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                 {
                     terminalFault = _terminalFault;
                 }
-                else if (_completed)
-                {
-                    completed = true;
-                }
-                else if (cancellationToken.IsCancellationRequested)
+                else if (_completed || cancellationToken.IsCancellationRequested)
                 {
                     completed = true;
                 }
@@ -171,16 +167,15 @@ namespace NodeCraft.Vision.StereoCamera.Camera
 
         private void CancelWaiter(Waiter waiter, CancellationToken cancellationToken)
         {
-            var removed = false;
             lock (_gate)
             {
-                removed = _waiters.Remove(waiter);
+                if (!_waiters.Remove(waiter))
+                {
+                    return;
+                }
             }
 
-            if (removed)
-            {
-                waiter.Completion.TrySetCanceled(cancellationToken);
-            }
+            waiter.Completion.TrySetCanceled(cancellationToken);
         }
 
         private static void CompleteWaitersWithResult(
