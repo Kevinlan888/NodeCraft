@@ -54,7 +54,7 @@ internal static partial class Program
     {
         RunVisualContractTests();
         RunVisionProjectTests();
-        RunVendorInteropTests();
+        RunImvInteropTests();
         RunStereoCameraPackagingTests();
         await RunLatestFrameMailboxTestsAsync();
         RunVendorStereoCameraDeviceTests();
