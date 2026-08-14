@@ -73,6 +73,7 @@
                                     Grid.ColumnSpan="3"
                                     MinHeight="28"
                                     Padding="8,4"
+                                    Margin="0,0,0,6"
                                     Background="{DynamicResource colorSubtleBackground}"
                                     BorderBrush="{DynamicResource colorNeutralStroke1}"
                                     BorderThickness="0,0,0,1"
