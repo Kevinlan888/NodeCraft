@@ -77,17 +77,50 @@ namespace NodeCraft.Flow
                 var geometry = new StreamGeometry();
                 using (var ctx = geometry.Open())
                 {
-                    BuildRoundedPolyline(ctx, Points.ToList(), Math.Max(0, CornerRadius));
-
-                    if (Fill != null && Points.Count >= 2)
+                    Point arrowPrevious;
+                    if (Points.Count == 2)
                     {
-                        BuildArrowHead(ctx, Points[Points.Count - 2], Points[Points.Count - 1]);
+                        BuildSpline(ctx, Points[0], Points[1], out arrowPrevious);
+                    }
+                    else
+                    {
+                        var points = Points.ToList();
+                        BuildRoundedPolyline(ctx, points, Math.Max(0, CornerRadius));
+                        arrowPrevious = points[points.Count - 2];
+                    }
+
+                    if (Fill != null)
+                    {
+                        BuildArrowHead(ctx, arrowPrevious, Points[Points.Count - 1]);
                     }
                 }
 
                 geometry.Freeze();
                 return geometry;
             }
+        }
+
+        private static void GetSplineControlPoints(
+            Point start,
+            Point end,
+            out Point controlStart,
+            out Point controlEnd)
+        {
+            var distance = (end - start).Length;
+            var offset = Math.Max(30, distance * 0.25);
+            controlStart = new Point(start.X + offset, start.Y);
+            controlEnd = new Point(end.X - offset, end.Y);
+        }
+
+        private static void BuildSpline(
+            StreamGeometryContext ctx,
+            Point start,
+            Point end,
+            out Point controlEnd)
+        {
+            GetSplineControlPoints(start, end, out var controlStart, out controlEnd);
+            ctx.BeginFigure(start, false, false);
+            ctx.BezierTo(controlStart, controlEnd, end, true, true);
         }
 
         private void BuildRoundedPolyline(StreamGeometryContext ctx, IList<Point> points, double cornerRadius)
