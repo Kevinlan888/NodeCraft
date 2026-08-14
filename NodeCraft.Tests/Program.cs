@@ -233,6 +233,10 @@ internal static partial class Program
             var innerNode = template?.Descendants(presentation + "Grid")
                 .Single(element => (string?)element.Attribute("Name") == "InnerNode");
             var presenter = innerNode?.Element(presentation + "ContentPresenter");
+            var header = template?.Descendants(presentation + "Border")
+                .SingleOrDefault(element => (string?)element.Attribute(xaml + "Name") == "NodeHeader");
+            var title = header?.Descendants(presentation + "TextBlock")
+                .SingleOrDefault(element => (string?)element.Attribute(xaml + "Name") == "NodeTitle");
 
             return (string?)horizontalAlignment?.Attribute("Value") == "Stretch"
                 && (string?)verticalAlignment?.Attribute("Value") == "Stretch"
@@ -245,8 +249,38 @@ internal static partial class Program
                 && (string?)presenter?.Attribute("HorizontalAlignment")
                     == "{TemplateBinding HorizontalContentAlignment}"
                 && (string?)presenter?.Attribute("VerticalAlignment")
-                    == "{TemplateBinding VerticalContentAlignment}";
+                    == "{TemplateBinding VerticalContentAlignment}"
+                && (string?)header?.Attribute("Grid.Row") == "0"
+                && (string?)header?.Attribute("Grid.Column") == "0"
+                && (string?)header?.Attribute("Grid.ColumnSpan") == "3"
+                && (string?)header?.Attribute("Background")
+                    == "{DynamicResource colorSubtleBackground}"
+                && (string?)header?.Attribute("BorderBrush")
+                    == "{DynamicResource colorNeutralStroke1}"
+                && (string?)header?.Attribute("BorderThickness") == "0,0,0,1"
+                && (string?)header?.Attribute("Cursor") == "SizeAll"
+                && (string?)title?.Attribute("Text")
+                    == "{Binding NodeModel.Name, RelativeSource={RelativeSource TemplatedParent}}";
         });
+
+        Run("NodeView title bar displays the node name", () =>
+            RunOnSta(() =>
+                RunWithThemedWindow(window =>
+                {
+                    var node = new NodeView
+                    {
+                        NodeModel = new NodeModel { Name = "Title Test" },
+                        Content = new System.Windows.Controls.Grid(),
+                        Width = 240,
+                        Height = 160,
+                    };
+                    window.Content = node;
+                    window.UpdateLayout();
+
+                    var title = node.Template?.FindName("NodeTitle", node)
+                        as System.Windows.Controls.TextBlock;
+                    return title != null && title.Text == "Title Test";
+                })));
 
         Run("FlowCanvas template declares a clipped viewport", () =>
         {
@@ -2272,16 +2306,24 @@ internal static partial class Program
             RunOnSta(() =>
             {
                 var factory = new DefaultFlowNodeContentFactory(new FlowCanvas());
-                var imageContent = factory.Build(new ImagePreviewNodeModel());
-                var regularContent = factory.Build(new StringValueNodeModel());
+                var imageNode = new ImagePreviewNodeModel { Name = "Image Header" };
+                var regularNode = new StringValueNodeModel { Name = "Ordinary Header" };
+                var imageContent = factory.Build(imageNode);
+                var regularContent = factory.Build(regularNode);
                 var imageGrid = imageContent as System.Windows.Controls.Grid;
                 var previewBorder = FindLogicalDescendant<System.Windows.Controls.Border>(imageContent);
 
                 return regularContent is System.Windows.Controls.StackPanel regularPanel
                     && regularPanel.Orientation == System.Windows.Controls.Orientation.Vertical
+                    && regularPanel.Children
+                        .OfType<System.Windows.Controls.TextBlock>()
+                        .All(text => text.Text != "Ordinary Header")
                     && imageGrid != null
-                    && imageGrid.RowDefinitions.Count >= 2
-                    && imageGrid.RowDefinitions[1].Height.IsStar
+                    && imageGrid.RowDefinitions.Count >= 1
+                    && imageGrid.RowDefinitions[0].Height.IsStar
+                    && !imageGrid.Children
+                        .OfType<System.Windows.Controls.TextBlock>()
+                        .Any(text => text.Text == "Image")
                     && previewBorder != null
                     && double.IsNaN(previewBorder.Width)
                     && double.IsNaN(previewBorder.Height)
