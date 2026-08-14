@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using NodeCraft.Flow;
 using NodeCraft.Vision.StereoCamera.Nodes;
 using NodeCraft.Vision.StereoCamera.Preview;
@@ -115,6 +117,54 @@ internal static partial class Program
             return renderCount == 2 && applied.SequenceEqual(new[] { 2L });
         });
 
+        await RunAsync("latest preview render queue keeps the new worker during an idle handoff", async () =>
+        {
+            var idleEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseIdle = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var secondStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseSecond = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var applied = new List<long>();
+            var renderCount = 0;
+            var first = CreatePreviewImage(1, 1, 1, FlowPixelFormat.Mono8, FlowImageKind.Color, new byte[] { 1 }, 1);
+            var second = CreatePreviewImage(1, 1, 1, FlowPixelFormat.Mono8, FlowImageKind.Color, new byte[] { 2 }, 2);
+
+            using var queue = new LatestPreviewRenderQueue(
+                image =>
+                {
+                    var count = Interlocked.Increment(ref renderCount);
+                    if (count == 2)
+                    {
+                        secondStarted.TrySetResult(true);
+                        releaseSecond.Task.GetAwaiter().GetResult();
+                    }
+
+                    return new PreviewRenderResult(CreatePreviewBitmap(), image.FrameId.ToString());
+                },
+                (version, result) =>
+                {
+                    applied.Add(long.Parse(result.StatusText));
+                    return Task.CompletedTask;
+                },
+                generation =>
+                {
+                    idleEntered.TrySetResult(true);
+                    releaseIdle.Task.GetAwaiter().GetResult();
+                });
+
+            queue.Submit(first);
+            await idleEntered.Task;
+
+            queue.Submit(second);
+            await secondStarted.Task;
+            releaseIdle.TrySetResult(true);
+            await Task.Delay(20);
+            var activeWorkerIsTracked = !queue.DrainAsync().IsCompleted;
+            releaseSecond.TrySetResult(true);
+            await queue.DrainAsync();
+
+            return activeWorkerIsTracked && applied.SequenceEqual(new[] { 1L, 2L });
+        });
+
         Run("FlowImage preview view uses DynamicResource theme keys and unload cleanup", () =>
         {
             var xaml = File.ReadAllText(FindRepositoryFile(
@@ -145,6 +195,93 @@ internal static partial class Program
                 return cameraContent is FrameworkElement
                     && previewContent is FrameworkElement;
             }));
+
+        Run("preview dispatcher drops a stale result before UI mutation", () =>
+        {
+            return RunOnSta(() =>
+            {
+                var node = new FlowImagePreviewNodeModel();
+                var view = (FlowImagePreviewView)FlowImagePreviewView.CreateContent(
+                    new FlowCanvas(),
+                    node);
+                var queueField = typeof(FlowImagePreviewView).GetField(
+                    "_renderQueue",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                if (queueField == null)
+                {
+                    throw new MissingFieldException(nameof(FlowImagePreviewView), "_renderQueue");
+                }
+
+                var queue = (LatestPreviewRenderQueue)queueField.GetValue(view);
+                var first = CreatePreviewImage(
+                    1,
+                    1,
+                    1,
+                    FlowPixelFormat.Mono8,
+                    FlowImageKind.Color,
+                    new byte[] { 1 },
+                    1);
+                var second = CreatePreviewImage(
+                    1,
+                    1,
+                    1,
+                    FlowPixelFormat.Mono8,
+                    FlowImageKind.Color,
+                    new byte[] { 2 },
+                    2);
+
+                queue.Submit(first);
+                var applyMethod = typeof(FlowImagePreviewView).GetMethod(
+                    "ApplyRenderResultAsync",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                if (applyMethod == null)
+                {
+                    throw new MissingMethodException(nameof(FlowImagePreviewView), "ApplyRenderResultAsync");
+                }
+
+                var oldApply = (Task)applyMethod.Invoke(
+                    view,
+                    new object[]
+                    {
+                        1L,
+                        new PreviewRenderResult(CreatePreviewBitmap(), "old"),
+                    });
+
+                queue.Submit(second);
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+                while (DateTime.UtcNow < deadline
+                    && (!oldApply.IsCompleted || !queue.DrainAsync().IsCompleted || node.StatusText.IndexOf("frame 2", StringComparison.Ordinal) < 0))
+                {
+                    var frame = new DispatcherFrame();
+                    view.Dispatcher.BeginInvoke(
+                        DispatcherPriority.Background,
+                        new Action(() => frame.Continue = false));
+                    Dispatcher.PushFrame(frame);
+                }
+
+                var passed = oldApply.IsCompleted
+                    && queue.DrainAsync().IsCompleted
+                    && node.StatusText.IndexOf("frame 2", StringComparison.Ordinal) >= 0
+                    && node.StatusText.IndexOf("old", StringComparison.Ordinal) < 0;
+                queue.Dispose();
+                return passed;
+            });
+        });
+    }
+
+    private static BitmapSource CreatePreviewBitmap()
+    {
+        var bitmap = BitmapSource.Create(
+            1,
+            1,
+            96,
+            96,
+            PixelFormats.Gray8,
+            null,
+            new byte[] { 0 },
+            1);
+        bitmap.Freeze();
+        return bitmap;
     }
 
     private static FlowImage CreatePreviewImage(

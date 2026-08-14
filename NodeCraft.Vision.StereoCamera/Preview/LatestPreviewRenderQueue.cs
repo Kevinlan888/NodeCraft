@@ -11,23 +11,35 @@ namespace NodeCraft.Vision.StereoCamera.Preview
         private readonly Func<FlowImage, PreviewRenderResult> _render;
         private readonly Func<long, PreviewRenderResult, Task> _applyAsync;
         private readonly CancellationTokenSource _cancellation = new CancellationTokenSource();
+        private readonly Action<long> _workerIdleCallback;
         private PendingWork _pending;
         private Task _workerTask;
+        private long _nextWorkerGeneration;
+        private long _workerGeneration;
         private long _latestVersion;
         private bool _disposed;
 
         internal LatestPreviewRenderQueue(
             Func<FlowImage, PreviewRenderResult> render,
             Func<long, PreviewRenderResult, Task> applyAsync)
+            : this(render, applyAsync, null)
+        {
+        }
+
+        internal LatestPreviewRenderQueue(
+            Func<FlowImage, PreviewRenderResult> render,
+            Func<long, PreviewRenderResult, Task> applyAsync,
+            Action<long> workerIdleCallback)
         {
             _render = render ?? throw new ArgumentNullException(nameof(render));
             _applyAsync = applyAsync ?? throw new ArgumentNullException(nameof(applyAsync));
+            _workerIdleCallback = workerIdleCallback;
         }
 
         internal LatestPreviewRenderQueue(
             Func<FlowImage, PreviewRenderResult> render,
             Func<PreviewRenderResult, Task> applyAsync)
-            : this(render, (version, result) => applyAsync(result))
+            : this(render, (version, result) => applyAsync(result), null)
         {
         }
 
@@ -56,7 +68,9 @@ namespace NodeCraft.Vision.StereoCamera.Preview
                 _pending = new PendingWork(version, image);
                 if (_workerTask == null)
                 {
-                    _workerTask = Task.Run(ProcessAsync);
+                    var generation = ++_nextWorkerGeneration;
+                    _workerGeneration = generation;
+                    _workerTask = Task.Run(() => ProcessAsync(generation));
                 }
             }
         }
@@ -93,23 +107,44 @@ namespace NodeCraft.Vision.StereoCamera.Preview
             // keeping the source alive avoids racing Dispose with token access.
         }
 
-        private async Task ProcessAsync()
+        private async Task ProcessAsync(long generation)
         {
             try
             {
                 while (true)
                 {
-                    PendingWork work;
+                    PendingWork work = null;
+                    var workerBecameIdle = false;
                     lock (_gate)
                     {
                         if (_cancellation.IsCancellationRequested || _pending == null)
                         {
-                            _workerTask = null;
-                            return;
+                            workerBecameIdle = OwnsWorkerNoLock(generation)
+                                && !_cancellation.IsCancellationRequested
+                                && _pending == null;
+                            if (OwnsWorkerNoLock(generation))
+                            {
+                                _workerTask = null;
+                                _workerGeneration = 0;
+                            }
+                        }
+                        else
+                        {
+                            work = _pending;
+                            _pending = null;
+                        }
+                    }
+
+                    if (work == null)
+                    {
+                        if (workerBecameIdle)
+                        {
+                            // This callback is used only by deterministic tests to hold the
+                            // handoff window after ownership has been released.
+                            _workerIdleCallback?.Invoke(generation);
                         }
 
-                        work = _pending;
-                        _pending = null;
+                        return;
                     }
 
                     _cancellation.Token.ThrowIfCancellationRequested();
@@ -137,9 +172,18 @@ namespace NodeCraft.Vision.StereoCamera.Preview
             {
                 lock (_gate)
                 {
-                    _workerTask = null;
+                    if (OwnsWorkerNoLock(generation))
+                    {
+                        _workerTask = null;
+                        _workerGeneration = 0;
+                    }
                 }
             }
+        }
+
+        private bool OwnsWorkerNoLock(long generation)
+        {
+            return _workerGeneration == generation;
         }
 
         private void ThrowIfDisposedNoLock()

@@ -94,7 +94,7 @@ namespace NodeCraft.Vision.StereoCamera.Views
 
             await Dispatcher.InvokeAsync(() =>
             {
-                if (_unloaded)
+                if (_unloaded || version != _renderQueue.LatestVersion)
                 {
                     return;
                 }
