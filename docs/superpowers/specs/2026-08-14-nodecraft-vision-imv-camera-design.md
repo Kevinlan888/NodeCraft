@@ -31,8 +31,8 @@ Vision 相机节点和一个通用图片预览节点。
 - 不实现相机参数编辑器（曝光、增益、白平衡、触发源等）。
 - 不实现断线自动重连、设备热插拔 UX 或相机发现列表 UI。
 - 不提交 `D:\Downloads\...` 中的 SDK 文件，也不要求宿主机全局安装 SDK 或修改系统 PATH。
-- 保持 `NodeCraft.Flow` 的执行会话契约不变，并将 `FlowImage` 的标定字段扩展为可选，
-  以准确表示 IMV 2D 相机未提供标定数据的情况。
+- 保持 `NodeCraft.Flow` 的执行会话契约不变，并让 `FlowImage` 与 `CameraCalibration` 完全解耦；
+  标定数据只作为独立的 `FlowDataType.CameraCalibration` 值传递。
 
 ## 3. 命名和插件身份
 
@@ -67,8 +67,8 @@ NodeCraft.Vision\
 
 - 类别：`Vision`
 - 输入：无数据端口；IP 地址由节点模型属性写入 `WorkflowNode.Inputs["ipAddress"]`
-- 输出：`image`，类型为 `FlowDataType.Image`；IMV 2D 相机没有标定数据，因此该图片的
-  `FlowImage.Calibration` 为 `null`
+- 输出：`image`，类型为 `FlowDataType.Image`；IMV `Grab` API 不提供标定输出，本节点不增加
+  标定端口
 - 编辑器：复用现有 IP 地址编辑器，标题改为 `Vision Camera`
 
 节点执行器 `VisionCameraExecutor` 实现现有的：
@@ -166,11 +166,12 @@ IMV 头文件在 Windows 下定义 `IMV_CALL` 为 `__stdcall`，因此所有 P/I
 
 直接复制时 stride 从 `size / height` 推导，并验证不小于 `width * bytesPerPixel`；转换输出使用
 无 padding 的 `width * height * 3` BGR 缓冲区。帧 ID、设备时间戳和采集时间写入 `FlowImage`
-元数据，标定字段保持为 `null`。
+元数据，不写入标定对象。
 
-现有 `FlowImage` 工厂将 `CameraCalibration calibration` 参数改为可选，并允许
-`FlowImage.Calibration` 为 `null`。这是为了区分“没有标定数据”的普通 2D 图片和带真实标定数据
-的 3D 图片；所有现有 3D 相机测试继续传递非空标定对象。
+`FlowImage` 工厂不再接收 `CameraCalibration` 参数，`FlowImage` 不持有标定属性。
+`CameraCalibration` 仍保留在 `NodeCraft.Flow`，作为独立数据类型；现有 3D 相机的
+`colorCalibration` 和 `depthCalibration` 端口继续输出独立对象，未来 Vision 若通过其他 SDK
+接口获得标定，也必须通过独立端口或独立节点提供。
 
 ### 5.4 错误和安全句柄
 
@@ -206,7 +207,8 @@ IMV 抓流的 `MVSDKmd.dll`、GenICam 依赖、`MVProducerGEV.cti`、`MVProducer
 
 继续使用仓库现有的 Windows 控制台测试跑棒，不引入新的测试框架。测试分为：
 
-1. **公共图片契约**：验证无标定的 `FlowImage` 可以创建，同时现有带标定图片行为不变。
+1. **公共图片契约**：验证 `FlowImage` 只包含像素/帧元数据，工厂不接收标定参数；验证
+   `CameraCalibration` 仍可作为独立值创建和传递。
 2. **项目和身份**：验证 `.sln`、`.csproj`、根命名空间、程序集、`plugin.json`、节点类型键和
    新目录中不存在旧 `StereoCamera` 身份。
 3. **IMV 互操作布局**：验证 `IMV_FrameInfo`、`IMV_Frame`、像素枚举和 P/Invoke 调用约定的
