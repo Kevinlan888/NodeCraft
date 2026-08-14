@@ -35,15 +35,6 @@ namespace NodeCraft.Flow
                 VerticalAlignment = VerticalAlignment.Stretch,
             };
 
-            container.Children.Add(new TextBlock
-            {
-                Text = node.Name,
-                FontWeight = FontWeights.SemiBold,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                TextAlignment = TextAlignment.Center,
-                Margin = new Thickness(0, 0, 0, 6),
-            });
-
             if (node is StringValueNodeModel stringValueNode)
             {
                 container.Children.Add(BuildInlineEditor("Value", stringValueNode.ValueText, value =>
@@ -654,10 +645,6 @@ namespace NodeCraft.Flow
 
             panel.RowDefinitions.Add(new RowDefinition
             {
-                Height = GridLength.Auto,
-            });
-            panel.RowDefinitions.Add(new RowDefinition
-            {
                 Height = new GridLength(1, GridUnitType.Star),
             });
             if (!string.IsNullOrWhiteSpace(node.LastImagePath))
@@ -667,17 +654,6 @@ namespace NodeCraft.Flow
                     Height = GridLength.Auto,
                 });
             }
-
-            var title = new TextBlock
-            {
-                Text = "Image",
-                FontSize = 11,
-                Opacity = 0.75,
-                Margin = new Thickness(0, 0, 0, 4),
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-            };
-            Grid.SetRow(title, 0);
-            panel.Children.Add(title);
 
             var border = new Border
             {
@@ -750,7 +726,7 @@ namespace NodeCraft.Flow
                 };
             }
 
-            Grid.SetRow(border, 1);
+            Grid.SetRow(border, 0);
             panel.Children.Add(border);
 
             if (!string.IsNullOrWhiteSpace(node.LastImagePath))
@@ -764,7 +740,7 @@ namespace NodeCraft.Flow
                     FontSize = 10,
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                 };
-                Grid.SetRow(path, 2);
+                Grid.SetRow(path, 1);
                 panel.Children.Add(path);
             }
 
