@@ -67,6 +67,25 @@
                                 <ColumnDefinition />
                                 <ColumnDefinition Width="auto" />
                             </Grid.ColumnDefinitions>
+                            <Border x:Name="NodeHeader"
+                                    Grid.Row="0"
+                                    Grid.Column="0"
+                                    Grid.ColumnSpan="3"
+                                    MinHeight="28"
+                                    Padding="8,4"
+                                    Background="{DynamicResource colorSubtleBackground}"
+                                    BorderBrush="{DynamicResource colorNeutralStroke1}"
+                                    BorderThickness="0,0,0,1"
+                                    Cursor="SizeAll">
+                                <TextBlock x:Name="NodeTitle"
+                                           Text="{Binding NodeModel.Name, RelativeSource={RelativeSource TemplatedParent}}"
+                                           Foreground="{DynamicResource colorNeutralForeground1}"
+                                           FontWeight="SemiBold"
+                                           HorizontalAlignment="Stretch"
+                                           TextAlignment="Center"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center" />
+                            </Border>
                             <StackPanel x:Name="InputSocketsPanel" Grid.Row="1" Grid.Column="0"
                                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,0,2,0" />
                             <StackPanel x:Name="OutputSocketsPanel" Grid.Row="1" Grid.Column="2"
