@@ -22,10 +22,17 @@ namespace NodeCraft.Flow
 
         public FrameworkElement Build(NodeModel node)
         {
+            if (node is ImagePreviewNodeModel imagePreviewNode)
+            {
+                return BuildImagePreview(imagePreviewNode);
+            }
+
             var container = new StackPanel
             {
                 Orientation = Orientation.Vertical,
                 Margin = new Thickness(0),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
             };
 
             container.Children.Add(new TextBlock
@@ -119,10 +126,6 @@ namespace NodeCraft.Flow
             else if (node is TextPreviewNodeModel textPreviewNode)
             {
                 container.Children.Add(BuildPreviewValue("Text", textPreviewNode.LastPreviewText, "等待执行后显示文本结果"));
-            }
-            else if (node is ImagePreviewNodeModel imagePreviewNode)
-            {
-                container.Children.Add(BuildImagePreview(imagePreviewNode));
             }
             else
             {
@@ -642,24 +645,46 @@ namespace NodeCraft.Flow
 
         private FrameworkElement BuildImagePreview(ImagePreviewNodeModel node)
         {
-            var panel = new StackPanel
+            var panel = new Grid
             {
-                Orientation = Orientation.Vertical,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
                 IsHitTestVisible = false,
             };
 
-            panel.Children.Add(new TextBlock
+            panel.RowDefinitions.Add(new RowDefinition
+            {
+                Height = GridLength.Auto,
+            });
+            panel.RowDefinitions.Add(new RowDefinition
+            {
+                Height = new GridLength(1, GridUnitType.Star),
+            });
+            if (!string.IsNullOrWhiteSpace(node.LastImagePath))
+            {
+                panel.RowDefinitions.Add(new RowDefinition
+                {
+                    Height = GridLength.Auto,
+                });
+            }
+
+            var title = new TextBlock
             {
                 Text = "Image",
                 FontSize = 11,
                 Opacity = 0.75,
                 Margin = new Thickness(0, 0, 0, 4),
-            });
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
+            Grid.SetRow(title, 0);
+            panel.Children.Add(title);
 
             var border = new Border
             {
-                Width = 180,
-                Height = 120,
+                MinWidth = 180,
+                MinHeight = 120,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
                 CornerRadius = new CornerRadius(6),
                 Background = new SolidColorBrush(Color.FromArgb(90, 255, 255, 255)),
                 ClipToBounds = true,
@@ -693,6 +718,8 @@ namespace NodeCraft.Flow
                     {
                         Source = bitmap,
                         Stretch = Stretch.UniformToFill,
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        VerticalAlignment = VerticalAlignment.Stretch,
                     };
                 }
                 catch
@@ -723,19 +750,22 @@ namespace NodeCraft.Flow
                 };
             }
 
+            Grid.SetRow(border, 1);
             panel.Children.Add(border);
 
             if (!string.IsNullOrWhiteSpace(node.LastImagePath))
             {
-                panel.Children.Add(new TextBlock
+                var path = new TextBlock
                 {
                     Margin = new Thickness(0, 6, 0, 0),
                     Text = node.LastImagePath,
                     TextWrapping = TextWrapping.Wrap,
                     Opacity = 0.65,
-                    MaxWidth = 180,
                     FontSize = 10,
-                });
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                };
+                Grid.SetRow(path, 2);
+                panel.Children.Add(path);
             }
 
             return panel;
