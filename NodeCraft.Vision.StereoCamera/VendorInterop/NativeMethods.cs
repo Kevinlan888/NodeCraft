@@ -83,4 +83,63 @@ namespace NodeCraft.Vision.StereoCamera.VendorInterop
             out ScCameraCalibInfo data,
             [MarshalAs(UnmanagedType.I1)] bool isLeftReference);
     }
+
+    internal sealed class NativeFrameApi : IStereoCameraFrameApi
+    {
+        internal static readonly NativeFrameApi Instance = new NativeFrameApi();
+
+        private NativeFrameApi()
+        {
+        }
+
+        public IntPtr GetFrame(IntPtr camera, uint timeoutMilliseconds)
+        {
+            return NativeMethods.scGetFrame(camera, timeoutMilliseconds);
+        }
+
+        public ulong GetFrameId(IntPtr frame)
+        {
+            return NativeMethods.scGetFrameID(frame);
+        }
+
+        public ulong GetFrameTimestamp(IntPtr frame)
+        {
+            return NativeMethods.scGetFrameTimestamp(frame);
+        }
+
+        public IntPtr GetFrameImage(IntPtr frame, ScImageType type)
+        {
+            return NativeMethods.scGetFrameImage(frame, type);
+        }
+
+        public int GetImageWidth(IntPtr image)
+        {
+            return NativeMethods.scGetImageWidth(image);
+        }
+
+        public int GetImageHeight(IntPtr image)
+        {
+            return NativeMethods.scGetImageHeight(image);
+        }
+
+        public ScPixelFormat GetImagePixelFormat(IntPtr image)
+        {
+            return NativeMethods.scGetImagePixelFormat(image);
+        }
+
+        public uint GetImageDataSize(IntPtr image)
+        {
+            return NativeMethods.scGetImageDataSize(image);
+        }
+
+        public IntPtr GetImageData(IntPtr image)
+        {
+            return NativeMethods.scGetImageData(image);
+        }
+
+        public bool ReleaseHandle(IntPtr handle)
+        {
+            return NativeMethods.scReleaseHandle(handle);
+        }
+    }
 }

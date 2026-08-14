@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using NodeCraft.Flow;
 using NodeCraft.Vision.StereoCamera.Camera;
 using NodeCraft.Vision.StereoCamera.Nodes;
@@ -49,6 +50,44 @@ internal static partial class Program
                 && disconnectIndex > stopIndex
                 && disposeIndex > disconnectIndex
                 && scopeDisposeIndex > disposeIndex;
+        });
+
+        await RunAsync("stereo camera capture preserves startup failure when cleanup fails", async () =>
+        {
+            var calls = new List<string>();
+            var connectException = new InvalidOperationException("connect failed first");
+            var cleanupException = new InvalidOperationException("runtime cleanup failed second");
+            var device = new ScriptedStereoCameraDevice(calls)
+            {
+                ConnectException = connectException,
+            };
+            var fixture = new CameraFixture(
+                new ScriptedStereoCameraDeviceFactory(calls, device),
+                new RecordingRuntimeScopeFactory(calls, cleanupException));
+            var logger = new RecordingLogger();
+            var session = new StereoCameraCaptureSession(
+                "192.168.1.10",
+                fixture.Factory,
+                fixture.ScopeFactory,
+                new TestMonotonicClock(),
+                new StereoCameraCaptureOptions(100, TimeSpan.FromSeconds(5)),
+                logger);
+
+            Exception observed = null;
+            try
+            {
+                await session.StartAsync(CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                observed = exception;
+            }
+
+            return ReferenceEquals(observed, connectException)
+                && logger.Exceptions.Contains(cleanupException)
+                && logger.Messages.Any(message =>
+                    message.Contains("StereoCamera native runtime cleanup failed.", StringComparison.Ordinal))
+                && calls.Contains("scope:dispose");
         });
 
         await RunAsync("stereo camera capture publishes only complete same-frame color/depth bundles", async () =>
@@ -232,31 +271,39 @@ internal static partial class Program
     private sealed class RecordingRuntimeScopeFactory : ICameraRuntimeScopeFactory
     {
         private readonly List<string> _calls;
+        private readonly Exception _disposeException;
 
-        internal RecordingRuntimeScopeFactory(List<string> calls)
+        internal RecordingRuntimeScopeFactory(List<string> calls, Exception disposeException = null)
         {
             _calls = calls;
+            _disposeException = disposeException;
         }
 
         public IDisposable Acquire()
         {
             _calls.Add("scope:acquire");
-            return new RecordingScope(_calls);
+            return new RecordingScope(_calls, _disposeException);
         }
     }
 
     private sealed class RecordingScope : IDisposable
     {
         private readonly List<string> _calls;
+        private readonly Exception _disposeException;
 
-        internal RecordingScope(List<string> calls)
+        internal RecordingScope(List<string> calls, Exception disposeException)
         {
             _calls = calls;
+            _disposeException = disposeException;
         }
 
         public void Dispose()
         {
             _calls.Add("scope:dispose");
+            if (_disposeException != null)
+            {
+                throw _disposeException;
+            }
         }
     }
 
@@ -299,7 +346,16 @@ internal static partial class Program
 
         internal Func<RawStereoFrame> OnTryGetFrame { get; set; }
 
-        public void Connect() => _calls.Add("connect");
+        internal Exception ConnectException { get; set; }
+
+        public void Connect()
+        {
+            _calls.Add("connect");
+            if (ConnectException != null)
+            {
+                throw ConnectException;
+            }
+        }
 
         public void RegisterDisconnectCallback(Action<Exception> callback)
         {
@@ -337,6 +393,48 @@ internal static partial class Program
         internal void DisconnectNow(Exception exception)
         {
             _disconnectCallback?.Invoke(exception);
+        }
+    }
+
+    private sealed class RecordingLogger : ILogger
+    {
+        internal RecordingLogger()
+        {
+            Exceptions = new List<Exception>();
+            Messages = new List<string>();
+        }
+
+        internal List<Exception> Exceptions { get; }
+
+        internal List<string> Messages { get; }
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull
+        {
+            return null;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (exception != null)
+            {
+                Exceptions.Add(exception);
+            }
+
+            if (formatter != null)
+            {
+                Messages.Add(formatter(state, exception));
+            }
         }
     }
 

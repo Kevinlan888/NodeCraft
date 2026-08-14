@@ -119,6 +119,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
     internal sealed class VendorStereoCameraDevice : IStereoCameraDevice
     {
         private readonly StereoCameraCameraHandle _camera;
+        private readonly IStereoCameraFrameApi _frameApi;
         private StereoCameraCalibrationManagerHandle _calibrationManager;
         private ScFnConnectEvent _disconnectDelegate;
         private Action<Exception> _disconnectCallback;
@@ -128,8 +129,16 @@ namespace NodeCraft.Vision.StereoCamera.Camera
         private bool _disposed;
 
         internal VendorStereoCameraDevice(StereoCameraCameraHandle camera)
+            : this(camera, NativeFrameApi.Instance)
+        {
+        }
+
+        internal VendorStereoCameraDevice(
+            StereoCameraCameraHandle camera,
+            IStereoCameraFrameApi frameApi)
         {
             _camera = camera ?? throw new ArgumentNullException(nameof(camera));
+            _frameApi = frameApi ?? throw new ArgumentNullException(nameof(frameApi));
             if (_camera.IsInvalid)
             {
                 throw new ArgumentException("The camera handle is invalid.", nameof(camera));
@@ -237,31 +246,30 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                 throw new InvalidOperationException("The camera must be grabbing before reading frames.");
             }
 
-            var framePointer = NativeMethods.scGetFrame(_camera.DangerousGetHandle(), timeoutMilliseconds);
+            var framePointer = _frameApi.GetFrame(_camera.DangerousGetHandle(), timeoutMilliseconds);
             if (framePointer == IntPtr.Zero)
             {
                 return null;
             }
 
-            using var frame = new StereoCameraFrameHandle(framePointer);
-            var frameId = NativeMethods.scGetFrameID(frame.DangerousGetHandle());
-            var timestamp = NativeMethods.scGetFrameTimestamp(frame.DangerousGetHandle());
-            var colorPointer = NativeMethods.scGetFrameImage(frame.DangerousGetHandle(), ScImageType.Color);
-            var depthPointer = NativeMethods.scGetFrameImage(frame.DangerousGetHandle(), ScImageType.Depth);
+            using var frame = new StereoCameraFrameHandle(framePointer, _frameApi.ReleaseHandle);
+            var frameId = _frameApi.GetFrameId(frame.DangerousGetHandle());
+            var timestamp = _frameApi.GetFrameTimestamp(frame.DangerousGetHandle());
+            var colorPointer = _frameApi.GetFrameImage(frame.DangerousGetHandle(), ScImageType.Color);
+            using var colorImage = colorPointer == IntPtr.Zero
+                ? null
+                : new StereoCameraImageHandle(colorPointer, _frameApi.ReleaseHandle);
+            var depthPointer = _frameApi.GetFrameImage(frame.DangerousGetHandle(), ScImageType.Depth);
+            using var depthImage = depthPointer == IntPtr.Zero
+                ? null
+                : new StereoCameraImageHandle(depthPointer, _frameApi.ReleaseHandle);
 
-            RawCameraImage color = null;
-            RawCameraImage depth = null;
-            if (colorPointer != IntPtr.Zero)
-            {
-                using var colorImage = new StereoCameraImageHandle(colorPointer);
-                color = ReadRawImage(colorImage.DangerousGetHandle(), FlowImageKind.Color);
-            }
-
-            if (depthPointer != IntPtr.Zero)
-            {
-                using var depthImage = new StereoCameraImageHandle(depthPointer);
-                depth = ReadRawImage(depthImage.DangerousGetHandle(), FlowImageKind.Depth);
-            }
+            var color = colorImage == null
+                ? null
+                : ReadRawImage(colorImage.DangerousGetHandle(), FlowImageKind.Color, _frameApi);
+            var depth = depthImage == null
+                ? null
+                : ReadRawImage(depthImage.DangerousGetHandle(), FlowImageKind.Depth, _frameApi);
 
             return new RawStereoFrame(frameId, timestamp, color, depth);
         }
@@ -331,15 +339,18 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                 NativeMethods.scDownloadCalibData(_calibrationManager.DangerousGetHandle()));
         }
 
-        private static RawCameraImage ReadRawImage(IntPtr image, FlowImageKind expectedKind)
+        private static RawCameraImage ReadRawImage(
+            IntPtr image,
+            FlowImageKind expectedKind,
+            IStereoCameraFrameApi frameApi)
         {
-            var width = NativeMethods.scGetImageWidth(image);
-            var height = NativeMethods.scGetImageHeight(image);
-            var pixelFormat = NativeMethods.scGetImagePixelFormat(image);
+            var width = frameApi.GetImageWidth(image);
+            var height = frameApi.GetImageHeight(image);
+            var pixelFormat = frameApi.GetImagePixelFormat(image);
             var flowPixelFormat = VendorStereoCameraImageHelpers.MapPixelFormat(pixelFormat, expectedKind);
-            var size = NativeMethods.scGetImageDataSize(image);
+            var size = frameApi.GetImageDataSize(image);
             var stride = VendorStereoCameraImageHelpers.DeriveStride(width, height, flowPixelFormat, size);
-            var data = NativeMethods.scGetImageData(image);
+            var data = frameApi.GetImageData(image);
             if (data == IntPtr.Zero)
             {
                 throw new InvalidDataException("StereoCamera image data pointer was null.");

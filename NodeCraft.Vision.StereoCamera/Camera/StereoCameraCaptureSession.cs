@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -191,7 +192,16 @@ namespace NodeCraft.Vision.StereoCamera.Camera
             catch (Exception exception)
             {
                 _mailbox.Fault(exception);
-                await CleanupAsync().ConfigureAwait(false);
+                try
+                {
+                    await CleanupAsync().ConfigureAwait(false);
+                }
+                catch (Exception cleanupException)
+                {
+                    _logger.LogError(cleanupException, "StereoCamera startup cleanup failed.");
+                }
+
+                ExceptionDispatchInfo.Capture(exception).Throw();
                 throw;
             }
         }
