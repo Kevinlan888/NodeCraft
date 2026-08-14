@@ -3,7 +3,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 
-namespace NodeCraft.Vision.StereoCamera.Runtime
+namespace NodeCraft.Vision.Runtime
 {
     internal sealed class NativeRuntimeScope : IDisposable
     {
@@ -34,12 +34,12 @@ namespace NodeCraft.Vision.StereoCamera.Runtime
         {
             if (!OperatingSystem.IsWindows())
             {
-                throw new PlatformNotSupportedException("The StereoCamera plugin requires Windows.");
+                throw new PlatformNotSupportedException("The Vision plugin requires Windows.");
             }
 
             if (!Environment.Is64BitProcess)
             {
-                throw new PlatformNotSupportedException("The StereoCamera plugin requires a 64-bit process.");
+                throw new PlatformNotSupportedException("The Vision plugin requires a 64-bit process.");
             }
 
             if (string.IsNullOrWhiteSpace(pluginAssemblyPath))
@@ -52,7 +52,7 @@ namespace NodeCraft.Vision.StereoCamera.Runtime
             if (!Directory.Exists(libraryDirectory))
             {
                 throw new DirectoryNotFoundException(
-                    $"StereoCamera native library directory was not found: {libraryDirectory}");
+                    $"Vision native library directory was not found: {libraryDirectory}");
             }
 
             lock (Gate)
@@ -62,7 +62,7 @@ namespace NodeCraft.Vision.StereoCamera.Runtime
                     if (!string.Equals(_activeLibraryDirectory, libraryDirectory, StringComparison.OrdinalIgnoreCase))
                     {
                         throw new InvalidOperationException(
-                            $"StereoCamera native runtime is already active from '{_activeLibraryDirectory}'.");
+                            $"Vision native runtime is already active from '{_activeLibraryDirectory}'.");
                     }
 
                     _referenceCount++;
@@ -134,7 +134,7 @@ namespace NodeCraft.Vision.StereoCamera.Runtime
                     {
                         removeException = new Win32Exception(
                             Marshal.GetLastWin32Error(),
-                            "RemoveDllDirectory failed for the StereoCamera native runtime.");
+                            "RemoveDllDirectory failed for the Vision native runtime.");
                     }
                 }
                 finally

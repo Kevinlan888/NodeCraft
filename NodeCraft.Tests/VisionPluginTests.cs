@@ -7,53 +7,72 @@ using System.Threading.Tasks;
 using System.Xml.Linq;
 using Microsoft.Extensions.Logging.Abstractions;
 using NodeCraft.Flow;
+using NodeCraft.Vision.Nodes;
+using NodeCraft.Vision.Plugin;
 using NodeCraft.Vision.StereoCamera.Nodes;
-using NodeCraft.Vision.StereoCamera.Plugin;
 
 internal static partial class Program
 {
-    private static async Task RunStereoCameraPluginTestsAsync()
+    private static async Task RunVisionPluginTestsAsync()
     {
-        await RunAsync("stereo camera plugin registers stable Vision node metadata and ports", async () =>
+        await RunAsync("Vision plugin registers stable node metadata and ports", async () =>
         {
-            var plugin = new StereoCameraPlugin();
+            var plugin = new VisionPlugin();
             var context = new PluginRegistrationContext(NullLogger.Instance, new Version(1, 0));
             plugin.Register(context);
 
             var camera = context.Registrations.Single(registration =>
-                registration.Definition.TypeKey == StereoCameraNodeModel.FlowNodeTypeKey);
+                registration.Definition.TypeKey == VisionCameraNodeModel.FlowNodeTypeKey);
+            var stereo = context.Registrations.Single(registration =>
+                registration.Definition.TypeKey == "nodecraft.vision.stereo-camera.camera");
             var preview = context.Registrations.Single(registration =>
                 registration.Definition.TypeKey == FlowImagePreviewNodeModel.FlowNodeTypeKey);
             var cameraInputIds = camera.Definition.InputPorts.Select(port => port.Id).ToArray();
             var outputIds = camera.Definition.OutputPorts.Select(port => port.Id).ToArray();
             var outputTypes = camera.Definition.OutputPorts.Select(port => port.DataType).ToArray();
+            var stereoOutputIds = stereo.Definition.OutputPorts.Select(port => port.Id).ToArray();
+            var stereoOutputTypes = stereo.Definition.OutputPorts.Select(port => port.DataType).ToArray();
             var previewInput = preview.Definition.InputPorts.Single(port => port.Id == "image");
             var previewOutput = preview.Definition.OutputPorts.Single(port => port.Id == "image");
             var registry = new FlowNodeRegistry();
             registry.RegisterPlugin(plugin.Metadata.Id, context.Registrations);
 
-            return plugin.Metadata.Id == "nodecraft.vision.stereo-camera"
+            return plugin.Metadata.Id == "nodecraft.vision"
                 && plugin.Metadata.Version.Equals(new Version(1, 0, 0))
                 && cameraInputIds.Length == 0
                 && !cameraInputIds.Contains("ipAddress", StringComparer.Ordinal)
-                && outputIds.SequenceEqual(new[] { "colorImage", "depthImage", "colorCalibration", "depthCalibration" })
-                && outputTypes.SequenceEqual(new[]
+                && outputIds.SequenceEqual(new[] { "image" })
+                && outputTypes.SequenceEqual(new[] { FlowDataType.Image })
+                && stereo.Definition.DisplayName == "Stereo Camera"
+                && stereo.NodeModelType == typeof(StereoCameraNodeModel)
+                && stereo.NodeFactory != null
+                && stereo.ExecutorFactory != null
+                && stereo.ContentFactory != null
+                && stereoOutputIds.SequenceEqual(new[]
+                {
+                    "colorImage",
+                    "depthImage",
+                    "colorCalibration",
+                    "depthCalibration",
+                })
+                && stereoOutputTypes.SequenceEqual(new[]
                 {
                     FlowDataType.Image,
                     FlowDataType.Image,
                     FlowDataType.CameraCalibration,
                     FlowDataType.CameraCalibration,
                 })
+                && camera.Definition.TypeKey != stereo.Definition.TypeKey
                 && previewInput.DataType == FlowDataType.Image
                 && previewOutput.DataType == FlowDataType.Image
                 && previewInput.IsRequired
-                && registry.Contains(StereoCameraNodeModel.FlowNodeTypeKey)
+                && registry.Contains(VisionCameraNodeModel.FlowNodeTypeKey)
                 && registry.Contains(FlowImagePreviewNodeModel.FlowNodeTypeKey);
         });
 
-        await RunAsync("stereo camera model persists only its IP address", async () =>
+        await RunAsync("Vision camera model persists only its IP address", async () =>
         {
-            var node = new StereoCameraNodeModel { IpAddress = "192.168.1.10" };
+            var node = new VisionCameraNodeModel { IpAddress = "192.168.1.10" };
             var workflow = new WorkflowDocument();
             var workflowNode = workflow.Nodes.AddAndReturn(new WorkflowNode
             {
@@ -62,7 +81,7 @@ internal static partial class Program
             });
             node.WriteWorkflowInputs(workflowNode);
 
-            var path = Path.Combine(Path.GetTempPath(), "nodecraft-stereo-node-" + Guid.NewGuid().ToString("N") + ".flow.xml");
+            var path = Path.Combine(Path.GetTempPath(), "nodecraft-vision-node-" + Guid.NewGuid().ToString("N") + ".flow.xml");
             try
             {
                 GraphModelXmlSerializer.Save(
@@ -85,6 +104,39 @@ internal static partial class Program
             {
                 File.Delete(path);
             }
+        });
+
+        await RunAsync("technical MVSDK stereo model keeps independent image and calibration outputs", async () =>
+        {
+            var node = new StereoCameraNodeModel { IpAddress = "192.168.1.20" };
+            var workflowNode = new WorkflowNode
+            {
+                Id = node.Id,
+                TypeKey = node.ExecutorType,
+            };
+            node.WriteWorkflowInputs(workflowNode);
+            var outputIds = node.OutputParameters.Select(parameter => parameter.PortId).ToArray();
+            var outputTypes = node.OutputParameters
+                .Select(parameter => parameter.Parameter.ParameterType)
+                .ToArray();
+
+            return node.ExecutorType == StereoCameraNodeModel.FlowNodeTypeKey
+                && outputIds.SequenceEqual(new[]
+                {
+                    "colorImage",
+                    "depthImage",
+                    "colorCalibration",
+                    "depthCalibration",
+                })
+                && outputTypes.SequenceEqual(new[]
+                {
+                    FlowDataType.Image.Key,
+                    FlowDataType.Image.Key,
+                    FlowDataType.CameraCalibration.Key,
+                    FlowDataType.CameraCalibration.Key,
+                })
+                && workflowNode.Inputs.TryGetValue("ipAddress", out var ipAddress)
+                && Equals(ipAddress, "192.168.1.20");
         });
 
         await RunAsync("image preview runtime state is omitted from graph XML", async () =>
@@ -145,7 +197,7 @@ internal static partial class Program
 
         await RunAsync("image preview registration preserves content and applies the image result", async () =>
         {
-            var plugin = new StereoCameraPlugin();
+            var plugin = new VisionPlugin();
             var context = new PluginRegistrationContext(NullLogger.Instance, new Version(1, 0));
             plugin.Register(context);
             var preview = context.Registrations.Single(registration =>

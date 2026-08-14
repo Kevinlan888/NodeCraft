@@ -1,0 +1,75 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <VisionPackageRoot Condition="'$(VisionPackageRoot)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\Plugins\NodeCraft.Vision</VisionPackageRoot>
+  </PropertyGroup>
+
+  <Target Name="StageVisionPlugin" DependsOnTargets="Build">
+    <Error Condition="'$(VisionSdkRoot)' == ''"
+           Text="VisionSdkRoot must point to the MV SDK root when staging the Vision plugin." />
+    <Error Condition="'$(StereoCameraSdkRoot)' == ''"
+           Text="StereoCameraSdkRoot must point to the technical MVSDK root when staging the Vision plugin." />
+
+    <ReadLinesFromFile File="$(MSBuildThisFileDirectory)VisionRuntimeFiles.txt">
+      <Output TaskParameter="Lines" ItemName="_VisionRuntimeFileName" />
+    </ReadLinesFromFile>
+
+    <ItemGroup>
+      <_VisionRuntimeSource Include="$(VisionSdkRoot)\Runtime\x64\%(_VisionRuntimeFileName.Identity)"
+          Condition="Exists('$(VisionSdkRoot)\Runtime\x64\%(_VisionRuntimeFileName.Identity)')" />
+      <_StereoRuntimeSource Include="$(StereoCameraSdkRoot)\Runtime\x64\%(_VisionRuntimeFileName.Identity)"
+          Condition="!Exists('$(VisionSdkRoot)\Runtime\x64\%(_VisionRuntimeFileName.Identity)')
+              AND Exists('$(StereoCameraSdkRoot)\Runtime\x64\%(_VisionRuntimeFileName.Identity)')" />
+      <_VisionLicenseFile Include="$(VisionSdkRoot)\Licenses\**\*" />
+      <_StereoLicenseFile Include="$(StereoCameraSdkRoot)\Licenses\**\*" />
+
+      <_StereoRootRuntimeName Include="msvcp120.dll" />
+      <_StereoRootRuntimeName Include="msvcr120.dll" />
+      <_StereoRootRuntimeName Include="oxylog.toml" />
+      <_StereoRootRuntimeSource Include="$(StereoCameraSdkRoot)\%(_StereoRootRuntimeName.Identity)" />
+
+      <_MissingVisionSdkFile Include="$(VisionSdkRoot)\Runtime\x64\%(_VisionRuntimeFileName.Identity)"
+          Condition="!Exists('$(VisionSdkRoot)\Runtime\x64\%(_VisionRuntimeFileName.Identity)')
+              AND !Exists('$(StereoCameraSdkRoot)\Runtime\x64\%(_VisionRuntimeFileName.Identity)')" />
+      <_MissingVisionSdkFile Include="$(VisionSdkRoot)\Licenses"
+          Condition="!Exists('$(VisionSdkRoot)\Licenses')" />
+      <_MissingStereoCameraSdkFile Include="$(StereoCameraSdkRoot)\Licenses"
+          Condition="!Exists('$(StereoCameraSdkRoot)\Licenses')" />
+      <_MissingStereoCameraSdkFile Include="%(_StereoRootRuntimeSource.Identity)"
+          Condition="!Exists('%(_StereoRootRuntimeSource.Identity)')" />
+    </ItemGroup>
+
+    <Error Condition="'@(_MissingVisionSdkFile)' != ''"
+           Text="Vision SDK is missing required files: @(_MissingVisionSdkFile)" />
+    <Error Condition="'@(_MissingStereoCameraSdkFile)' != ''"
+           Text="Technical MVSDK is missing required files: @(_MissingStereoCameraSdkFile)" />
+    <Error Condition="!Exists('$(TargetPath)')"
+           Text="Vision plugin assembly was not built: $(TargetPath)" />
+    <Error Condition="$([System.String]::Copy('@(_VisionRuntimeFileName)').ToLowerInvariant().Contains('stereocamera.net.dll'))"
+           Text="Vision runtime manifest must exclude StereoCamera.Net.dll." />
+    <Error Condition="$([System.String]::Copy('@(_VisionRuntimeFileName)').Contains('NLog.dll'))"
+           Text="Vision runtime manifest must exclude vendor NLog.dll." />
+    <Error Condition="$([System.String]::Copy('@(_VisionRuntimeFileName)').Contains('NodeCraft.Flow.dll'))"
+           Text="Vision package must exclude NodeCraft.Flow.dll." />
+    <Error Condition="$([System.String]::Copy('@(_VisionRuntimeFileName)').Contains('CommonControls.WPF.dll'))"
+           Text="Vision package must exclude CommonControls.WPF.dll." />
+    <Error Condition="$([System.String]::Copy('@(_VisionRuntimeFileName)').Contains('Microsoft.Extensions.Logging'))"
+           Text="Vision package must exclude Microsoft logging assemblies." />
+
+    <RemoveDir Directories="$(VisionPackageRoot)" />
+    <MakeDir Directories="$(VisionPackageRoot);$(VisionPackageRoot)\lib;$(VisionPackageRoot)\licenses" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\plugin.json"
+          DestinationFolder="$(VisionPackageRoot)" />
+    <Copy SourceFiles="$(TargetPath)"
+          DestinationFolder="$(VisionPackageRoot)" />
+    <Copy SourceFiles="@(_VisionRuntimeSource)"
+          DestinationFolder="$(VisionPackageRoot)\lib" />
+    <Copy SourceFiles="@(_StereoRuntimeSource)"
+          DestinationFolder="$(VisionPackageRoot)\lib" />
+    <Copy SourceFiles="@(_StereoRootRuntimeSource)"
+          DestinationFolder="$(VisionPackageRoot)\lib" />
+    <Copy SourceFiles="@(_VisionLicenseFile)"
+          DestinationFiles="@(_VisionLicenseFile->'$(VisionPackageRoot)\licenses\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="@(_StereoLicenseFile)"
+          DestinationFiles="@(_StereoLicenseFile->'$(VisionPackageRoot)\licenses\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+</Project>

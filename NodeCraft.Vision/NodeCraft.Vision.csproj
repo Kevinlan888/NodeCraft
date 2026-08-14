@@ -13,16 +13,19 @@
 
   <ItemGroup>
     <ProjectReference Include="..\NodeCraft.Flow\NodeCraft.Flow.csproj" Private="false" />
+    <Page Remove="Views\VisionCameraEditor.xaml" />
     <Page Remove="Views\StereoCameraEditor.xaml" />
     <Page Remove="Views\FlowImagePreviewView.xaml" />
+    <EmbeddedResource Include="Views\VisionCameraEditor.xaml" />
     <EmbeddedResource Include="Views\StereoCameraEditor.xaml" />
     <EmbeddedResource Include="Views\FlowImagePreviewView.xaml" />
+    <None Include="Build\VisionRuntimeFiles.txt" />
     <None Include="Build\StereoCameraRuntimeFiles.txt" />
-    <None Include="Build\StereoCameraPackaging.targets" />
+    <None Include="Build\VisionPackaging.targets" />
     <None Update="plugin.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 
-  <Import Project="Build\StereoCameraPackaging.targets" />
+  <Import Project="Build\VisionPackaging.targets" />
 </Project>

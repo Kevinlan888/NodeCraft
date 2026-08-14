@@ -4,10 +4,10 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using NodeCraft.Flow;
-using NodeCraft.Vision.StereoCamera.Nodes;
-using NodeCraft.Vision.StereoCamera.Preview;
+using NodeCraft.Vision.Nodes;
+using NodeCraft.Vision.Preview;
 
-namespace NodeCraft.Vision.StereoCamera.Views
+namespace NodeCraft.Vision.Views
 {
     public sealed class FlowImagePreviewView : UserControl
     {
@@ -48,7 +48,7 @@ namespace NodeCraft.Vision.StereoCamera.Views
         {
             var assembly = typeof(FlowImagePreviewView).Assembly;
             using var stream = assembly.GetManifestResourceStream(
-                "NodeCraft.Vision.StereoCamera.Views.FlowImagePreviewView.xaml");
+                "NodeCraft.Vision.Views.FlowImagePreviewView.xaml");
             if (stream == null)
             {
                 throw new InvalidOperationException("FlowImagePreviewView.xaml was not embedded into the plugin assembly.");

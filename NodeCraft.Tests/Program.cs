@@ -56,13 +56,13 @@ internal static partial class Program
         RunVisionProjectTests();
         RunImvInteropTests();
         RunVisionCameraDeviceTests();
-        RunStereoCameraPackagingTests();
-        await RunLatestFrameMailboxTestsAsync();
         RunVendorStereoCameraDeviceTests();
+        RunVisionPackagingTests();
+        await RunLatestFrameMailboxTestsAsync();
         await RunVisionCameraCaptureTestsAsync();
-        await RunStereoCameraPluginTestsAsync();
+        await RunVisionPluginTestsAsync();
         await RunFlowImagePreviewTestsAsync();
-        await RunStereoCameraIntegrationTestsAsync();
+        await RunVisionIntegrationTestsAsync();
         await RunGraphExecutionSessionLifecycleTestsAsync();
         await RunGraphExecutionSessionIterationTestsAsync();
         await RunFlowExecutionControllerTestsAsync();

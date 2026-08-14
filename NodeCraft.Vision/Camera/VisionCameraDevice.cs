@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -227,10 +228,10 @@ namespace NodeCraft.Vision.Camera
                 return;
             }
 
-            _grabbing = false;
             VisionNativeException.ThrowIfError(
                 "IMV_StopGrabbing",
                 _nativeApi.StopGrabbing(_camera.DangerousGetHandle()));
+            _grabbing = false;
         }
 
         public void Disconnect()
@@ -246,10 +247,10 @@ namespace NodeCraft.Vision.Camera
                 return;
             }
 
-            _connected = false;
             VisionNativeException.ThrowIfError(
                 "IMV_Close",
                 _nativeApi.Close(_camera.DangerousGetHandle()));
+            _connected = false;
         }
 
         public void Dispose()
@@ -259,29 +260,49 @@ namespace NodeCraft.Vision.Camera
                 return;
             }
 
-            Exception cleanupException = null;
-            try
+            var cleanupErrors = new List<Exception>();
+            if (_grabbing)
             {
-                if (_grabbing)
+                try
                 {
                     StopGrabbing();
                 }
-
-                if (_connected)
+                catch (Exception exception)
                 {
-                    Disconnect();
+                    cleanupErrors.Add(exception);
                 }
             }
-            catch (Exception exception)
+
+            if (_connected)
             {
-                cleanupException = exception;
+                try
+                {
+                    VisionNativeException.ThrowIfError(
+                        "IMV_Close",
+                        _nativeApi.Close(_camera.DangerousGetHandle()));
+                    _connected = false;
+                }
+                catch (Exception exception)
+                {
+                    cleanupErrors.Add(exception);
+                }
             }
 
             _disposed = true;
-            _camera.Dispose();
-            if (cleanupException != null)
+            try
             {
-                throw cleanupException;
+                _camera.Dispose();
+            }
+            catch (Exception exception)
+            {
+                cleanupErrors.Add(exception);
+            }
+
+            if (cleanupErrors.Count > 0)
+            {
+                throw new AggregateException(
+                    "One or more IMV camera cleanup operations failed.",
+                    cleanupErrors);
             }
         }
 

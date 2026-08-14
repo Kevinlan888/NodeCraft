@@ -5,11 +5,11 @@ using System.Runtime.CompilerServices;
 using System.Windows.Media.Imaging;
 using NodeCraft.Flow;
 
-namespace NodeCraft.Vision.StereoCamera.Nodes
+namespace NodeCraft.Vision.Nodes
 {
     public sealed class FlowImagePreviewNodeModel : NodeModel, INotifyPropertyChanged
     {
-        public const string FlowNodeTypeKey = "nodecraft.vision.stereo-camera.image-preview";
+        public const string FlowNodeTypeKey = "nodecraft.vision.image-preview";
 
         private FlowImage _currentImage;
         private string _statusText = string.Empty;

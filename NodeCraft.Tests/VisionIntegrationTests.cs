@@ -8,39 +8,38 @@ using Microsoft.Extensions.Logging.Abstractions;
 using NodeCraft;
 using NodeCraft.Flow;
 using NodeCraft.Flow.Nodes;
-using NodeCraft.Vision.StereoCamera.Camera;
-using NodeCraft.Vision.StereoCamera.Nodes;
-using NodeCraft.Vision.StereoCamera.Plugin;
+using NodeCraft.Vision.Camera;
+using NodeCraft.Vision.Nodes;
+using NodeCraft.Vision.Plugin;
 
 internal static partial class Program
 {
-    private static async Task RunStereoCameraIntegrationTestsAsync()
+    private static async Task RunVisionIntegrationTestsAsync()
     {
-        await RunAsync("stereo camera graph runs once into a color preview and cleans up", async () =>
+        await RunAsync("Vision graph runs once into an image preview and cleans up", async () =>
         {
             var fixture = CreateIntegrationFixture();
             fixture.Device.Frames.Enqueue(CreateIntegrationFrame(11));
             var registry = CreateVisionRegistry(fixture);
-            var workflow = CreateVisionWorkflow(0);
+            var workflow = CreateVisionWorkflow();
             var executor = new GraphExecutor(workflow, registry);
             var previewNode = new FlowImagePreviewNodeModel { Id = "preview" };
             var callbackCount = 0;
-            FlowExecutionContext callbackContext = null;
+            FlowExecutionContext firstContext = null;
+
             var controller = new FlowExecutionController();
-
             await controller.RunOnceAsync(
                 executor.CreateSession(),
                 (context, iteration, elapsed) =>
                 {
                     callbackCount++;
-                    callbackContext = context;
+                    firstContext ??= context;
                     registry.ApplyExecutionResults(new[] { previewNode }, context);
                     return Task.CompletedTask;
                 },
                 CancellationToken.None);
 
-            var secondFrame = CreateIntegrationFrame(12);
-            fixture.Device.Frames.Enqueue(secondFrame);
+            fixture.Device.Frames.Enqueue(CreateIntegrationFrame(12));
             await controller.RunOnceAsync(
                 executor.CreateSession(),
                 (context, iteration, elapsed) =>
@@ -51,32 +50,30 @@ internal static partial class Program
                 },
                 CancellationToken.None);
 
-            object output = null;
-            var hasOutput = callbackContext != null
-                && callbackContext.TryGetPortValue("preview", 0, out output);
-            var color = output as FlowImage;
-            var passed = callbackCount == 2
-                && hasOutput
-                && color != null
-                && color.FrameId == 11
+            object firstOutput = null;
+            var hasFirstOutput = firstContext != null
+                && firstContext.TryGetPortValue("preview", 0, out firstOutput);
+            var firstImage = firstOutput as FlowImage;
+            return callbackCount == 2
+                && hasFirstOutput
+                && firstImage != null
+                && firstImage.FrameId == 11
                 && previewNode.CurrentImage != null
                 && previewNode.CurrentImage.FrameId == 12
-                && ReferenceEquals(previewNode.CurrentImage, output) == false
+                && !ReferenceEquals(previewNode.CurrentImage, firstOutput)
                 && fixture.Device.ConnectCount == 2
                 && fixture.Device.StopCount == 2
                 && fixture.Device.DisconnectCount == 2
                 && fixture.Scope.AcquireCount == 2
                 && fixture.Scope.DisposeCount == 2;
-            return passed;
         });
 
-        await RunAsync("continuous stereo camera graph serializes callbacks and takes the newest pending frame", async () =>
+        await RunAsync("continuous Vision graph serializes callbacks and takes the newest pending frame", async () =>
         {
             var fixture = CreateIntegrationFixture();
             fixture.Device.Frames.Enqueue(CreateIntegrationFrame(20));
             var registry = CreateVisionRegistry(fixture);
-            var workflow = CreateVisionWorkflow(1);
-            var executor = new GraphExecutor(workflow, registry);
+            var executor = new GraphExecutor(CreateVisionWorkflow(), registry);
             var controller = new FlowExecutionController();
             using var cancellation = new CancellationTokenSource();
             var firstCallbackEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -99,7 +96,7 @@ internal static partial class Program
                     if (callbackFrames.Count == 1)
                     {
                         firstCallbackEntered.TrySetResult(true);
-                        await releaseFirst.Task.ConfigureAwait(false);
+                        await releaseFirst.Task;
                     }
                     else
                     {
@@ -123,31 +120,7 @@ internal static partial class Program
                 && fixture.Device.DisconnectCount == 1;
         });
 
-        await RunAsync("disconnect faults a pending latest frame before it can be delivered", async () =>
-        {
-            var fixture = CreateIntegrationFixture();
-            fixture.Device.Frames.Enqueue(CreateIntegrationFrame(30));
-            var registry = CreateVisionRegistry(fixture);
-            var session = new GraphExecutor(CreateVisionWorkflow(0), registry).CreateSession();
-            await session.StartAsync(CancellationToken.None);
-            await Task.Delay(20);
-            fixture.Device.DisconnectNow(new InvalidOperationException("unplugged"));
-            var faulted = false;
-            try
-            {
-                await session.ExecuteIterationAsync(CancellationToken.None);
-            }
-            catch (InvalidOperationException exception)
-            {
-                faulted = exception.Message == "unplugged";
-            }
-
-            await session.StopAsync();
-            await session.DisposeAsync();
-            return faulted && fixture.Device.DisconnectCount == 1;
-        });
-
-        await RunAsync("legacy stereo camera IP graph link is rejected before session startup", () =>
+        await RunAsync("legacy Vision camera IP graph link is rejected before session startup", () =>
         {
             var fixture = CreateIntegrationFixture();
             RegisterVisionNodesForGraphModelConversion(fixture);
@@ -161,7 +134,7 @@ internal static partial class Program
                         Id = "ip",
                         ValueText = "192.168.1.10",
                     },
-                    new StereoCameraNodeModel
+                    new VisionCameraNodeModel
                     {
                         Id = "camera",
                         IpAddress = "192.168.1.20",
@@ -196,11 +169,11 @@ internal static partial class Program
 
     private static FlowNodeRegistry CreateVisionRegistry(IntegrationFixture fixture)
     {
-        var plugin = StereoCameraPlugin.CreateForTesting(
+        var plugin = VisionPlugin.CreateForTesting(
             fixture.Factory,
             fixture.Scope,
             new IntegrationClock(),
-            new StereoCameraCaptureOptions(100, TimeSpan.FromSeconds(5)));
+            new VisionCameraCaptureOptions(100, TimeSpan.FromSeconds(5)));
         var registrationContext = new PluginRegistrationContext(
             NullLogger.Instance,
             new Version(1, 0));
@@ -212,11 +185,11 @@ internal static partial class Program
 
     private static void RegisterVisionNodesForGraphModelConversion(IntegrationFixture fixture)
     {
-        var plugin = StereoCameraPlugin.CreateForTesting(
+        var plugin = VisionPlugin.CreateForTesting(
             fixture.Factory,
             fixture.Scope,
             new IntegrationClock(),
-            new StereoCameraCaptureOptions(100, TimeSpan.FromSeconds(5)));
+            new VisionCameraCaptureOptions(100, TimeSpan.FromSeconds(5)));
         var registrationContext = new PluginRegistrationContext(
             NullLogger.Instance,
             new Version(1, 0));
@@ -228,13 +201,13 @@ internal static partial class Program
         }
     }
 
-    private static WorkflowDocument CreateVisionWorkflow(int previewSlot)
+    private static WorkflowDocument CreateVisionWorkflow()
     {
         var workflow = new WorkflowDocument();
         workflow.Nodes.Add(new WorkflowNode
         {
             Id = "camera",
-            TypeKey = StereoCameraNodeModel.FlowNodeTypeKey,
+            TypeKey = VisionCameraNodeModel.FlowNodeTypeKey,
             Inputs = { ["ipAddress"] = "192.168.1.10" },
         });
         workflow.Nodes.Add(new WorkflowNode
@@ -243,31 +216,24 @@ internal static partial class Program
             TypeKey = FlowImagePreviewNodeModel.FlowNodeTypeKey,
             Inputs =
             {
-                ["image"] = new LinkRef { SourceNodeId = "camera", SourceSlot = previewSlot },
+                ["image"] = new LinkRef { SourceNodeId = "camera", SourceSlot = 0 },
             },
         });
         return workflow;
     }
 
-    private static RawStereoFrame CreateIntegrationFrame(ulong frameId)
+    private static VisionRawFrame CreateIntegrationFrame(ulong frameId)
     {
-        return new RawStereoFrame(
+        return new VisionRawFrame(
             frameId,
             frameId * 10,
-            new RawCameraImage(
+            new VisionRawImage(
                 1,
                 1,
                 3,
                 FlowPixelFormat.Bgr24,
                 FlowImageKind.Color,
-                new byte[] { (byte)frameId, 2, 3 }),
-            new RawCameraImage(
-                1,
-                1,
-                2,
-                FlowPixelFormat.Depth16,
-                FlowImageKind.Depth,
-                new byte[] { (byte)frameId, 0 }));
+                new byte[] { (byte)frameId, 2, 3 }));
     }
 
     private sealed class IntegrationFixture
@@ -297,6 +263,7 @@ internal static partial class Program
     private sealed class IntegrationClock : IMonotonicClock
     {
         private readonly DateTime _origin = DateTime.UtcNow;
+
         public TimeSpan Now => DateTime.UtcNow - _origin;
     }
 
@@ -314,38 +281,55 @@ internal static partial class Program
         private sealed class Scope : IDisposable
         {
             private readonly IntegrationScopeFactory _owner;
-            internal Scope(IntegrationScopeFactory owner) { _owner = owner; }
-            public void Dispose() { _owner.DisposeCount++; }
+
+            internal Scope(IntegrationScopeFactory owner)
+            {
+                _owner = owner;
+            }
+
+            public void Dispose()
+            {
+                _owner.DisposeCount++;
+            }
         }
     }
 
-    private sealed class IntegrationDeviceFactory : IStereoCameraDeviceFactory
+    private sealed class IntegrationDeviceFactory : IVisionCameraDeviceFactory
     {
         private readonly IntegrationDevice _device;
-        internal IntegrationDeviceFactory(IntegrationDevice device) { _device = device; }
+
+        internal IntegrationDeviceFactory(IntegrationDevice device)
+        {
+            _device = device;
+        }
+
         public int Discover() => 1;
-        public IStereoCameraDevice OpenByIp(string ipAddress) => _device;
+
+        public IVisionCameraDevice OpenByIp(string ipAddress) => _device;
     }
 
-    private sealed class IntegrationDevice : IStereoCameraDevice
+    private sealed class IntegrationDevice : IVisionCameraDevice
     {
-        private Action<Exception> _disconnect;
-        internal ConcurrentQueue<RawStereoFrame> Frames { get; } = new ConcurrentQueue<RawStereoFrame>();
+        internal ConcurrentQueue<VisionRawFrame> Frames { get; } = new ConcurrentQueue<VisionRawFrame>();
         internal int ConnectCount;
         internal int StopCount;
         internal int DisconnectCount;
 
         public void Connect() => Interlocked.Increment(ref ConnectCount);
-        public void RegisterDisconnectCallback(Action<Exception> callback) => _disconnect = callback;
-        public void UnregisterDisconnectCallback() => _disconnect = null;
-        public CameraCalibration ReadCalibration(CameraStream stream, bool isLeftReference)
-            => new CameraCalibration(1, 1, new double[9], new double[12], new double[16], false);
-        public void StartGrabbing() { }
-        public RawStereoFrame TryGetFrame(uint timeoutMilliseconds)
+
+        public void StartGrabbing()
+        {
+        }
+
+        public VisionRawFrame TryGetFrame(uint timeoutMilliseconds)
             => Frames.TryDequeue(out var frame) ? frame : null;
+
         public void StopGrabbing() => Interlocked.Increment(ref StopCount);
+
         public void Disconnect() => Interlocked.Increment(ref DisconnectCount);
-        public void Dispose() { }
-        internal void DisconnectNow(Exception exception) => _disconnect?.Invoke(exception);
+
+        public void Dispose()
+        {
+        }
     }
 }

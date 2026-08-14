@@ -5,7 +5,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using NodeCraft.Flow;
 
-namespace NodeCraft.Vision.StereoCamera.Preview
+namespace NodeCraft.Vision.Preview
 {
     internal static class FlowImageBitmapConverter
     {

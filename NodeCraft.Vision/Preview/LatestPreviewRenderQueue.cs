@@ -3,7 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using NodeCraft.Flow;
 
-namespace NodeCraft.Vision.StereoCamera.Preview
+namespace NodeCraft.Vision.Preview
 {
     internal sealed class LatestPreviewRenderQueue : IDisposable
     {

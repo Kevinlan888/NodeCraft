@@ -10,9 +10,9 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using NodeCraft.Flow;
-using NodeCraft.Vision.StereoCamera.Nodes;
-using NodeCraft.Vision.StereoCamera.Preview;
-using NodeCraft.Vision.StereoCamera.Views;
+using NodeCraft.Vision.Nodes;
+using NodeCraft.Vision.Preview;
+using NodeCraft.Vision.Views;
 
 internal static partial class Program
 {
@@ -168,11 +168,11 @@ internal static partial class Program
         Run("FlowImage preview view uses DynamicResource theme keys and unload cleanup", () =>
         {
             var xaml = File.ReadAllText(FindRepositoryFile(
-                "NodeCraft.Vision.StereoCamera",
+                "NodeCraft.Vision",
                 "Views",
                 "FlowImagePreviewView.xaml"));
             var code = File.ReadAllText(FindRepositoryFile(
-                "NodeCraft.Vision.StereoCamera",
+                "NodeCraft.Vision",
                 "Views",
                 "FlowImagePreviewView.xaml.cs"));
             return xaml.Contains("DynamicResource", StringComparison.Ordinal)
@@ -181,13 +181,13 @@ internal static partial class Program
                 && code.Contains("_renderQueue.Dispose()", StringComparison.Ordinal);
         });
 
-        Run("stereo camera content factories detach parsed WPF roots", () =>
+        Run("Vision content factories detach parsed WPF roots", () =>
             RunOnSta(() =>
             {
                 var canvas = new FlowCanvas();
-                object cameraContent = StereoCameraEditor.CreateContent(
+                object cameraContent = VisionCameraEditor.CreateContent(
                     canvas,
-                    new StereoCameraNodeModel { IpAddress = "192.168.1.10" });
+                    new VisionCameraNodeModel { IpAddress = "192.168.1.10" });
                 object previewContent = FlowImagePreviewView.CreateContent(
                     canvas,
                     new FlowImagePreviewNodeModel());

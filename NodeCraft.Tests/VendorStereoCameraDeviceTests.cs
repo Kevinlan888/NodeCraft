@@ -64,7 +64,7 @@ internal static partial class Program
         Run("vendor image adapter uses one managed copy and no bitmap conversion", () =>
         {
             var source = File.ReadAllText(FindRepositoryFile(
-                "NodeCraft.Vision.StereoCamera",
+                "NodeCraft.Vision",
                 "Camera",
                 "VendorStereoCameraDevice.cs"));
             return source.Split(new[] { "Marshal.Copy" }, StringSplitOptions.None).Length - 1 == 1

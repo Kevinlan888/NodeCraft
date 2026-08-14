@@ -1,7 +1,7 @@
 using System;
 using System.Windows.Media.Imaging;
 
-namespace NodeCraft.Vision.StereoCamera.Preview
+namespace NodeCraft.Vision.Preview
 {
     internal sealed class PreviewRenderResult
     {

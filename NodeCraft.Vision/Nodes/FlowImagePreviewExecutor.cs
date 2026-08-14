@@ -4,7 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using NodeCraft.Flow;
 
-namespace NodeCraft.Vision.StereoCamera.Nodes
+namespace NodeCraft.Vision.Nodes
 {
     internal sealed class FlowImagePreviewExecutor : IFlowNodeExecutor
     {

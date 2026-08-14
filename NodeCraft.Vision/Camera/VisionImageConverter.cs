@@ -48,6 +48,7 @@ namespace NodeCraft.Vision.Camera
             var height = (int)info.Height;
             if (IsBayer(info.PixelFormat))
             {
+                ValidateBayerSourceLayout(info);
                 return ConvertBayer(cameraHandle, frame.Data, info, width, height, nativeApi);
             }
 
@@ -74,6 +75,22 @@ namespace NodeCraft.Vision.Camera
                 ToFlowPixelFormat(info.PixelFormat),
                 FlowImageKind.Color,
                 buffer);
+        }
+
+        private static void ValidateBayerSourceLayout(ImvFrameInfo info)
+        {
+            if (info.Size % info.Height != 0)
+            {
+                throw new InvalidDataException("IMV Bayer frame size does not describe whole image rows.");
+            }
+
+            var sourceStride = info.Size / info.Height;
+            var minimumRowBytes = checked((ulong)info.Width + info.PaddingX);
+            if ((ulong)sourceStride < minimumRowBytes)
+            {
+                throw new InvalidDataException(
+                    $"IMV Bayer frame stride {sourceStride} is smaller than the required row size {minimumRowBytes}.");
+            }
         }
 
         private static VisionRawImage ConvertBayer(

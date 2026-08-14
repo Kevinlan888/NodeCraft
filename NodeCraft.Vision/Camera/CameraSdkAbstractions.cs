@@ -1,6 +1,6 @@
 using System;
 using NodeCraft.Flow;
-using NodeCraft.Vision.StereoCamera.Runtime;
+using NodeCraft.Vision.Runtime;
 
 namespace NodeCraft.Vision.StereoCamera.Camera
 {

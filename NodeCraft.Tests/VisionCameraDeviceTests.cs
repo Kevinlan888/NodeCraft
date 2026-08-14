@@ -79,6 +79,29 @@ internal static partial class Program
             }
         });
 
+        Run("Vision converter validates Bayer source row layout", () =>
+        {
+            var api = new RecordingImvNativeApi
+            {
+                PixelConvertDataLength = 6,
+                PixelConvertCallback = parameter =>
+                {
+                    Marshal.Copy(new byte[6], 0, parameter.DestinationBuffer, 6);
+                    parameter.DestinationDataLength = 6;
+                },
+            };
+            var frame = CreateFrame(ImvPixelType.BayerRg8, 2, 1, new byte[] { 1 });
+            try
+            {
+                return ThrowsInvalidData(() =>
+                    VisionImageConverter.ConvertFrame(IntPtr.Zero, frame, api));
+            }
+            finally
+            {
+                FreeFrameData(frame);
+            }
+        });
+
         Run("Vision device releases a successful native frame", () =>
         {
             var api = new RecordingImvNativeApi
@@ -144,6 +167,76 @@ internal static partial class Program
                 "close",
                 "destroy",
             });
+        });
+
+        Run("Vision device retries stop after a native stop failure", () =>
+        {
+            var calls = new List<string>();
+            var api = new RecordingImvNativeApi(calls)
+            {
+                StopGrabbingException = new InvalidOperationException("stop failed"),
+            };
+            var device = CreateStartedDevice(api);
+            try
+            {
+                try
+                {
+                    device.StopGrabbing();
+                }
+                catch (InvalidOperationException)
+                {
+                }
+
+                api.StopGrabbingException = null;
+                device.StopGrabbing();
+                device.Dispose();
+                return calls.SequenceEqual(new[]
+                {
+                    "open",
+                    "trigger:off",
+                    "start",
+                    "stop",
+                    "stop",
+                    "close",
+                    "destroy",
+                });
+            }
+            catch
+            {
+                return false;
+            }
+        });
+
+        Run("Vision device disposal attempts close and destroy after stop failure", () =>
+        {
+            var calls = new List<string>();
+            var api = new RecordingImvNativeApi(calls)
+            {
+                StopGrabbingException = new InvalidOperationException("stop failed"),
+                CloseException = new InvalidOperationException("close failed"),
+            };
+            var device = CreateStartedDevice(api);
+            Exception observed = null;
+            try
+            {
+                device.Dispose();
+            }
+            catch (Exception exception)
+            {
+                observed = exception;
+            }
+
+            return observed is AggregateException aggregate
+                && aggregate.InnerExceptions.Count == 2
+                && calls.SequenceEqual(new[]
+                {
+                    "open",
+                    "trigger:off",
+                    "start",
+                    "stop",
+                    "close",
+                    "destroy",
+                });
         });
     }
 
@@ -253,6 +346,10 @@ internal static partial class Program
 
         internal uint PixelConvertDataLength { get; set; }
 
+        internal Exception StopGrabbingException { get; set; }
+
+        internal Exception CloseException { get; set; }
+
         internal ImvPixelConvertParam LastPixelConvert { get; private set; }
 
         internal int ReleaseFrameCount { get; private set; }
@@ -284,6 +381,11 @@ internal static partial class Program
         public int Close(IntPtr handle)
         {
             _calls.Add("close");
+            if (CloseException != null)
+            {
+                throw CloseException;
+            }
+
             return (int)ImvError.Ok;
         }
 
@@ -302,6 +404,11 @@ internal static partial class Program
         public int StopGrabbing(IntPtr handle)
         {
             _calls.Add("stop");
+            if (StopGrabbingException != null)
+            {
+                throw StopGrabbingException;
+            }
+
             return (int)ImvError.Ok;
         }
 

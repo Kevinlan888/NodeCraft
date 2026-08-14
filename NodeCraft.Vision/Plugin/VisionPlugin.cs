@@ -1,37 +1,35 @@
 using System;
-using System.IO;
-using System.Reflection;
 using Microsoft.Extensions.Logging;
 using NodeCraft.Flow;
-using NodeCraft.Vision.StereoCamera.Camera;
-using NodeCraft.Vision.StereoCamera.Nodes;
-using NodeCraft.Vision.StereoCamera.Runtime;
-using NodeCraft.Vision.StereoCamera.Preview;
-using NodeCraft.Vision.StereoCamera.Views;
+using NodeCraft.Vision.Camera;
+using NodeCraft.Vision.Nodes;
+using NodeCraft.Vision.Preview;
+using NodeCraft.Vision.Runtime;
+using NodeCraft.Vision.Views;
 
-namespace NodeCraft.Vision.StereoCamera.Plugin
+namespace NodeCraft.Vision.Plugin
 {
-    public sealed class StereoCameraPlugin : IFlowPlugin
+    public sealed class VisionPlugin : IFlowPlugin
     {
-        private readonly IStereoCameraDeviceFactory _deviceFactory;
+        private readonly IVisionCameraDeviceFactory _deviceFactory;
         private readonly ICameraRuntimeScopeFactory _runtimeScopeFactory;
         private readonly IMonotonicClock _clock;
-        private readonly StereoCameraCaptureOptions _captureOptions;
+        private readonly VisionCameraCaptureOptions _captureOptions;
 
-        public StereoCameraPlugin()
+        public VisionPlugin()
             : this(
-                new VendorStereoCameraDeviceFactory(),
-                new ProductionCameraRuntimeScopeFactory(typeof(StereoCameraPlugin).Assembly.Location),
+                new VisionCameraDeviceFactory(),
+                new ProductionVisionCameraRuntimeScopeFactory(typeof(VisionPlugin).Assembly.Location),
                 new SystemMonotonicClock(),
-                new StereoCameraCaptureOptions())
+                new VisionCameraCaptureOptions())
         {
         }
 
-        internal StereoCameraPlugin(
-            IStereoCameraDeviceFactory deviceFactory,
+        internal VisionPlugin(
+            IVisionCameraDeviceFactory deviceFactory,
             ICameraRuntimeScopeFactory runtimeScopeFactory,
             IMonotonicClock clock,
-            StereoCameraCaptureOptions captureOptions)
+            VisionCameraCaptureOptions captureOptions)
         {
             _deviceFactory = deviceFactory ?? throw new ArgumentNullException(nameof(deviceFactory));
             _runtimeScopeFactory = runtimeScopeFactory ?? throw new ArgumentNullException(nameof(runtimeScopeFactory));
@@ -41,25 +39,28 @@ namespace NodeCraft.Vision.StereoCamera.Plugin
 
         public PluginMetadata Metadata { get; } = new PluginMetadata
         {
-            Id = "nodecraft.vision.stereo-camera",
-            DisplayName = "Stereo Camera",
+            Id = "nodecraft.vision",
+            DisplayName = "Vision",
             Version = new Version(1, 0, 0),
         };
 
         public void Register(IPluginContext context)
         {
             context.Nodes.Register(CreateCameraRegistration(context.Logger));
+            context.Nodes.Register(StereoCameraRegistration.Create(
+                typeof(VisionPlugin).Assembly.Location,
+                context.Logger));
             context.Nodes.Register(CreatePreviewRegistration());
-            context.Logger.LogInformation("Registered StereoCamera visual nodes.");
+            context.Logger.LogInformation("Registered Vision 2D and technical MVSDK 3D visual nodes.");
         }
 
-        internal static StereoCameraPlugin CreateForTesting(
-            IStereoCameraDeviceFactory deviceFactory,
+        internal static VisionPlugin CreateForTesting(
+            IVisionCameraDeviceFactory deviceFactory,
             ICameraRuntimeScopeFactory runtimeScopeFactory,
             IMonotonicClock clock,
-            StereoCameraCaptureOptions captureOptions)
+            VisionCameraCaptureOptions captureOptions)
         {
-            return new StereoCameraPlugin(deviceFactory, runtimeScopeFactory, clock, captureOptions);
+            return new VisionPlugin(deviceFactory, runtimeScopeFactory, clock, captureOptions);
         }
 
         private FlowNodeRegistration CreateCameraRegistration(ILogger logger)
@@ -67,29 +68,26 @@ namespace NodeCraft.Vision.StereoCamera.Plugin
             return new FlowNodeRegistration(
                 new FlowNodeDefinition
                 {
-                    TypeKey = StereoCameraNodeModel.FlowNodeTypeKey,
-                    DisplayName = "Stereo Camera",
+                    TypeKey = VisionCameraNodeModel.FlowNodeTypeKey,
+                    DisplayName = "Vision Camera",
                     Category = "Vision",
                     OutputPorts =
                     {
-                        CreateOutputPort("colorImage", "Color Image", FlowDataType.Image),
-                        CreateOutputPort("depthImage", "Depth Image", FlowDataType.Image),
-                        CreateOutputPort("colorCalibration", "Color Calibration", FlowDataType.CameraCalibration),
-                        CreateOutputPort("depthCalibration", "Depth Calibration", FlowDataType.CameraCalibration),
+                        CreateOutputPort("image", "Image", FlowDataType.Image),
                     },
                 },
-                () => new StereoCameraExecutor(
+                () => new VisionCameraExecutor(
                     _deviceFactory,
                     _runtimeScopeFactory,
                     _clock,
                     _captureOptions,
                     logger))
             {
-                NodeModelType = typeof(StereoCameraNodeModel),
-                NodeFactory = () => new StereoCameraNodeModel(),
-                PaletteDisplayName = "Stereo Camera",
-                PaletteDescription = "Streams synchronized color, depth, and independent calibration data.",
-                ContentFactory = StereoCameraEditor.CreateContent,
+                NodeModelType = typeof(VisionCameraNodeModel),
+                NodeFactory = () => new VisionCameraNodeModel(),
+                PaletteDisplayName = "Vision Camera",
+                PaletteDescription = "Streams complete images from an IMV camera.",
+                ContentFactory = VisionCameraEditor.CreateContent,
             };
         }
 
