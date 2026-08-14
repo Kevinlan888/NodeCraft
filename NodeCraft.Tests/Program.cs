@@ -222,6 +222,10 @@ internal static partial class Program
             var template = style?
                 .Descendants(presentation + "ControlTemplate")
                 .Single(element => (string?)element.Attribute("TargetType") == "{x:Type flow:NodeView}");
+            var horizontalAlignment = style?.Elements(presentation + "Setter")
+                .Single(element => (string?)element.Attribute("Property") == "HorizontalContentAlignment");
+            var verticalAlignment = style?.Elements(presentation + "Setter")
+                .Single(element => (string?)element.Attribute("Property") == "VerticalContentAlignment");
             var inputPanel = template?.Descendants(presentation + "StackPanel")
                 .Single(element => (string?)element.Attribute(xaml + "Name") == "InputSocketsPanel");
             var outputPanel = template?.Descendants(presentation + "StackPanel")
@@ -230,8 +234,8 @@ internal static partial class Program
                 .Single(element => (string?)element.Attribute("Name") == "InnerNode");
             var presenter = innerNode?.Element(presentation + "ContentPresenter");
 
-            return (string?)style?.Attribute("HorizontalContentAlignment") == "Stretch"
-                && (string?)style?.Attribute("VerticalContentAlignment") == "Stretch"
+            return (string?)horizontalAlignment?.Attribute("Value") == "Stretch"
+                && (string?)verticalAlignment?.Attribute("Value") == "Stretch"
                 && (string?)inputPanel?.Attribute("VerticalAlignment") == "Top"
                 && (string?)outputPanel?.Attribute("VerticalAlignment") == "Top"
                 && (string?)innerNode?.Attribute("HorizontalAlignment")
