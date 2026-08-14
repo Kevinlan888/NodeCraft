@@ -1,4 +1,5 @@
 ﻿using NodeCraft;
+using NodeCraft.Execution;
 using NodeCraft.Flow;
 using NodeCraft.Flow.Nodes;
 using Microsoft.Extensions.Logging;
@@ -107,7 +108,10 @@ namespace NodeCraft.Pages
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to save graph.");
-                TxtExecutionResult.Text = ex.ToString();
+                TxtExecutionResult.Text = ExecutionErrorFormatter.Format(
+                    "Failed to save graph.",
+                    ex,
+                    512);
             }
         }
 
@@ -120,7 +124,10 @@ namespace NodeCraft.Pages
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to save graph as.");
-                TxtExecutionResult.Text = ex.ToString();
+                TxtExecutionResult.Text = ExecutionErrorFormatter.Format(
+                    "Failed to save graph as.",
+                    ex,
+                    512);
             }
         }
 
@@ -155,7 +162,10 @@ namespace NodeCraft.Pages
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to load graph from '{FilePath}'.", filePath);
-                TxtExecutionResult.Text = ex.ToString();
+                TxtExecutionResult.Text = ExecutionErrorFormatter.Format(
+                    "Failed to load graph.",
+                    ex,
+                    512);
                 return false;
             }
         }
@@ -191,7 +201,10 @@ namespace NodeCraft.Pages
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to validate graph.");
-                TxtExecutionResult.Text = ex.ToString();
+                TxtExecutionResult.Text = ExecutionErrorFormatter.Format(
+                    "Failed to validate graph.",
+                    ex,
+                    512);
             }
         }
 
@@ -615,7 +628,7 @@ namespace NodeCraft.Pages
         private void ReportExecutionFailure(Exception exception, string message)
         {
             _logger.LogError(exception, message);
-            TxtExecutionResult.Text = exception.ToString();
+            TxtExecutionResult.Text = ExecutionErrorFormatter.Format(message, exception, 512);
         }
     }
 }

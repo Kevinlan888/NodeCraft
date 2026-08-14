@@ -18,7 +18,7 @@ namespace NodeCraft.Flow
             ILogger logger,
             CancellationToken cancellationToken)
         {
-            logger.LogInformation("Graph execution started ({NodeCount} nodes).", sortedNodes.Count);
+            logger.LogTrace("Graph execution started ({NodeCount} nodes).", sortedNodes.Count);
 
             foreach (var node in sortedNodes)
             {
@@ -31,12 +31,12 @@ namespace NodeCraft.Flow
                 if (ShouldSkipNode(node, registration.Definition, inputs))
                 {
                     context.MarkSkipped(node.Id);
-                    logger.LogDebug("Skipping node '{NodeId}'.", node.Id);
+                    logger.LogTrace("Skipping node '{NodeId}'.", node.Id);
                     continue;
                 }
 
                 context.MarkRunning(node.Id);
-                logger.LogDebug("Executing node '{NodeId}' ({TypeKey}).", node.Id, node.TypeKey);
+                logger.LogTrace("Executing node '{NodeId}' ({TypeKey}).", node.Id, node.TypeKey);
 
                 IReadOnlyDictionary<string, object> outputs;
                 try
@@ -73,8 +73,8 @@ namespace NodeCraft.Flow
                 }
             }
 
-            logger.LogInformation("Graph iteration finished.");
-            logger.LogInformation("Graph execution finished.");
+            logger.LogTrace("Graph iteration finished.");
+            logger.LogTrace("Graph execution finished.");
         }
 
         private static Dictionary<string, object> ResolveInputs(

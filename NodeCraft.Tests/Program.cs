@@ -65,6 +65,7 @@ internal static partial class Program
         await RunGraphExecutionSessionLifecycleTestsAsync();
         await RunGraphExecutionSessionIterationTestsAsync();
         await RunFlowExecutionControllerTestsAsync();
+        RunExecutionErrorFormatterTests();
 
         Run("NodeCraft Flow owns its localization resources", () =>
         {
@@ -705,7 +706,8 @@ internal static partial class Program
                     var recoveryLoadSucceeded = page.TryLoadGraphFile(validPath);
                     var canvas = GetNodeCanvas(page);
                     return missingLoadFailed
-                        && errorText.Contains("FileNotFoundException")
+                        && errorText.Contains("Failed to load graph:", StringComparison.Ordinal)
+                        && !errorText.Contains("FileNotFoundException", StringComparison.Ordinal)
                         && recoveryLoadSucceeded
                         && canvas.GraphModel?.Nodes?.SingleOrDefault()?.Id == "loaded-startup";
                 }
@@ -2530,9 +2532,10 @@ internal static partial class Program
                     Layout = "${logger}|${level:uppercase=true}|${message}",
                 };
                 nlogConfig.AddTarget(fileTarget);
-                nlogConfig.AddRule(NLog.LogLevel.Debug, NLog.LogLevel.Fatal, fileTarget);
+                nlogConfig.AddRule(NLog.LogLevel.Trace, NLog.LogLevel.Fatal, fileTarget);
 
-                using var loggerFactory = LoggerFactory.Create(builder => builder.AddNLog(nlogConfig));
+                using var loggerFactory = LoggerFactory.Create(builder =>
+                    builder.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Trace).AddNLog(nlogConfig));
                 var workflow = BuildIfWorkflow(40);
                 var executor = new GraphExecutor(workflow, logger: loggerFactory.CreateLogger<GraphExecutor>());
                 var context = await executor.ExecuteAsync();
