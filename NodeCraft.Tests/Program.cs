@@ -211,6 +211,39 @@ internal static partial class Program
                 && !theme.Contains("FlowNodePalette_Description", StringComparison.Ordinal);
         });
 
+        Run("NodeView template top-aligns sockets and stretches content", () =>
+        {
+            var root = XDocument.Load(FindRepositoryFile("NodeCraft.Flow", "Themes", "Flow.xaml"));
+            XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+            XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
+            var style = root.Root?
+                .Elements(presentation + "Style")
+                .Single(element => (string?)element.Attribute("TargetType") == "{x:Type flow:NodeView}");
+            var template = style?
+                .Descendants(presentation + "ControlTemplate")
+                .Single(element => (string?)element.Attribute("TargetType") == "{x:Type flow:NodeView}");
+            var inputPanel = template?.Descendants(presentation + "StackPanel")
+                .Single(element => (string?)element.Attribute(xaml + "Name") == "InputSocketsPanel");
+            var outputPanel = template?.Descendants(presentation + "StackPanel")
+                .Single(element => (string?)element.Attribute(xaml + "Name") == "OutputSocketsPanel");
+            var innerNode = template?.Descendants(presentation + "Grid")
+                .Single(element => (string?)element.Attribute("Name") == "InnerNode");
+            var presenter = innerNode?.Element(presentation + "ContentPresenter");
+
+            return (string?)style?.Attribute("HorizontalContentAlignment") == "Stretch"
+                && (string?)style?.Attribute("VerticalContentAlignment") == "Stretch"
+                && (string?)inputPanel?.Attribute("VerticalAlignment") == "Top"
+                && (string?)outputPanel?.Attribute("VerticalAlignment") == "Top"
+                && (string?)innerNode?.Attribute("HorizontalAlignment")
+                    == "{TemplateBinding HorizontalContentAlignment}"
+                && (string?)innerNode?.Attribute("VerticalAlignment")
+                    == "{TemplateBinding VerticalContentAlignment}"
+                && (string?)presenter?.Attribute("HorizontalAlignment")
+                    == "{TemplateBinding HorizontalContentAlignment}"
+                && (string?)presenter?.Attribute("VerticalAlignment")
+                    == "{TemplateBinding VerticalContentAlignment}";
+        });
+
         Run("FlowCanvas template declares a clipped viewport", () =>
         {
             var genericPath = FindRepositoryFile("NodeCraft.Flow", "Themes", "Flow.xaml");
@@ -360,6 +393,39 @@ internal static partial class Program
                     window.Close();
                 }
             }));
+
+        Run("NodeView content area grows when node is resized", () =>
+            RunOnSta(() => RunWithThemedWindow(window =>
+            {
+                var node = new NodeView
+                {
+                    Width = 260,
+                    Height = 180,
+                    Content = new System.Windows.Controls.Grid
+                    {
+                        MinWidth = 40,
+                        MinHeight = 40,
+                    },
+                };
+                window.Content = node;
+                window.UpdateLayout();
+
+                var inner = node.Template?.FindName("InnerNode", node)
+                    as System.Windows.Controls.Grid;
+                if (inner == null)
+                {
+                    return false;
+                }
+
+                var initialWidth = inner.ActualWidth;
+                var initialHeight = inner.ActualHeight;
+                node.Width = 360;
+                node.Height = 280;
+                window.UpdateLayout();
+
+                return inner.ActualWidth > initialWidth
+                    && inner.ActualHeight > initialHeight;
+            })));
 
         Run("FlowCanvas converts transformed socket endpoints back to world coordinates once", () =>
         {
@@ -2198,6 +2264,26 @@ internal static partial class Program
                 && style.BrushResourceKey == "colorStatusWarningBackground3"
                 && style.LabelOpacity == 1;
         });
+        Run("image preview uses a fill Grid while regular content keeps a StackPanel", () =>
+            RunOnSta(() =>
+            {
+                var factory = new DefaultFlowNodeContentFactory(new FlowCanvas());
+                var imageContent = factory.Build(new ImagePreviewNodeModel());
+                var regularContent = factory.Build(new StringValueNodeModel());
+                var imageGrid = imageContent as System.Windows.Controls.Grid;
+                var previewBorder = FindLogicalDescendant<System.Windows.Controls.Border>(imageContent);
+
+                return regularContent is System.Windows.Controls.StackPanel regularPanel
+                    && regularPanel.Orientation == System.Windows.Controls.Orientation.Vertical
+                    && imageGrid != null
+                    && imageGrid.RowDefinitions.Count >= 2
+                    && imageGrid.RowDefinitions[1].Height.IsStar
+                    && previewBorder != null
+                    && double.IsNaN(previewBorder.Width)
+                    && double.IsNaN(previewBorder.Height)
+                    && previewBorder.HorizontalAlignment == System.Windows.HorizontalAlignment.Stretch
+                    && previewBorder.VerticalAlignment == System.Windows.VerticalAlignment.Stretch;
+            }));
         Run("all flow nodes are resizable by default", () =>
             NodeView.IsResizableProperty.DefaultMetadata.DefaultValue is bool value && value);
         Run("dragged node position is persisted to model", () =>
