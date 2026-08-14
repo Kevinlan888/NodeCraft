@@ -11,15 +11,7 @@ namespace NodeCraft.Vision.StereoCamera.Nodes
         {
             ExecutorType = FlowNodeTypeKey;
             Name = "Stereo Camera";
-            InputParameters = new List<PortParameter>
-            {
-                new PortParameter
-                {
-                    PortId = "ipAddress",
-                    Parameter = new Parameter { ParameterType = FlowDataType.String.Key },
-                    PortDirection = EPortDirection.None,
-                },
-            };
+            InputParameters = new List<PortParameter>();
             OutputParameters = new List<PortParameter>
             {
                 CreateOutput("colorImage", FlowDataType.Image.Key),

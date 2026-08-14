@@ -70,18 +70,6 @@ namespace NodeCraft.Vision.StereoCamera.Plugin
                     TypeKey = StereoCameraNodeModel.FlowNodeTypeKey,
                     DisplayName = "Stereo Camera",
                     Category = "Vision",
-                    InputPorts =
-                    {
-                        new FlowPortDefinition
-                        {
-                            Id = "ipAddress",
-                            DisplayName = "IPv4 address",
-                            IOType = EIOType.Input,
-                            DataType = FlowDataType.String,
-                            IsRequired = true,
-                            PreferredDirection = EPortDirection.Left,
-                        },
-                    },
                     OutputPorts =
                     {
                         CreateOutputPort("colorImage", "Color Image", FlowDataType.Image),

@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging.Abstractions;
 using NodeCraft;
 using NodeCraft.Flow;
+using NodeCraft.Flow.Nodes;
 using NodeCraft.Vision.StereoCamera.Camera;
 using NodeCraft.Vision.StereoCamera.Nodes;
 using NodeCraft.Vision.StereoCamera.Plugin;
@@ -145,6 +146,52 @@ internal static partial class Program
             await session.DisposeAsync();
             return faulted && fixture.Device.DisconnectCount == 1;
         });
+
+        await RunAsync("legacy stereo camera IP graph link is rejected before session startup", () =>
+        {
+            var fixture = CreateIntegrationFixture();
+            RegisterVisionNodesForGraphModelConversion(fixture);
+
+            var graph = new GraphModel
+            {
+                Nodes = new List<NodeModel>
+                {
+                    new StringValueNodeModel
+                    {
+                        Id = "ip",
+                        ValueText = "192.168.1.10",
+                    },
+                    new StereoCameraNodeModel
+                    {
+                        Id = "camera",
+                        IpAddress = "192.168.1.20",
+                    },
+                },
+                Links = new List<GraphLink>
+                {
+                    new GraphLink
+                    {
+                        Id = "legacy-ip-link",
+                        OriginNodeId = "ip",
+                        OriginSlot = 0,
+                        TargetNodeId = "camera",
+                        TargetSlot = 1,
+                    },
+                },
+            };
+
+            try
+            {
+                GraphModelWorkflowAdapter.Convert(graph);
+                return Task.FromResult(false);
+            }
+            catch (InvalidOperationException exception)
+            {
+                return Task.FromResult(exception.Message.Contains("unknown target slot 1", StringComparison.Ordinal)
+                    && exception.Message.Contains("legacy-ip-link", StringComparison.Ordinal)
+                    && fixture.Device.ConnectCount == 0);
+            }
+        });
     }
 
     private static FlowNodeRegistry CreateVisionRegistry(IntegrationFixture fixture)
@@ -161,6 +208,24 @@ internal static partial class Program
         var registry = new FlowNodeRegistry();
         registry.RegisterPlugin(plugin.Metadata.Id, registrationContext.Registrations);
         return registry;
+    }
+
+    private static void RegisterVisionNodesForGraphModelConversion(IntegrationFixture fixture)
+    {
+        var plugin = StereoCameraPlugin.CreateForTesting(
+            fixture.Factory,
+            fixture.Scope,
+            new IntegrationClock(),
+            new StereoCameraCaptureOptions(100, TimeSpan.FromSeconds(5)));
+        var registrationContext = new PluginRegistrationContext(
+            NullLogger.Instance,
+            new Version(1, 0));
+        plugin.Register(registrationContext);
+
+        foreach (var registration in registrationContext.Registrations)
+        {
+            NodeExecutorFactory.Registry.Register(registration);
+        }
     }
 
     private static WorkflowDocument CreateVisionWorkflow(int previewSlot)

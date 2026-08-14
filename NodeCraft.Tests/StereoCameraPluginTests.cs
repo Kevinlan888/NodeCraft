@@ -24,6 +24,7 @@ internal static partial class Program
                 registration.Definition.TypeKey == StereoCameraNodeModel.FlowNodeTypeKey);
             var preview = context.Registrations.Single(registration =>
                 registration.Definition.TypeKey == FlowImagePreviewNodeModel.FlowNodeTypeKey);
+            var cameraInputIds = camera.Definition.InputPorts.Select(port => port.Id).ToArray();
             var outputIds = camera.Definition.OutputPorts.Select(port => port.Id).ToArray();
             var outputTypes = camera.Definition.OutputPorts.Select(port => port.DataType).ToArray();
             var previewInput = preview.Definition.InputPorts.Single(port => port.Id == "image");
@@ -33,6 +34,8 @@ internal static partial class Program
 
             return plugin.Metadata.Id == "nodecraft.vision.stereo-camera"
                 && plugin.Metadata.Version.Equals(new Version(1, 0, 0))
+                && cameraInputIds.Length == 0
+                && !cameraInputIds.Contains("ipAddress", StringComparer.Ordinal)
                 && outputIds.SequenceEqual(new[] { "colorImage", "depthImage", "colorCalibration", "depthCalibration" })
                 && outputTypes.SequenceEqual(new[]
                 {
@@ -52,11 +55,12 @@ internal static partial class Program
         {
             var node = new StereoCameraNodeModel { IpAddress = "192.168.1.10" };
             var workflow = new WorkflowDocument();
-            node.WriteWorkflowInputs(workflow.Nodes.AddAndReturn(new WorkflowNode
+            var workflowNode = workflow.Nodes.AddAndReturn(new WorkflowNode
             {
                 Id = node.Id,
                 TypeKey = node.ExecutorType,
-            }));
+            });
+            node.WriteWorkflowInputs(workflowNode);
 
             var path = Path.Combine(Path.GetTempPath(), "nodecraft-stereo-node-" + Guid.NewGuid().ToString("N") + ".flow.xml");
             try
@@ -69,7 +73,10 @@ internal static partial class Program
                     },
                     path);
                 var xml = File.ReadAllText(path);
-                return xml.Contains("Name=\"IpAddress\"", StringComparison.Ordinal)
+                return (node.InputParameters == null || node.InputParameters.Count == 0)
+                    && workflowNode.Inputs.TryGetValue("ipAddress", out var ipAddress)
+                    && Equals(ipAddress, "192.168.1.10")
+                    && xml.Contains("Name=\"IpAddress\"", StringComparison.Ordinal)
                     && xml.Contains("192.168.1.10", StringComparison.Ordinal)
                     && !xml.Contains("CurrentImage", StringComparison.Ordinal)
                     && !xml.Contains("BitmapSource", StringComparison.Ordinal);
