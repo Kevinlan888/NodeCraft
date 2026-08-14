@@ -64,7 +64,7 @@ namespace NodeCraft.Vision.StereoCamera.Views
             }
 
             _node.IpAddress = _ipAddressEditor.Text ?? string.Empty;
-            _canvas.NotifyGraphChanged();
+            _canvas.NotifyGraphChanged(refreshNodeContents: false);
         }
     }
 }

@@ -319,8 +319,13 @@ namespace NodeCraft.Flow
 
         public void NotifyGraphChanged()
         {
+            NotifyGraphChanged(refreshNodeContents: true);
+        }
+
+        public void NotifyGraphChanged(bool refreshNodeContents)
+        {
             UpdateCanvas();
-            RaiseGraphChanged();
+            RaiseGraphChanged(refreshNodeContents);
         }
 
         internal void NotifyNodeLayoutChanged()
@@ -1786,7 +1791,16 @@ namespace NodeCraft.Flow
 
         private void RaiseGraphChanged()
         {
-            RefreshNodeContents();
+            RaiseGraphChanged(refreshNodeContents: true);
+        }
+
+        private void RaiseGraphChanged(bool refreshNodeContents)
+        {
+            if (refreshNodeContents)
+            {
+                RefreshNodeContents();
+            }
+
             GraphChanged?.Invoke(this, EventArgs.Empty);
         }
 
