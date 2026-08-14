@@ -15,7 +15,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NodeCraft.Cli.Tests", "Node
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NodeCraft.Tests", "NodeCraft.Tests\NodeCraft.Tests.csproj", "{702F9D72-08FC-4EC0-BD7E-5AB29A0EEE28}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NodeCraft.Vision.StereoCamera", "NodeCraft.Vision.StereoCamera\NodeCraft.Vision.StereoCamera.csproj", "{41C9B0CC-4EAA-4FA2-BD8C-DC53C5EF9CE3}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NodeCraft.Vision", "NodeCraft.Vision\NodeCraft.Vision.csproj", "{41C9B0CC-4EAA-4FA2-BD8C-DC53C5EF9CE3}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

@@ -1,0 +1,7 @@
+{
+  "id": "nodecraft.vision",
+  "entryAssembly": "NodeCraft.Vision.dll",
+  "entryType": "NodeCraft.Vision.Plugin.VisionPlugin",
+  "apiVersion": "1.0",
+  "privateLibraryPath": "lib"
+}

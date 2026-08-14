@@ -1,7 +1,0 @@
-{
-  "id": "nodecraft.vision.stereo-camera",
-  "entryAssembly": "NodeCraft.Vision.StereoCamera.dll",
-  "entryType": "NodeCraft.Vision.StereoCamera.Plugin.StereoCameraPlugin",
-  "apiVersion": "1.0",
-  "privateLibraryPath": "lib"
-}

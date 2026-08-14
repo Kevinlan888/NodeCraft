@@ -53,7 +53,7 @@ internal static partial class Program
     private static async Task<int> Main()
     {
         RunVisualContractTests();
-        RunStereoCameraProjectTests();
+        RunVisionProjectTests();
         RunVendorInteropTests();
         RunStereoCameraPackagingTests();
         await RunLatestFrameMailboxTestsAsync();
