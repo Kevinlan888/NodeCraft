@@ -314,6 +314,76 @@ internal static partial class Program
                 && (string?)worldCanvas?.Attribute("VerticalAlignment") == "Top";
         });
 
+        Run("ConnectionLine uses a cubic spline for two endpoints", () =>
+            RunOnSta(() =>
+            {
+                var line = new InspectableConnectionLine
+                {
+                    Points = new System.Windows.Media.PointCollection
+                    {
+                        new System.Windows.Point(24, 40),
+                        new System.Windows.Point(224, 140),
+                    },
+                };
+                var path = System.Windows.Media.PathGeometry.CreateFromGeometry(line.Geometry);
+
+                return path.Figures.Count == 1
+                    && path.Figures[0].Segments
+                        .OfType<System.Windows.Media.BezierSegment>()
+                        .Count() == 1;
+            }));
+
+        Run("FlowCanvas uses two endpoint points and puts links below nodes", () =>
+            RunOnSta(() =>
+                RunWithTemplatedFlowCanvas((canvas, _, worldCanvas) =>
+                {
+                    var source = new IntegerValueNodeModel
+                    {
+                        Id = "spline-source",
+                        X = 80,
+                        Y = 80,
+                    };
+                    var target = new AddNumberNodeModel
+                    {
+                        Id = "spline-target",
+                        X = 480,
+                        Y = 220,
+                    };
+                    var graph = new GraphModel
+                    {
+                        Nodes = new List<NodeModel> { source, target },
+                        Links = new List<GraphLink>
+                        {
+                            new GraphLink
+                            {
+                                Id = "spline-link",
+                                OriginNodeId = source.Id,
+                                OriginSlot = 0,
+                                TargetNodeId = target.Id,
+                                TargetSlot = 0,
+                            },
+                        },
+                    };
+
+                    canvas.LoadGraph(graph);
+                    canvas.Dispatcher.Invoke(
+                        System.Windows.Threading.DispatcherPriority.ApplicationIdle,
+                        new Action(() => { }));
+
+                    var line = worldCanvas.Children
+                        .OfType<ConnectionLine>()
+                        .SingleOrDefault();
+                    var nodeViews = worldCanvas.Children
+                        .OfType<NodeView>()
+                        .ToList();
+
+                    return line != null
+                        && line.Points.Count == 2
+                        && nodeViews.Count == 2
+                        && System.Windows.Controls.Panel.GetZIndex(line)
+                            < nodeViews.Min(System.Windows.Controls.Panel.GetZIndex);
+                })));
+
         Run("FlowCanvas starts at the default zoom", () =>
             RunOnSta(() =>
             {
@@ -3868,6 +3938,11 @@ internal static partial class Program
         {
             return true;
         }
+    }
+
+    private sealed class InspectableConnectionLine : ConnectionLine
+    {
+        public System.Windows.Media.Geometry Geometry => DefiningGeometry;
     }
 
     private sealed class StagedPluginTestRoot : IDisposable
