@@ -15,6 +15,7 @@
 - 本地文件夹只枚举直接子文件；排序必须是 `OrderBy(fileName, StringComparer.OrdinalIgnoreCase).ThenBy(fileName, StringComparer.Ordinal)`。
 - builtin 前缀为 `builtin://vision/`，builtin 只允许 `Preload`，不得自动切换或回退。
 - 默认配置为 `SourcePath="builtin://vision/sample-set"`、`LoadMode=Preload`、`MaxPreloadedImages=100`、`MaxPreloadedBytes=536870912`、`SkipErrorImages=false`。
+- runtime `loadMode` 不仅必须是 `VirtualCameraLoadMode` 类型，还必须通过 `Enum.IsDefined(typeof(VirtualCameraLoadMode), value)`；只允许 `Preload` 和 `Dynamic`，数值 cast 得到的未定义 enum 值属于配置错误。
 - `Preload` 要求两个上限都大于 0；字节上限按最终存入 `FlowImage` 的托管像素 buffer 实际字节数累计，并使用 `checked`；`OverflowException` 必须转换成带 source 上下文的启动异常；Dynamic 忽略两个上限。
 - 第一次 iteration 必须选择 ordinal 0；`FrameId` 使用 entry ordinal，不使用可变列表 index 或 iteration 序号。
 - 外部环境或配置导致的预期失败（非法/无法规范化/无法访问 source、目录枚举 I/O、无效扩展名或空目录、无效 preload 上限、decoded byte 超限以及 checked overflow）必须包装成 `InvalidOperationException`（必要时保留原异常为 `InnerException`），消息同时包含 `VirtualCamera` 和相关 source path/URI；图片读取/解码失败使用 `VirtualCameraImageLoadException`，消息还必须包含图片绝对路径。
@@ -638,7 +639,11 @@ await RunAsync("virtual camera preload enforces positive count and checked decod
         fixture.DirectoryPath,
         () => StartVirtualCameraAsync(
             fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 1, 100, false));
-    return invalidCount && invalidBytes && tooSmall && tooMany;
+    var invalidMode = await ThrowsVirtualCameraAsync<InvalidOperationException>(
+        fixture.DirectoryPath,
+        () => StartVirtualCameraAsync(
+            fixture.DirectoryPath, (VirtualCameraLoadMode)123, 10, 100, false));
+    return invalidCount && invalidBytes && tooSmall && tooMany && invalidMode;
 });
 ```
 
@@ -656,7 +661,18 @@ Expected: 编译失败，提示 `VirtualCameraExecutor` 和测试 helper 尚不�
 
 - [ ] **Step 3: 实现 executor 的配置读取和启动**
 
-`StartSessionAsync` 从 `context.Node.Inputs` 读取且只接受以下类型：`sourcePath:string`、`loadMode:VirtualCameraLoadMode`、`maxPreloadedImages:int`、`maxPreloadedBytes:long`、`skipErrorImages:bool`。缺失或错误类型直接抛带 `VirtualCamera` 的 `InvalidOperationException`；source 尚不可用时使用输入值或 `<empty>` 作为上下文，source 已解析后统一使用 `_imageDirectory`。
+`StartSessionAsync` 从 `context.Node.Inputs` 读取且只接受以下类型：`sourcePath:string`、`loadMode:VirtualCameraLoadMode`、`maxPreloadedImages:int`、`maxPreloadedBytes:long`、`skipErrorImages:bool`。缺失或错误类型直接抛带 `VirtualCamera` 的 `InvalidOperationException`；source 尚不可用时使用输入值或 `<empty>` 作为上下文，source 已解析后统一使用 `_imageDirectory`。`loadMode` 在类型检查之后必须再执行 `Enum.IsDefined(typeof(VirtualCameraLoadMode), loadMode)`，拒绝 `(VirtualCameraLoadMode)123` 这类底层整数未定义值，不得按默认值或任意分支继续执行。
+
+值域校验必须在 builtin/Dynamic 分支和 Preload 上限校验之前完成，具体边界为：
+
+```csharp
+var sourceLabel = string.IsNullOrWhiteSpace(sourcePath) ? "<empty>" : sourcePath;
+if (!Enum.IsDefined(typeof(VirtualCameraLoadMode), loadMode))
+{
+    throw new InvalidOperationException(
+        $"VirtualCamera source '{sourceLabel}' has unsupported load mode value '{(int)loadMode}'.");
+}
+```
 
 调用 `VirtualCameraSourceResolver.Resolve(sourcePath)` 后：
 
@@ -1245,7 +1261,7 @@ Expected: 输出末尾为 `ALL PASS`，且新增 Virtual Camera 测试全部出�
 
 - [ ] **Step 4: 对照规格逐项审查**
 
-确认以下事实均有测试或实现证据：五个属性 XML round-trip、runtime key/type、三个 output availability、默认 builtin、local absolute path、folder direct-child deterministic sort、source resolver 的路径/目录环境异常包装、首次 ordinal 0、Preload decoded-byte checked limit 与 overflow context wrapping、Dynamic 每轮加载、builtin Dynamic fail、Gray8/Bgr24、窄 Skip filter、异常消息、stop cleanup、Preview 消费和 session directory 链接。
+确认以下事实均有测试或实现证据：五个属性 XML round-trip、runtime key/type 和 `LoadMode` enum 值域校验、三个 output availability、默认 builtin、local absolute path、folder direct-child deterministic sort、source resolver 的路径/目录环境异常包装、首次 ordinal 0、Preload decoded-byte checked limit 与 overflow context wrapping、Dynamic 每轮加载、builtin Dynamic fail、Gray8/Bgr24、窄 Skip filter、异常消息、stop cleanup、Preview 消费和 session directory 链接。
 
 - [ ] **Step 5: 提交最终验证修正并报告**
 
@@ -1265,6 +1281,7 @@ git commit -m "test: verify virtual camera implementation"
 | 节点身份、五个配置属性、默认值 | Task 1 |
 | XML `<Properties>` 持久化和 runtime input mapping | Task 1 |
 | 三个输出及 availability | Tasks 1, 6 |
+| `LoadMode` enum 定义和值域校验 | Tasks 1, 4 |
 | 本地单文件/文件夹、绝对路径、扩展名和 deterministic tie-break | Task 2 |
 | source path normalization/目录枚举的外部异常包装和来源上下文 | Task 2 |
 | builtin sample-set、单图 URI、目录语义、builtin 禁止 Dynamic | Tasks 2, 4 |
