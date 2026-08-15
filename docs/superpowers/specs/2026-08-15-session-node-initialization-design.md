@@ -24,7 +24,7 @@ NodeCraft 的图执行已经采用 `GraphExecutionSession`：session 启动时�
 - 保持现有 `StartSessionAsync` / `StopSessionAsync` 生命周期行为和旧插件兼容。
 - 在停止、取消、初始化失败和正常结束时都可靠清理已创建的资源。
 - 保持普通每轮数据与 session 级稳定数据的语义边界。
-- 明确 `SessionValueStore` 只由 session 初始化阶段写入；iteration 只能读取稳定值，不能写回或原地修改原始值。
+- `SessionValueStore` 只由 session 初始化阶段写入；iteration 只能读取 session 绑定，不能向 store 写回、替换或删除值。引擎不复制或冻结存储对象；session 输出应由节点视为逻辑只读值。
 
 ## 非目标
 
@@ -83,11 +83,10 @@ public interface IFlowNodeSessionInitializer
 现有 `FlowPortDefinition` 目前只描述端口的类型、方向和连接规则。增加阶段能力：
 
 ```csharp
-[Flags]
 public enum FlowPortAvailability
 {
-    Iteration = 1,
-    Session = 2,
+    Iteration,
+    Session,
 }
 ```
 
@@ -104,7 +103,15 @@ public FlowPortAvailability Availability { get; set; }
 | --- | --- |
 | `Iteration` | 普通每轮执行阶段产生或消费的值 |
 | `Session` | session 初始化阶段产生或消费的值；初始化后形成只读快照，并在整个 session 内保持 |
-| `Session \| Iteration` | 初始化阶段产生的值可作为稳定输入；iteration 也可以产生只对当前轮有效的临时值，但不能覆盖 session 快照 |
+
+V1 的端口阶段约束如下：
+
+| 端口方向 | V1 允许的 `Availability` |
+| --- | --- |
+| Input | `Iteration` 或 `Session`，必须恰好选择一个 |
+| Output | `Iteration` 或 `Session`，必须恰好选择一个 |
+
+每个端口在 V1 只属于一个阶段，不允许单个端口同时承担稳定值和每轮临时值。若同一业务同时需要稳定 baseline 和每轮临时结果，应定义两个独立 output 端口，或增加一个在 session 初始化阶段产生稳定值的计算节点；不让同一端口跨阶段复用。
 
 这不是新的物理连接线。编辑器仍然使用现有 socket 和 `LinkRef`，只是类型校验和运行时解析额外检查端口的阶段能力。
 
@@ -122,28 +129,31 @@ SessionValueStore
 要求：
 
 - 每个 `GraphExecutionSession` 有独立存储，不在不同运行之间共享。
+- `GraphExecutionSession` 实例是一次性运行对象；停止后不能再次 `Start`，必须创建新的 session 才能重新执行。
 - 只有 session 初始化阶段在校验初始化器输出后，才能按输出端口 ID 转换为定义 slot 写入。
 - 初始化写入是每个 `(nodeId, outputSlot)` 在当前 session 内的一次性写入；session store 不提供 iteration 写入、覆盖或删除路径。
-- 只有包含 `Session` 能力的输出端口可以由初始化器写入 session 存储；`Session | Iteration` 的初始化输出也只写入一次。
+- 只有 `Availability == Session` 的输出端口可以由初始化器写入 session 存储；`Iteration` 输出不能写入 session store。
 - session 启动完成并进入 `Running` 前，`SessionValueStore` 封存为只读视图；`PrepareIterationAsync`、`ExecuteAsync`、`FlowGraphIterationRunner` 和 `FlowExecutionContext.SetPortValue` 都不能修改它。
 - session 值在 session 结束前保持不变；停止或释放时才清理整个 store。
 - 不把 session 值写回 workflow 模型，不序列化硬件句柄、算法实例或其他运行时对象。
 
-运行时应当把 store 的写入接口和读取接口分开。概念上，初始化阶段持有内部可写的 `SessionValueStore`，iteration 和节点只拿到等价的 `IReadOnlySessionValueStore` 读取视图；`FlowExecutionContext` 自己维护独立的当前轮值表。当前轮产生的值优先级更高：
+运行时应当把 store 的写入接口和读取接口分开。概念上，初始化阶段持有内部可写的 `SessionValueStore`，iteration 和节点只拿到等价的 `IReadOnlySessionValueStore` 读取视图；`FlowExecutionContext` 自己维护独立的当前轮值表。对一个已配置的 `LinkRef`，运行时按它指向的 source output port 的 `Availability` 选择存储位置：
 
 ```text
-当前 iteration 值 > session 值 > 常量默认值
+source Availability == Iteration -> 当前 FlowExecutionContext
+source Availability == Session    -> SessionValueStore
+未配置 LinkRef                    -> 常量或 DefaultValue
 ```
 
-因此，iteration 输出的存储位置始终是当前 `FlowExecutionContext`。即使输出端口声明为 `Session | Iteration`，它在 iteration 中产生的值也只对当前轮及其下游节点可见；下一轮解析仍从原始 `SessionValueStore` 读取初始化快照，不会看到上一轮的临时值。
+已配置 `LinkRef` 但对应 source output 在其声明阶段没有值时，输入保持缺失，不使用 `DefaultValue`。需要同时提供稳定 baseline 和每轮临时结果时，使用不同的 output ID；iteration output 只写入当前 `FlowExecutionContext`，不会覆盖 session output。
 
-这样算法节点即使在 `ExecuteAsync` 中声明了必需的 `calibration` 输入，也不会因为相机每轮只输出 `image` 而被判定为缺少输入。算法内部真正使用的标定对象仍然来自一次性的 `InitializeSessionAsync`。
+这样算法节点即使在 `FlowNodeDefinition.InputPorts` 中将 `calibration` 定义为必需输入，在 iteration 的输入解析中也可以从 session 值获得该稳定输入，不会因为相机每轮只输出 `image` 而被判定为缺少输入。算法内部真正使用的标定对象仍然来自一次性的 `InitializeSessionAsync`。
 
-### Session 原始值不可变
+### Session 原始值的逻辑只读约定
 
-`SessionValueStore` 中的值是初始化快照，不是供 iteration 原地编辑的工作缓冲区。节点可以读取 `Session | Iteration` 的稳定值，复制或派生出新的变量/对象，再修改这个新值并作为当前轮输出；节点不得在原始 session 对象上直接修改，也不得把新的引用写回 `SessionValueStore`。
+`SessionValueStore` 中的值是初始化快照，不是供 iteration 原地编辑的工作缓冲区。`SessionValueStore` 只由 session 初始化阶段写入；iteration 只能通过只读视图读取 session 绑定，不能向 store 写回、替换或删除值。引擎不对存储的 `object` 做隐式深拷贝，也不冻结对象本身，因此无法阻止消费者通过同一引用原地修改可变对象；节点应将 session 输出视为逻辑只读值，需要修改时自行创建副本。
 
-这里的“新变量”必须代表新的值或新的对象实例；仅仅给同一个可变对象增加一个局部变量引用不算复制。需要保存可变数据的节点应在初始化时创建自己的副本，或使用明确的只读/不可变类型。`CameraCalibration` 作为不可变快照可以直接作为 session 值传递；引擎不对任意 `object` 做无法定义语义的深拷贝。
+节点需要可变工作数据时，应在初始化时创建自己的副本，或使用明确的只读/不可变类型。仅仅给同一个可变对象增加一个局部变量引用不算复制。`CameraCalibration` 作为不可变快照可以直接作为 session 值传递；引擎不对任意 `object` 做无法定义语义的深拷贝。
 
 ## 初始化执行时序
 
@@ -252,7 +262,7 @@ public async Task PrepareIterationAsync(
 
 标定接口不需要拉流，因此 `InitializeSessionAsync` 读取标定时不会产生额外帧。后续 `PrepareIterationAsync` 才负责等待新图像。
 
-对于现有立体相机节点，可以把 `colorCalibration` 和 `depthCalibration` 标记为 session 输出。若这些对象也需要在每轮结果中显示，则可以把端口能力设为 `Session | Iteration`；此时初始化输出仍是不可变的 session 快照，iteration 输出只是当前轮的临时值，不能修改或替换该快照。
+对于现有立体相机节点，可以把 `colorCalibration` 和 `depthCalibration` 标记为 `Session` 输出。若需要每轮产生派生结果，应增加独立的 `Iteration` output，例如 `currentColorCalibration` 和 `currentDepthCalibration`；不要把同一个 calibration 端口跨阶段复用。
 
 ## 算法节点示例
 
@@ -308,7 +318,9 @@ public Task<IReadOnlyDictionary<string, object>> InitializeSessionAsync(
 - 指向上游 `Session` 输出端口的 `LinkRef`。
 - 可选的默认值。
 
-如果 link 指向只有 `Iteration` 能力的输出端口，而当前输入需要 `Session` 能力，验证阶段报错，错误码建议为 `SessionInputUnavailable`。
+如果 link 指向只有 `Iteration` 能力的输出端口，而当前 input 的 `Availability == Session`，验证阶段报错，错误码建议为 `SessionInputUnavailable`。V1 每个 input 和 output 都只允许单一阶段，不存在跨阶段复用的端口。
+
+`DefaultValue` 仅在 workflow 未配置该输入端口时生效。若 input 已配置为 `LinkRef`，但对应的上游 session 值不存在，则该输入保持缺失，不回退到 `DefaultValue`；required session input 应报告 `SessionInputUnavailable`。
 
 ### 输出验证
 
@@ -317,28 +329,30 @@ public Task<IReadOnlyDictionary<string, object>> InitializeSessionAsync(
 - output ID 是否存在于 `FlowNodeDefinition.OutputPorts`。
 - 端口是否声明了 `Session` 能力。
 - 返回对象是否符合 `FlowDataType.AcceptsValue`。
-- 必需的 session 输出是否确实返回。
+- 不根据输出端口的 `IsRequired` 推断 initializer 必须返回该 output；输出是否必须可用由下游的 required input 约束。
 
 返回未知端口或错误类型应当让 session 启动失败，而不是静默丢弃。
 
 普通 `ExecuteAsync` 返回输出时，引擎另行验证：
 
 - output ID 是否存在于 `FlowNodeDefinition.OutputPorts`。
-- 端口是否声明了 `Iteration` 能力；只有 `Session` 而没有 `Iteration` 的端口不能在 iteration 中产生输出。
+- 端口的 `Availability` 是否为 `Iteration`；`Session` output 不能在 iteration 中产生输出。
 - 返回对象是否符合 `FlowDataType.AcceptsValue`。
-- 返回值只写入当前 `FlowExecutionContext`；即使端口同时声明了 `Session`，也不得写入、覆盖或删除 `SessionValueStore` 中的初始化值。
+- 返回值只写入当前 `FlowExecutionContext`；`Session` output 不能在 iteration 阶段返回值，也不能写入、覆盖或删除 `SessionValueStore`。
 
 iteration 输出违反上述规则时，当前 iteration 失败；不得降级为静默丢弃或更新 session store。
 
 ### 普通 iteration 输入
 
-普通 iteration 仍然由现有 `FlowGraphIterationRunner` 处理。解析顺序调整为：
+普通 iteration 仍然由现有 `FlowGraphIterationRunner` 处理。对已配置的 `LinkRef`，先查看它指向的 source output port 的 `Availability`：
 
-1. 当前 iteration 的上游输出；
-2. 当前节点对应的 session 值；
-3. 常量或默认值。
+1. source output 为 `Iteration`：读取 `(linkRef.SourceNodeId, linkRef.SourceSlot)` 在当前 `FlowExecutionContext` 的值；
+2. source output 为 `Session`：读取同一 `(sourceNodeId, sourceSlot)` 在 `SessionValueStore` 的稳定值；
+3. 只有 workflow 未配置该 input key 时，才使用常量或 `DefaultValue`。
 
-因此 session 标定信息可以作为只读稳定输入参与每轮执行，而图像等动态数据仍然按照现有 DAG 顺序流动。当前轮对 `Session | Iteration` 端口产生的临时值只在本轮的 context 中参与后续解析。
+已配置 `LinkRef` 但对应 source output 在其声明阶段没有值时，保持输入缺失，不使用 `DefaultValue`。只有 workflow 未配置该 input 时才使用 `DefaultValue`；required `Session` input 由 session 初始化阶段的 `SessionInputUnavailable` 处理，required `Iteration` input 由现有 required-input 逻辑处理。
+
+因此 session 标定信息可以作为只读稳定输入参与每轮执行，而图像等动态数据仍然按照现有 DAG 顺序流动。需要每轮变化的结果使用独立的 `Iteration` output，不覆盖 session baseline。
 
 ## 失败和清理
 
@@ -346,11 +360,12 @@ iteration 输出违反上述规则时，当前 iteration 失败；不得降级�
 
 - 节点 `StartSessionAsync` 成功后加入已启动集合。
 - 节点 `InitializeSessionAsync` 成功后才写入 session 输出。
-- 节点初始化完成后不得再次写入 session 输出；iteration 期间任何 session store 写入、覆盖、删除或原地修改都视为实现错误。
+- 节点初始化完成后不得再次写入 session 输出；iteration 期间引擎没有 session store 的写入、覆盖或删除路径。由于 store 保存 `object` 引用，节点仍可能通过同一引用原地修改可变对象；这不是引擎可阻止的行为，节点应按逻辑只读约定使用 session 输出。
 - 当前节点初始化失败时，先清理当前节点已经启动的资源，再逆序清理之前成功的节点。
 - 初始化取消、后续 iteration 异常或用户停止都会进入统一的 `StopSessionAsync` 清理路径。
 - 清理使用不可取消 token，避免用户取消导致设备句柄或算法资源泄漏。
 - 初始化器本身若在内部申请资源并失败，必须像现有视觉节点一样在内部 catch 中释放部分资源，随后再抛出原始异常。
+- 停止清理顺序为：进入 `Stopping` → 逆序 `StopSessionAsync` → `SessionValueStore.Clear()` → 将 state 设为 `Stopped` → release `_iterationGate`；`Stopped` 表示 lifecycle 和 session store 均已清理完成。
 
 session 启动失败时不允许进入 `Running` 状态，也不允许开始第一轮 `ExecuteAsync`。
 
@@ -376,9 +391,9 @@ session 启动失败时不允许进入 `Running` 状态，也不允许开始第�
 - 初始化失败时已经启动的节点全部清理，失败节点不进入正常执行。
 - session 输入连接到非 session 输出时验证失败。
 - 初始化器返回未知端口或错误类型时 session 启动失败。
-- `Session | Iteration` 的初始化值在多轮 iteration 后仍保持原始值，iteration 输出只能作为当前轮临时值传递给下游。
-- 下一轮 iteration 重新读取原始 session 值，不会读取上一轮的临时覆盖值。
-- 节点基于 session 值创建副本并修改时，原始 session 值不发生原地变化。
+- `Session` output 在多轮 iteration 后仍保持初始化原值；`Iteration` output 只在当前轮传递给下游。
+- 下一轮 iteration 重新读取原始 `Session` output，不会读取上一轮的临时 `Iteration` output。
+- 节点显式基于 session 值创建副本并修改时，原始 session 值不发生变化；这依赖节点的复制行为，不是引擎隐式深拷贝的保证。
 - iteration 尝试从只有 `Session` 能力的输出端口返回值时失败，且不改变 session store。
 - 一次性执行和连续执行都使用同一套 session 初始化语义。
 - 旧的、不实现初始化器的节点回归测试继续通过。
