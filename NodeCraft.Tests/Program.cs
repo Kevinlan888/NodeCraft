@@ -62,6 +62,7 @@ internal static partial class Program
         await RunVisionCameraCaptureTestsAsync();
         await RunVisionPluginTestsAsync();
         await RunFlowImagePreviewTestsAsync();
+        await RunVirtualCameraTestsAsync();
         await RunVisionIntegrationTestsAsync();
         await RunGraphExecutionSessionLifecycleTestsAsync();
         await RunGraphExecutionSessionIterationTestsAsync();
