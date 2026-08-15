@@ -186,7 +186,7 @@ builtin://vision/sample-set
 
 创建的 `FlowImage` 为不可变值对象。虚拟相机不持有 WPF UI 对象；预览节点可以直接接收该 `FlowImage`。
 
-图片元数据不代表真实设备：`DeviceTimestamp` 使用 0，`FrameId` 使用图片在 session 初始序列中的稳定 ordinal，不代表 workflow iteration 序号；`imagePath` 在整个 session 中保持稳定，`CapturedAtUtc` 使用图片被加载时的 UTC 时间。`Preload` 模式重复访问同一项时复用已缓存的 `FlowImage`，其像素和加载时间保持不变；`Dynamic` 模式每次重新加载，因此文件内容和加载时间允许发生变化。
+图片元数据不代表真实设备：`DeviceTimestamp` 使用 0，`FrameId = entry.Ordinal`，其中 `Ordinal` 是图片在 session 初始序列中的稳定 ordinal，不代表 workflow iteration 序号；`imagePath` 在整个 session 中保持稳定，`CapturedAtUtc` 使用图片被加载时的 UTC 时间。`Preload` 模式重复访问同一项时复用已缓存的 `FlowImage`，其像素和加载时间保持不变；`Dynamic` 模式每次重新加载，因此文件内容和加载时间允许发生变化。
 
 ## 6. 执行器和生命周期
 
@@ -222,7 +222,48 @@ builtin://vision/sample-set
 
 每次 `PrepareIterationAsync` 只读取并解码当前路径。当前图片替换上一轮的当前图片；执行器不保留 LRU 或其他历史图片缓存。文件在 session 运行期间被修改时，后续 iteration 会读取修改后的内容。
 
-`Dynamic` 模式下，解码失败时，如果 `SkipErrorImages=false`，当前 `PrepareIterationAsync` 失败；如果为 `true`，当前路径从本次 session 的有效候选中跳过并继续尝试下一张。整个序列都无法读取时，`PrepareIterationAsync` 失败。
+两种模式都使用带稳定 ordinal 的 entry；entry 的 ordinal 在 session 初始序列建立时分配，运行期间删除坏图时不重新编号：
+
+```csharp
+internal sealed class VirtualCameraEntry
+{
+    public int Ordinal { get; }
+    public string Path { get; }
+    public FlowImage PreloadedImage { get; }
+}
+```
+
+`Dynamic` 模式下，解码失败时，如果 `SkipErrorImages=false`，当前 `PrepareIterationAsync` 失败；如果为 `true`，必须按以下游标规则从当前候选位置继续尝试：
+
+```text
+_current = null
+
+while (_entries.Count > 0)
+{
+    var nextIndex = (_index + 1) % _entries.Count
+    var entry = _entries[nextIndex]
+
+    try
+    {
+        _current = LoadCurrent(entry)
+        _index = nextIndex
+        return
+    }
+    catch when (_skipErrorImages)
+    {
+        _entries.RemoveAt(nextIndex)
+
+        if (_entries.Count == 0)
+            throw NoReadableVirtualCameraImages(entry.Path)
+
+        // 删除后，nextIndex 位置已变成下一候选项。
+        // 下一轮必须继续尝试这个位置，而不是再次递增后跳过它。
+        _index = nextIndex - 1
+    }
+}
+```
+
+如果 `_entries` 是 `A(ordinal 0)`、`Bad(ordinal 1)`、`C(ordinal 2)`，且当前已经输出 A，则下一轮删除 Bad 后必须输出 C，再下一轮回到 A；对应 `FrameId` 为 `0 → 2 → 0`。整个序列都无法读取时，`PrepareIterationAsync` 失败。
 
 两种模式的 index 规则相同，`PrepareIterationAsync` 执行：
 
@@ -232,7 +273,7 @@ var entry = _entries[_index]
 _current = LoadCurrent(entry)
 ```
 
-在 `Preload` 中 `LoadCurrent(entry)` 返回已缓存的 `FlowImage`；在 `Dynamic` 中它从 `entry` 的路径重新读取并解码。`_entries` 只包含当前 session 的有效候选项。因此第一次 iteration 选择 ordinal 0，最后一项之后才回到 0；单图片序列也会始终选择 0。
+在 `Preload` 中 `LoadCurrent(entry)` 返回 `entry.PreloadedImage`；在 `Dynamic` 中它从 `entry.Path` 重新读取并解码。`_index` 是可因候选删除而调整的当前列表位置，不得用来作为 `FrameId`；`FrameId` 必须读取 `entry.Ordinal`。因此第一次 iteration 选择初始序列的 ordinal 0，最后一项之后才回到 0；单图片序列也会始终选择 0。
 
 停止 session 时清空当前图片、序列、路径元数据和 index。
 
@@ -282,7 +323,7 @@ _current = LoadCurrent(entry)
 7. 第一次 iteration 选择序列项 0，不跳过第一张；停止和重新启动后同样从 0 开始。
 8. `Preload` 模式在启动时发现坏图、遵守图片数量限制和 decoded byte 限制。
 9. `Dynamic` 模式每次 iteration 重新读取图片，不保留历史解码缓存；修改文件后后续 iteration 可观察到新内容，同时验证同一项的 `FrameId` 和 `imagePath` 稳定、像素和 `CapturedAtUtc` 可以变化。
-10. `SkipErrorImages=false` 和 `true` 分别覆盖失败和跳过坏图路径的行为。
+10. `SkipErrorImages=false` 和 `true` 分别覆盖失败和跳过坏图路径的行为；`A / Bad / C` 场景输出为 `A → C → A`，FrameId 为 `0 → 2 → 0`。
 11. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
 12. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
 13. `image` 可以被现有 FlowImage Preview 节点消费。
