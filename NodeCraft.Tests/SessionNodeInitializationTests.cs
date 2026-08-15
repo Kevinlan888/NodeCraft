@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using NodeCraft;
 using NodeCraft.Flow;
 
 internal static partial class Program
@@ -204,6 +205,59 @@ internal static partial class Program
                 && ReferenceEquals(
                     fixture.Algorithm.InitializedCalibration,
                     defaultCalibration);
+        });
+
+        await RunAsync("one-shot graph execution initializes and cleans session nodes", async () =>
+        {
+            var fixture = CreateSessionFixture();
+            FlowExecutionContext callbackContext = null;
+            var controller = new FlowExecutionController();
+
+            await controller.RunOnceAsync(
+                fixture.Executor.CreateSession(),
+                (context, iteration, elapsed) =>
+                {
+                    callbackContext = context;
+                    return Task.CompletedTask;
+                },
+                CancellationToken.None);
+
+            return fixture.Camera.InitializeCount == 1
+                && fixture.Algorithm.InitializeCount == 1
+                && fixture.Camera.ExecuteCount == 1
+                && fixture.Algorithm.ExecuteCount == 1
+                && fixture.Camera.StopCount == 1
+                && fixture.Algorithm.StopCount == 1
+                && callbackContext != null
+                && callbackContext.TryGetPortValue("algorithm", 0, out var result)
+                && Equals(result, 1d);
+        });
+
+        await RunAsync("continuous execution reuses one initialized algorithm", async () =>
+        {
+            var fixture = CreateSessionFixture();
+            var controller = new FlowExecutionController();
+            using var cancellation = new CancellationTokenSource();
+            var callbackCount = 0;
+
+            await controller.RunContinuouslyAsync(
+                fixture.Executor.CreateSession(),
+                (context, iteration, elapsed) =>
+                {
+                    callbackCount++;
+                    if (callbackCount == 2)
+                    {
+                        cancellation.Cancel();
+                    }
+
+                    return Task.CompletedTask;
+                },
+                cancellation.Token);
+
+            return fixture.Algorithm.InitializeCount == 1
+                && callbackCount == 2
+                && fixture.Algorithm.ExecuteCount == 2
+                && fixture.Algorithm.StopCount == 1;
         });
     }
 
