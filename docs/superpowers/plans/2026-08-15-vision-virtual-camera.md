@@ -15,11 +15,12 @@
 - 本地文件夹只枚举直接子文件；排序必须是 `OrderBy(fileName, StringComparer.OrdinalIgnoreCase).ThenBy(fileName, StringComparer.Ordinal)`。
 - builtin 前缀为 `builtin://vision/`，builtin 只允许 `Preload`，不得自动切换或回退。
 - 默认配置为 `SourcePath="builtin://vision/sample-set"`、`LoadMode=Preload`、`MaxPreloadedImages=100`、`MaxPreloadedBytes=536870912`、`SkipErrorImages=false`。
-- `Preload` 要求两个上限都大于 0；字节上限按最终存入 `FlowImage` 的托管像素 buffer 实际字节数累计，并使用 checked；Dynamic 忽略两个上限。
+- `Preload` 要求两个上限都大于 0；字节上限按最终存入 `FlowImage` 的托管像素 buffer 实际字节数累计，并使用 `checked`；`OverflowException` 必须转换成带 source 上下文的启动异常；Dynamic 忽略两个上限。
 - 第一次 iteration 必须选择 ordinal 0；`FrameId` 使用 entry ordinal，不使用可变列表 index 或 iteration 序号。
-- 坏图只允许通过 `VirtualCameraImageLoadException` 被 Skip；`OperationCanceledException`、`OutOfMemoryException` 和 `InvalidOperationException` 不得被包装或吞掉。
+- 外部环境或配置导致的预期失败（非法/无法规范化/无法访问 source、目录枚举 I/O、无效扩展名或空目录、无效 preload 上限、decoded byte 超限以及 checked overflow）必须包装成 `InvalidOperationException`（必要时保留原异常为 `InnerException`），消息同时包含 `VirtualCamera` 和相关 source path/URI；图片读取/解码失败使用 `VirtualCameraImageLoadException`，消息还必须包含图片绝对路径。
+- 坏图只允许通过 `VirtualCameraImageLoadException` 被 Skip；`OperationCanceledException`、`OutOfMemoryException` 和底层/程序自身的 `InvalidOperationException` 不得被包装或吞掉。上一条只约束 Virtual Camera 自己创建的预期失败；取消、OOM 和程序 bug 即使原始消息没有 `VirtualCamera` 也必须原样传播。
 - 输出顺序和 key 固定为 `image`（Iteration）、`imagePath`（Iteration）、`imageDirectory`（Session）；session 输出只由 `InitializeSessionAsync` 返回。
-- 所有异常消息都必须包含 `VirtualCamera` 和相关来源路径/URI；本地图片错误还必须包含该图片的绝对路径。
+- 所有 Virtual Camera 自己创建或包装的异常消息都必须包含 `VirtualCamera` 和相关来源路径/URI；本地图片错误还必须包含该图片的绝对路径。
 - 每个任务完成后运行该任务的测试并提交一个小 commit；实现阶段在本计划执行时使用 TDD。
 
 ## File Map
@@ -28,7 +29,7 @@
 
 - `NodeCraft.Vision/Nodes/VirtualCameraLoadMode.cs`：`Preload`/`Dynamic` 枚举。
 - `NodeCraft.Vision/Nodes/VirtualCameraNodeModel.cs`：五个可持久化配置属性、三个 model output ports 和 `WriteWorkflowInputs`。
-- `NodeCraft.Vision/Nodes/VirtualCameraSource.cs`：`VirtualCameraEntry`、本地/builtin 来源解析、确定性排序和固定 builtin sample-set。
+- `NodeCraft.Vision/Nodes/VirtualCameraSource.cs`：`VirtualCameraEntry`、本地/builtin 来源解析、确定性排序、固定 builtin sample-set 和 source 环境异常包装。
 - `NodeCraft.Vision/Nodes/VirtualCameraImageLoader.cs`：可注入的 loader 接口、WPF 解码实现、窄异常包装和像素格式转换。
 - `NodeCraft.Vision/Nodes/VirtualCameraExecutor.cs`：session 生命周期、session 初始化输出、Preload/Dynamic 游标和 iteration 输出。
 - `NodeCraft.Vision/Views/VirtualCameraEditor.xaml`：路径和加载配置编辑器布局。
@@ -267,10 +268,24 @@ await RunAsync("virtual camera rejects invalid source kinds and empty folders", 
     };
     File.WriteAllBytes(cases[2], new byte[] { 1, 2, 3 });
     var allRejected = cases.All(path => ThrowsVirtualCamera<InvalidOperationException>(
+        path,
         () => VirtualCameraSourceResolver.Resolve(path)));
     var emptyFolderRejected = ThrowsVirtualCamera<InvalidOperationException>(
+        fixture.DirectoryPath,
         () => VirtualCameraSourceResolver.Resolve(fixture.DirectoryPath));
-    return allRejected && emptyFolderRejected;
+    var invalidPath = "\0invalid";
+    var invalidPathWrapped = false;
+    try
+    {
+        VirtualCameraSourceResolver.Resolve(invalidPath);
+    }
+    catch (InvalidOperationException exception)
+    {
+        invalidPathWrapped = exception.Message.Contains("VirtualCamera", StringComparison.Ordinal)
+            && exception.Message.Contains(invalidPath, StringComparison.Ordinal)
+            && exception.InnerException is ArgumentException;
+    }
+    return allRejected && emptyFolderRejected && invalidPathWrapped;
 });
 ```
 
@@ -321,10 +336,10 @@ internal sealed class VirtualCameraSource
 
 `VirtualCameraSourceResolver.Resolve` 的实现顺序固定为：
 
-1. 空白或非法路径直接抛 `InvalidOperationException`，消息包含 `VirtualCamera` 和原始 source。
+1. 空白 source 直接抛带 `VirtualCamera` 和 `<empty>` 上下文的 `InvalidOperationException`；非 builtin 的非法本地 source 先进入受控路径规范化流程。
 2. `StartsWith("builtin://vision/", StringComparison.OrdinalIgnoreCase)` 时只接受 `sample-set` 或其 `checkerboard`/`color-bars` 资产；集合固定按 `checkerboard`, `color-bars` 顺序生成。每个 builtin entry 立即带独立托管 buffer 的 `FlowImage`，目录固定为 `builtin://vision/sample-set`。
-3. 本地来源使用 `Path.GetFullPath`；既不是现有文件也不是现有目录时抛明确异常。
-4. 单文件仅允许 `.jpg`/`.png`/`.bmp`，目录使用 `Directory.EnumerateFiles(directory)` 只取直接子文件，过滤后执行：
+3. 本地来源使用 `Path.GetFullPath`。`Path.GetFullPath` 以及后续目录枚举/排序只捕获预期的外部环境异常：`ArgumentException`、`NotSupportedException`、`PathTooLongException`、`UnauthorizedAccessException`、`SecurityException` 和 `IOException`；统一包装为包含 `VirtualCamera` 与 source path 的 `InvalidOperationException`，并保留原异常。不得捕获 `OperationCanceledException`、`OutOfMemoryException` 或底层/程序自身的 `InvalidOperationException`。
+4. 既不是现有文件也不是现有目录时抛包含 `VirtualCamera` 和规范化绝对路径的明确异常。单文件仅允许 `.jpg`/`.png`/`.bmp`；目录使用 `Directory.EnumerateFiles(directory)` 只取直接子文件，且必须在同一个 `try` 内完成 materialize、过滤和排序，以便迭代器实际抛出的 I/O 异常也被包装：
 
 ```csharp
 files
@@ -332,7 +347,28 @@ files
     .ThenBy(path => Path.GetFileName(path), StringComparer.Ordinal)
 ```
 
-5. 所有 entry 用当前排序位置分配 ordinal，从 0 开始；本地 entry 的 `PreloadedImage` 为 null。目录为空或没有支持扩展名时抛明确异常。
+5. 所有 entry 用当前排序位置分配 ordinal，从 0 开始；本地 entry 的 `PreloadedImage` 为 null。目录为空或没有支持扩展名时抛包含 `VirtualCamera` 和规范化 source path 的明确异常。
+
+使用以下局部规则实现包装边界，禁止用裸 `catch (Exception)`：
+
+```csharp
+private static bool IsExpectedSourceResolutionFailure(Exception exception) =>
+    exception is ArgumentException
+    || exception is NotSupportedException
+    || exception is PathTooLongException
+    || exception is UnauthorizedAccessException
+    || exception is SecurityException
+    || exception is IOException;
+
+private static InvalidOperationException WrapSourceFailure(
+    string sourceLabel,
+    Exception exception) =>
+    new InvalidOperationException(
+        $"VirtualCamera source '{sourceLabel}' could not be resolved.",
+        exception);
+```
+
+`Path.GetFullPath(sourcePath)` 放在 `try/catch when (IsExpectedSourceResolutionFailure(exception))` 中；`Directory.EnumerateFiles(...).Where(...).OrderBy(...).ThenBy(...).ToArray()` 的整个 materialize 过程也放在同样的受控边界中。source 为空时使用 `<empty>` 作为消息上下文；已规范化的本地路径和 builtin URI分别使用其绝对路径/URI，保证每个 resolver 自己产生的异常都带来源上下文。
 
 builtin 的固定 pixel buffer 直接用 `FlowImage.FromOwnedBuffer` 构造，`DeviceTimestamp=0`、`CapturedAtUtc` 使用构造时 UTC、`FrameId` 使用其 ordinal；不要使用字典枚举顺序。
 
@@ -586,14 +622,22 @@ await RunAsync("virtual camera preload enforces positive count and checked decod
     using var fixture = new TemporaryVirtualCameraFiles();
     fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
     fixture.WriteBitmap("b.png", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
-    var invalidCount = await ThrowsAsync<InvalidOperationException>(() =>
-        StartVirtualCameraAsync(fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 0, 100, false));
-    var invalidBytes = await ThrowsAsync<InvalidOperationException>(() =>
-        StartVirtualCameraAsync(fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 10, 0, false));
-    var tooSmall = await ThrowsAsync<InvalidOperationException>(() =>
-        StartVirtualCameraAsync(fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 10, 2, false));
-    var tooMany = await ThrowsAsync<InvalidOperationException>(() =>
-        StartVirtualCameraAsync(fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 1, 100, false));
+    var invalidCount = await ThrowsVirtualCameraAsync<InvalidOperationException>(
+        fixture.DirectoryPath,
+        () => StartVirtualCameraAsync(
+            fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 0, 100, false));
+    var invalidBytes = await ThrowsVirtualCameraAsync<InvalidOperationException>(
+        fixture.DirectoryPath,
+        () => StartVirtualCameraAsync(
+            fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 10, 0, false));
+    var tooSmall = await ThrowsVirtualCameraAsync<InvalidOperationException>(
+        fixture.DirectoryPath,
+        () => StartVirtualCameraAsync(
+            fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 10, 2, false));
+    var tooMany = await ThrowsVirtualCameraAsync<InvalidOperationException>(
+        fixture.DirectoryPath,
+        () => StartVirtualCameraAsync(
+            fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 1, 100, false));
     return invalidCount && invalidBytes && tooSmall && tooMany;
 });
 ```
@@ -612,13 +656,13 @@ Expected: 编译失败，提示 `VirtualCameraExecutor` 和测试 helper 尚不�
 
 - [ ] **Step 3: 实现 executor 的配置读取和启动**
 
-`StartSessionAsync` 从 `context.Node.Inputs` 读取且只接受以下类型：`sourcePath:string`、`loadMode:VirtualCameraLoadMode`、`maxPreloadedImages:int`、`maxPreloadedBytes:long`、`skipErrorImages:bool`。缺失或错误类型直接抛带 `VirtualCamera` 的 `InvalidOperationException`。
+`StartSessionAsync` 从 `context.Node.Inputs` 读取且只接受以下类型：`sourcePath:string`、`loadMode:VirtualCameraLoadMode`、`maxPreloadedImages:int`、`maxPreloadedBytes:long`、`skipErrorImages:bool`。缺失或错误类型直接抛带 `VirtualCamera` 的 `InvalidOperationException`；source 尚不可用时使用输入值或 `<empty>` 作为上下文，source 已解析后统一使用 `_imageDirectory`。
 
 调用 `VirtualCameraSourceResolver.Resolve(sourcePath)` 后：
 
 - builtin + Dynamic 直接失败；不自动变成 Preload。
 - Dynamic 不验证两个 preload 上限。
-- Preload 验证两个上限大于 0，并按 entry 顺序加载。
+- Preload 验证两个上限大于 0，并按 entry 顺序加载；所有配置/容量失败都包装成包含 `VirtualCamera` 和 `_imageDirectory` 的启动 `InvalidOperationException`。
 - 启动失败时清空所有字段，不能让半成品 sequence 留到下一次启动。
 
 executor 的字段至少包含 `_entries`, `_imageDirectory`, `_index`, `_current`, `_skipErrorImages`, `_loadMode`；`_index` 初始为 `-1`，`_current` 初始为 null。
@@ -629,13 +673,22 @@ Preload 循环使用 `validEntries`，对本地 entry 调 `_imageLoader.Load(ent
 
 ```csharp
 long totalBytes = 0;
-checked
+try
 {
-    totalBytes += image.Buffer.Length;
+    checked
+    {
+        totalBytes += image.Buffer.Length;
+    }
+}
+catch (OverflowException exception)
+{
+    throw new InvalidOperationException(
+        $"VirtualCamera source '{_imageDirectory}' overflowed decoded byte accounting near '{entry.Path}'.",
+        exception);
 }
 ```
 
-发生 overflow 或超过配置时直接抛启动异常，不能静默截断。成功的 entry 用同一 ordinal/path 和 decoded image 创建新的 cached entry。
+超过 `MaxPreloadedBytes` 或 `MaxPreloadedImages` 时也抛包含 `VirtualCamera`、`_imageDirectory` 和相关 entry path 的启动异常，不能静默截断；不要捕获其它异常。成功的 entry 用同一 ordinal/path 和 decoded image 创建新的 cached entry。
 
 `InitializeSessionAsync` 做 cancellation check，要求 session 已启动，然后返回只有 `imageDirectory` 的 dictionary。`PrepareIterationAsync` 先清 `_current` 和 `_currentEntry`，执行 `_index = (_index + 1) % _entries.Count` 并取 entry，设置 `_currentEntry = entry`，Preload 下 `_current = entry.PreloadedImage`。`ExecuteAsync` 做 cancellation check，要求 `_current != null` 且 `_currentEntry != null`，返回：
 
@@ -760,14 +813,18 @@ private static async Task StartVirtualCameraAsync(
     long maxBytes,
     bool skipErrors);
 
-private static async Task<bool> ThrowsAsync<TException>(Func<Task> action)
+private static async Task<bool> ThrowsVirtualCameraAsync<TException>(
+    string sourcePath,
+    Func<Task> action)
     where TException : Exception;
 
-private static bool ThrowsVirtualCamera<TException>(Action action)
+private static bool ThrowsVirtualCamera<TException>(
+    string sourcePath,
+    Action action)
     where TException : Exception;
 ```
 
-`CreateVirtualCameraContext` 的 definition output ports 必须按 `image`/`imagePath`/`imageDirectory` 顺序设置对应 data type 和 availability；`node.Inputs` 必须写五个 runtime key。`StartVirtualCameraAsync` 必须在 `finally` 中调用 `StopSessionAsync`，避免失败测试留下 executor 状态。两个 `Throws` helper 只在捕获到精确的 `TException` 时返回 true，其他异常重新抛出。
+`CreateVirtualCameraContext` 的 definition output ports 必须按 `image`/`imagePath`/`imageDirectory` 顺序设置对应 data type 和 availability；`node.Inputs` 必须写五个 runtime key。`StartVirtualCameraAsync` 必须在 `finally` 中调用 `StopSessionAsync`，避免失败测试留下 executor 状态。两个 `ThrowsVirtualCamera` helper 只在捕获到 `TException` 且消息同时包含 `VirtualCamera` 与相关 source path/URI 时返回 true，其他异常重新抛出。
 
 helper 的具体实现契约如下，后续测试直接复用，不再创建第二套上下文约定：
 
@@ -833,7 +890,9 @@ private static async Task StartVirtualCameraAsync(
     }
 }
 
-private static async Task<bool> ThrowsAsync<TException>(Func<Task> action)
+private static async Task<bool> ThrowsVirtualCameraAsync<TException>(
+    string sourcePath,
+    Func<Task> action)
     where TException : Exception
 {
     try
@@ -841,13 +900,17 @@ private static async Task<bool> ThrowsAsync<TException>(Func<Task> action)
         await action();
         return false;
     }
-    catch (TException)
+    catch (TException exception)
     {
-        return true;
+        var sourceLabel = string.IsNullOrWhiteSpace(sourcePath) ? "<empty>" : sourcePath;
+        return exception.Message.Contains("VirtualCamera", StringComparison.Ordinal)
+            && exception.Message.Contains(sourceLabel, StringComparison.Ordinal);
     }
 }
 
-private static bool ThrowsVirtualCamera<TException>(Action action)
+private static bool ThrowsVirtualCamera<TException>(
+    string sourcePath,
+    Action action)
     where TException : Exception
 {
     try
@@ -855,9 +918,11 @@ private static bool ThrowsVirtualCamera<TException>(Action action)
         action();
         return false;
     }
-    catch (TException)
+    catch (TException exception)
     {
-        return true;
+        var sourceLabel = string.IsNullOrWhiteSpace(sourcePath) ? "<empty>" : sourcePath;
+        return exception.Message.Contains("VirtualCamera", StringComparison.Ordinal)
+            && exception.Message.Contains(sourceLabel, StringComparison.Ordinal);
     }
 }
 ```
@@ -1161,10 +1226,10 @@ Run:
 ```bash
 git diff --check
 git status --short --branch
-rg -n "catch when \\(_skipErrorImages\\)|catch \\(Exception" NodeCraft.Vision/Nodes/VirtualCameraExecutor.cs NodeCraft.Vision/Nodes/VirtualCameraImageLoader.cs
+rg -n "catch when \\(_skipErrorImages\\)|catch \\(Exception|Path.GetFullPath|Directory.EnumerateFiles" NodeCraft.Vision/Nodes/VirtualCameraExecutor.cs NodeCraft.Vision/Nodes/VirtualCameraImageLoader.cs NodeCraft.Vision/Nodes/VirtualCameraSource.cs
 ```
 
-Expected: `git diff --check` 无错误；executor 中不存在裸 `catch when (_skipErrorImages)`；loader 只有明确 scope 的异常过滤，不存在覆盖整个 `Load` 的宽泛 catch。
+Expected: `git diff --check` 无错误；executor 中不存在裸 `catch when (_skipErrorImages)`；loader 只有明确 scope 的异常过滤，不存在覆盖整个 `Load` 的宽泛 catch；source resolver 的路径规范化和目录 materialize 只使用预期异常过滤，并将外部环境错误包装成带 source 上下文的 `InvalidOperationException`。
 
 - [ ] **Step 2: 构建解决方案**
 
@@ -1180,7 +1245,7 @@ Expected: 输出末尾为 `ALL PASS`，且新增 Virtual Camera 测试全部出�
 
 - [ ] **Step 4: 对照规格逐项审查**
 
-确认以下事实均有测试或实现证据：五个属性 XML round-trip、runtime key/type、三个 output availability、默认 builtin、local absolute path、folder direct-child deterministic sort、首次 ordinal 0、Preload decoded-byte checked limit、Dynamic 每轮加载、builtin Dynamic fail、Gray8/Bgr24、窄 Skip filter、异常消息、stop cleanup、Preview 消费和 session directory 链接。
+确认以下事实均有测试或实现证据：五个属性 XML round-trip、runtime key/type、三个 output availability、默认 builtin、local absolute path、folder direct-child deterministic sort、source resolver 的路径/目录环境异常包装、首次 ordinal 0、Preload decoded-byte checked limit 与 overflow context wrapping、Dynamic 每轮加载、builtin Dynamic fail、Gray8/Bgr24、窄 Skip filter、异常消息、stop cleanup、Preview 消费和 session directory 链接。
 
 - [ ] **Step 5: 提交最终验证修正并报告**
 
@@ -1201,9 +1266,10 @@ git commit -m "test: verify virtual camera implementation"
 | XML `<Properties>` 持久化和 runtime input mapping | Task 1 |
 | 三个输出及 availability | Tasks 1, 6 |
 | 本地单文件/文件夹、绝对路径、扩展名和 deterministic tie-break | Task 2 |
+| source path normalization/目录枚举的外部异常包装和来源上下文 | Task 2 |
 | builtin sample-set、单图 URI、目录语义、builtin 禁止 Dynamic | Tasks 2, 4 |
 | WPF OnLoad 解码、Gray8/Mono8、Bgr24、FlowImage metadata | Task 3 |
-| Preload 全量缓存、数量/decoded bytes/checked/正数校验 | Task 4 |
+| Preload 全量缓存、数量/decoded bytes/checked/overflow context wrapping/正数校验 | Task 4 |
 | Dynamic 每轮解码、文件修改可见、无历史缓存 | Task 5 |
 | ordinal、首图不跳过、坏图删除游标 | Tasks 4, 5 |
 | 专用可 Skip 异常和取消/OOM/逻辑异常传播 | Tasks 3, 5 |
