@@ -217,6 +217,8 @@ builtin://vision/sample-set
 
 `InitializeSessionAsync` 在生命周期启动之后执行，返回 `imageDirectory`。这样 session 输出会在 `StartAsync` 成功进入 Running 前写入 session store。
 
+来源解析前后都必须检查启动 cancellation token。尤其是 Dynamic 启动只解析路径而不进入解码循环，不能因为缺少后续 Preload item 检查而漏掉“目录枚举期间发生取消”的情况；解析后的 cancellation check 通过前不得把解析结果提交为已启动 session。
+
 ### 6.1 Preload 模式（本地和内置来源）
 
 `Preload` 模式在 `StartSessionAsync` 中依次解码整个图片序列，并缓存所有有效的 `FlowImage`。缓存必须同时满足：
@@ -235,6 +237,8 @@ checked
 
 超过任一限制时，session 启动失败，不静默截断图片序列。解码失败时，如果 `SkipErrorImages=false`，session 启动失败；如果为 `true`，该图片被排除后继续加载。所有图片都被跳过时，session 启动失败。`Dynamic` 模式不使用这两个配置值，也不因它们为非正数而失败。
 
+每项解码前和成功解码后都必须检查启动 cancellation token。成功解码后的检查通过之前，不得把该图片加入缓存、累计数量/字节或提交任何可观察的 session 状态；取消必须原样传播 `OperationCanceledException`，并把执行器恢复到未启动状态。这样即使 cancellation 发生在最后一次耗时解码期间，启动也不会误报成功。
+
 两种模式的坏图过滤都必须使用同一个窄异常边界。图片加载器在明确的文件读取、BitmapDecoder 解码和像素复制调用中，把预期的图片读取/解码失败包装为 `VirtualCameraImageLoadException`，其中包含来源路径和原始异常。`IsSkippableImageLoadError(exception)` 只对该专用异常返回 `true`；它不能按 `_skipErrorImages` 直接吞掉任意 `Exception`。
 
 预加载和动态加载都只能使用以下形式的过滤 catch：
@@ -244,6 +248,7 @@ catch (Exception ex) when (
     _skipErrorImages &&
     IsSkippableImageLoadError(ex))
 {
+    cancellationToken.ThrowIfCancellationRequested();
     // Preload: 排除当前 entry，继续构建序列。
     // Dynamic: 按游标规则删除当前候选项，继续尝试。
 }
@@ -272,15 +277,25 @@ internal sealed class VirtualCameraEntry
 
 ```text
 _current = null
+_currentEntry = null
+
+if (_entries.Count == 0)
+    throw NoReadableVirtualCameraImages(_imageDirectory)
 
 while (_entries.Count > 0)
 {
+    cancellationToken.ThrowIfCancellationRequested()
     var nextIndex = (_index + 1) % _entries.Count
     var entry = _entries[nextIndex]
 
     try
     {
-        _current = LoadCurrent(entry)
+        var image = LoadCurrent(entry)
+        cancellationToken.ThrowIfCancellationRequested()
+
+        // cancellation 检查通过后再原子式提交本轮选择。
+        _current = image
+        _currentEntry = entry
         _index = nextIndex
         return
     }
@@ -288,6 +303,9 @@ while (_entries.Count > 0)
         _skipErrorImages &&
         IsSkippableImageLoadError(ex))
     {
+        // token 可能在 loader 抛出可跳过异常的同时被取消；
+        // 取消优先，不能因此删除 entry 或移动游标。
+        cancellationToken.ThrowIfCancellationRequested()
         _entries.RemoveAt(nextIndex)
 
         if (_entries.Count == 0)
@@ -298,11 +316,15 @@ while (_entries.Count > 0)
         _index = nextIndex - 1
     }
 }
+
+throw NoReadableVirtualCameraImages(_imageDirectory)
 ```
 
-如果 `_entries` 是 `A(ordinal 0)`、`Bad(ordinal 1)`、`C(ordinal 2)`，且当前已经输出 A，则下一轮删除 Bad 后必须输出 C，再下一轮回到 A；对应 `FrameId` 为 `0 → 2 → 0`。整个序列都无法读取时，`PrepareIterationAsync` 失败。
+如果 `_entries` 是 `A(ordinal 0)`、`Bad(ordinal 1)`、`C(ordinal 2)`，且当前已经输出 A，则下一轮删除 Bad 后必须输出 C，再下一轮回到 A；对应 `FrameId` 为 `0 → 2 → 0`。整个序列都无法读取时，本次以及之后每次 `PrepareIterationAsync` 都必须抛出明确的“没有可读图片”异常，不能因为列表已空而静默返回并让 `ExecuteAsync` 延后失败。
 
-两种模式的 index 规则相同，`PrepareIterationAsync` 执行：
+Dynamic 解码必须采用“先加载、检查取消、再提交”的顺序。若 token 在 `LoadCurrent` 执行期间被取消，本轮不能更新 `_index`、`_current` 或 `_currentEntry`；后续使用未取消 token 的 Prepare 必须重试同一候选项及其稳定 ordinal。
+
+在没有跳过或取消时，两种模式的 index 选择规则相同。Preload 的简单路径执行：
 
 ```text
 _index = (_index + 1) % _entries.Count
@@ -310,9 +332,9 @@ var entry = _entries[_index]
 _current = LoadCurrent(entry)
 ```
 
-在 `Preload` 中 `LoadCurrent(entry)` 返回 `entry.PreloadedImage`；在 `Dynamic` 中它从 `entry.Path` 重新读取并解码。`_index` 是可因候选删除而调整的当前列表位置，不得用来作为 `FrameId`；`FrameId` 必须读取 `entry.Ordinal`。因此第一次 iteration 选择初始序列的 ordinal 0，最后一项之后才回到 0；单图片序列也会始终选择 0。
+在 `Preload` 中 `LoadCurrent(entry)` 返回 `entry.PreloadedImage`；Dynamic 则使用上面的事务式加载和提交规则，从 `entry.Path` 重新读取并解码。`_index` 是可因候选删除而调整的当前列表位置，不得用来作为 `FrameId`；`FrameId` 必须读取 `entry.Ordinal`。因此第一次 iteration 选择初始序列的 ordinal 0，最后一项之后才回到 0；单图片序列也会始终选择 0。
 
-停止 session 时清空当前图片、序列、路径元数据和 index。
+停止 session 时清空当前图片、序列、路径元数据和 index。正常 Flow runtime 会等待启动任务结束后再串行调用节点 Stop，因此 executor 的生命周期契约不承诺支持外部直接并发调用 Start/Stop；实现不应描述或测试 runtime 中不可达的“Stop 与 Starting 并发清理”路径。启动失败或取消仍须由 Start 自身清理半成品状态，之后的幂等 Stop 只做常规清理。
 
 `ExecuteAsync` 返回：
 
@@ -359,17 +381,19 @@ _current = LoadCurrent(entry)
 5. 本地文件夹按 `OrdinalIgnoreCase` 后接 `Ordinal` tie-break 排序，并在最后一张后回到第一张。
 6. 文件夹忽略不支持扩展名，空文件夹启动失败。
 7. 第一次 iteration 选择序列项 0，不跳过第一张；停止和重新启动后同样从 0 开始。
-8. `Preload` 模式在启动时发现坏图、校验两个限制大于 0，并按最终托管像素 buffer 的实际字节数和 checked 累计遵守数量/字节限制，而不是按压缩源文件大小计算。
+8. `Preload` 模式在启动时发现坏图、校验两个限制大于 0，并按最终托管像素 buffer 的实际字节数和 checked 累计遵守数量/字节限制；测试必须构造“压缩文件总大小大于 decoded buffer 总大小”的样例，证明实现不是按源文件大小计算。
 9. `Dynamic` 模式每次 iteration 重新读取图片，不保留历史解码缓存；修改文件后后续 iteration 可观察到新内容，同时验证同一项的 `FrameId` 和 `imagePath` 稳定、像素和 `CapturedAtUtc` 可以变化。
-10. `SkipErrorImages=false` 和 `true` 分别覆盖失败和跳过坏图路径的行为；`A / Bad / C` 场景输出为 `A → C → A`，FrameId 为 `0 → 2 → 0`；`OperationCanceledException`、`OutOfMemoryException` 和逻辑异常不会被跳过。
-11. 内置来源固定使用 `Preload`；配置为 `Dynamic` 时启动失败且不自动切换。
-12. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
-13. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
-14. `image` 可以被现有 FlowImage Preview 节点消费。
-15. `imagePath` 可以连接兼容 `FlowDataType.String` 的输入节点。
-16. 不存在路径、非法路径类型、不支持扩展名、损坏图片和未知内置 URI 都抛出明确异常。
-17. session 启动、停止、重复 iteration 和 session 清理不会保留上一轮的图片或 index。
-18. 集成 graph 执行验证 session 级 `imageDirectory` 可被后续节点稳定读取。
+10. Preload 在中途或最后一项解码期间被取消时启动失败且不提交缓存；Dynamic 在加载期间被取消时不提交 current/cursor，下一次未取消 Prepare 重试同一 entry。
+11. `SkipErrorImages=false` 和 `true` 分别覆盖失败和跳过坏图路径的行为；`A / Bad / C` 场景输出为 `A → C → A`，FrameId 为 `0 → 2 → 0`；所有 entry 被移除后连续两次 Prepare 都失败；`OperationCanceledException`、`OutOfMemoryException` 和逻辑异常不会被跳过。
+12. 内置来源固定使用 `Preload`；配置为 `Dynamic` 时启动失败且不自动切换。
+13. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
+14. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
+15. `image` 可以被现有 FlowImage Preview 节点消费。
+16. `imagePath` 可以连接兼容 `FlowDataType.String` 的输入节点。
+17. 不存在路径、非法路径类型、不支持扩展名、损坏图片和未知内置 URI 都抛出明确异常。
+18. session 启动、停止、重复 iteration 和 session 清理不会保留上一轮的图片或 index。
+19. 编辑器初始化不产生 graph change；五个控件分别更新模型属性并触发一次 `GraphChanged`，数字输入无效时不修改模型。
+20. 集成 graph 执行验证 Preview、iteration 级 `imagePath` 和 session 级 `imageDirectory` 均由真实 registry/link/session 路径传递，并在两次 iteration 中保持各自语义。
 
 ## 10. 完成标准
 

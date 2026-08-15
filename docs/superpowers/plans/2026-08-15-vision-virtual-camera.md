@@ -20,11 +20,15 @@
 - `SkipErrorImages=true` 时 Preload 的数量/字节上限只统计成功解码并加入缓存的图片；只捕获 `VirtualCameraImageLoadException`，全坏来源必须抛带 source 上下文的启动异常。
 - builtin 标识大小写不敏感但输出 URI canonical 为小写；固定 `checkerboard`/`color-bars` 的尺寸和像素内容不可由实现自行改变；Dynamic 在 builtin materialize 前拒绝。
 - WPF loader 必须在 `OnLoad` 后返回与线程无关的独立 `FlowImage`；生产路径必须可从 MTA worker 调用，测试同时覆盖 STA bitmap 生成和 MTA 实际解码。
+- 测试中的异步 STA helper 必须安装并泵送 WPF `DispatcherSynchronizationContext`；仅在 STA thread 上调用 `action().GetAwaiter().GetResult()` 不能保证 `await` 后续体仍运行在 STA。
 - 第一次 iteration 必须选择 ordinal 0；`FrameId` 使用 entry ordinal，不使用可变列表 index 或 iteration 序号。
 - 外部环境或配置导致的预期失败（非法/无法规范化/无法访问 source、目录枚举 I/O、无效扩展名或空目录、无效 preload 上限、decoded byte 超限以及 checked overflow）必须包装成 `InvalidOperationException`（必要时保留原异常为 `InnerException`），消息同时包含 `VirtualCamera` 和相关 source path/URI；图片读取/解码失败使用 `VirtualCameraImageLoadException`，消息还必须包含图片绝对路径。
 - 坏图只允许通过 `VirtualCameraImageLoadException` 被 Skip；`OperationCanceledException`、`OutOfMemoryException` 和底层/程序自身的 `InvalidOperationException` 不得被包装或吞掉。上一条只约束 Virtual Camera 自己创建的预期失败；取消、OOM 和程序 bug 即使原始消息没有 `VirtualCamera` 也必须原样传播。
 - 输出顺序和 key 固定为 `image`（Iteration）、`imagePath`（Iteration）、`imageDirectory`（Session）；session 输出只由 `InitializeSessionAsync` 返回。
-- `VirtualCameraExecutor.StopSessionAsync` 必须是幂等清理操作：未启动、启动中途失败、已启动或已停止都只清空当前 session 状态并返回，不得因“未启动/已停止”抛异常；清理不能覆盖 `StartSessionAsync` 的原始异常。
+- `VirtualCameraExecutor.StopSessionAsync` 必须是幂等清理操作：未启动、启动失败/取消已经返回后、已启动或已停止都只清空当前 session 状态并返回，不得因“未启动/已停止”抛异常；清理不能覆盖 `StartSessionAsync` 的原始异常。
+- 正常 `GraphExecutionSession` 会等待 Start 任务完成后再串行调用节点 Stop；executor 不承诺支持外部直接并发调用生命周期方法，也不为 runtime 中不可达的 Stop/Starting 竞态增加锁。Start 失败或取消必须自行回滚到 Stopped，后续幂等 Stop 再清理一次也安全。
+- cancellation 在 source resolve 前后及每次可能耗时的 load 前后都检查。解析后的检查对不进入 preload loop 的 Dynamic 启动尤其必要；Preload 只有在 post-load 检查通过后才累计/缓存；Dynamic 只有在 post-load 检查通过后才提交 `_current`、`_currentEntry` 和 `_index`，且 skippable catch 在删除 entry 前再次检查 cancellation。
+- Dynamic 删除最后一个不可读 entry 后，本次和以后每次 Prepare 都必须抛明确的无可读图片错误，不允许空列表路径静默返回。
 - 所有 Virtual Camera 自己创建或包装的异常消息都必须包含 `VirtualCamera` 和相关来源路径/URI；本地图片错误还必须包含该图片的绝对路径。
 - 每个任务完成后运行该任务的测试并提交一个小 commit；实现阶段在本计划执行时使用 TDD。
 
@@ -580,7 +584,7 @@ await RunAsync("virtual camera decodes JPEG and BMP on a worker and releases fil
 
 `TemporaryVirtualCameraFiles.WriteBitmap` 使用 `BitmapSource.Create` 和根据扩展名选择的 `PngBitmapEncoder`/`JpegBitmapEncoder`/`BmpBitmapEncoder`，写入后关闭文件流。写入 bitmap 的动作必须运行在 STA；真实 loader 还必须通过上面的 `Task.Run` MTA worker 测试，证明生产路径不依赖 UI dispatcher。移动 JPEG/BMP 文件的断言验证 `BitmapDecoder` 使用 `OnLoad` 并释放文件句柄。另加损坏文件测试：写入任意非图片 bytes，要求得到包含绝对路径的 `VirtualCameraImageLoadException`。
 
-在 `VirtualCameraTests.cs` 增加 `RunOnStaAsync` 异步 helper 和不产生 overload ambiguity 的 `RunOnStaValueAsync` 同步值 helper。它们创建独立 STA thread，以 `TaskCompletionSource` 转发返回值和原始异常；所有 Task 4/5 中调用 `WriteBitmap` 或真实 `VirtualCameraImageLoader` 的测试都必须把整个测试体包在 `RunOnStaAsync(async () => ...)` 内，fake-loader-only 测试也必须在 STA 创建测试 bitmap 后才能调用真实 loader。不要把 WPF encoder 留在普通 async/thread-pool 测试体中。
+在 `VirtualCameraTests.cs` 增加 `RunOnStaAsync` 异步 helper 和不产生 overload ambiguity 的 `RunOnStaValueAsync` 同步值 helper。它们创建独立 STA thread，安装 `DispatcherSynchronizationContext` 并泵送 WPF Dispatcher，以 `TaskCompletionSource` 转发返回值和原始异常；所有 Task 4/5 中调用 `WriteBitmap` 或真实 `VirtualCameraImageLoader` 的测试都必须把整个测试体包在 `RunOnStaAsync(async () => ...)` 内，fake-loader-only 测试也必须在 STA 创建测试 bitmap 后才能调用真实 loader。不要把 WPF encoder 留在普通 async/thread-pool 测试体中。测试文件需要 `using System.Windows.Threading;`。
 
 helper 的行为契约为：
 
@@ -594,15 +598,29 @@ private static Task<T> RunOnStaAsync<T>(Func<Task<T>> action)
         TaskCreationOptions.RunContinuationsAsynchronously);
     var thread = new Thread(() =>
     {
-        try
-        {
-            completion.SetResult(action().GetAwaiter().GetResult());
-        }
-        catch (Exception exception)
-        {
-            completion.SetException(exception);
-        }
+        var dispatcher = Dispatcher.CurrentDispatcher;
+        SynchronizationContext.SetSynchronizationContext(
+            new DispatcherSynchronizationContext(dispatcher));
+        dispatcher.BeginInvoke(
+            DispatcherPriority.Normal,
+            new Action(async () =>
+            {
+                try
+                {
+                    completion.TrySetResult(await action());
+                }
+                catch (Exception exception)
+                {
+                    completion.TrySetException(exception);
+                }
+                finally
+                {
+                    dispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
+                }
+            }));
+        Dispatcher.Run();
     });
+    thread.IsBackground = true;
     thread.SetApartmentState(ApartmentState.STA);
     thread.Start();
     return completion.Task;
@@ -725,8 +743,16 @@ await RunAsync("virtual camera preload enforces positive count and checked decod
     RunOnStaAsync(async () =>
     {
     using var fixture = new TemporaryVirtualCameraFiles();
-    fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
-    fixture.WriteBitmap("b.png", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
+    var aPath = fixture.WriteBitmap(
+        "a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
+    var bPath = fixture.WriteBitmap(
+        "b.png", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
+    var compressedSourceBytes = new FileInfo(aPath).Length + new FileInfo(bPath).Length;
+
+    // 两张 Bgr24 1x1 图片的 decoded buffer 总计恰好 6 bytes。
+    // PNG 源文件总大小明显大于 6；若实现错误地统计源文件大小，此调用会失败。
+    await StartVirtualCameraAsync(
+        fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 10, 6, false);
     var invalidCount = await ThrowsVirtualCameraAsync<InvalidOperationException>(
         fixture.DirectoryPath,
         () => StartVirtualCameraAsync(
@@ -747,7 +773,12 @@ await RunAsync("virtual camera preload enforces positive count and checked decod
         fixture.DirectoryPath,
         () => StartVirtualCameraAsync(
             fixture.DirectoryPath, (VirtualCameraLoadMode)123, 10, 100, false));
-        return invalidCount && invalidBytes && tooSmall && tooMany && invalidMode;
+        return compressedSourceBytes > 6
+            && invalidCount
+            && invalidBytes
+            && tooSmall
+            && tooMany
+            && invalidMode;
     }));
 
 await RunAsync("virtual camera rejects missing and wrongly typed runtime inputs", async () =>
@@ -934,6 +965,46 @@ await RunAsync("virtual camera propagates cancellation and leaves the executor s
         return startCanceled && prepareCanceled && executeCanceled;
     }));
 
+await RunAsync("virtual camera observes cancellation during the final preload decode", () =>
+    RunOnStaAsync(async () =>
+    {
+        using var fixture = new TemporaryVirtualCameraFiles();
+        fixture.WriteImage("a.png", new byte[] { 1 });
+        fixture.WriteImage("b.png", new byte[] { 2 });
+        using var cancellation = new CancellationTokenSource();
+        var loader = new CancelOnLoadVirtualCameraImageLoader(
+            cancellation,
+            cancelOnLoad: 2);
+        var executor = new VirtualCameraExecutor(loader);
+        var context = CreateVirtualCameraContext(
+            fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 10, 100, false,
+            out _, out _);
+
+        var canceled = false;
+        try
+        {
+            await executor.StartSessionAsync(context, cancellation.Token);
+        }
+        catch (OperationCanceledException exception)
+        {
+            canceled = exception.CancellationToken == cancellation.Token;
+        }
+
+        var stayedStopped = false;
+        try
+        {
+            await executor.PrepareIterationAsync(context, CancellationToken.None);
+        }
+        catch (InvalidOperationException exception)
+        {
+            stayedStopped = exception.Message.Contains(
+                "session is not started", StringComparison.Ordinal);
+        }
+
+        await executor.StopSessionAsync(context, CancellationToken.None);
+        return canceled && stayedStopped && loader.LoadCount == 2;
+    }));
+
 await RunAsync("virtual camera preload limits count and bytes only after successful decode", () =>
     RunOnStaAsync(async () =>
     {
@@ -1019,26 +1090,32 @@ if (loadMode == VirtualCameraLoadMode.Dynamic
 
 通过上述检查后才调用 `VirtualCameraSourceResolver.Resolve(sourcePath)`：
 
+```csharp
+cancellationToken.ThrowIfCancellationRequested();
+var source = VirtualCameraSourceResolver.Resolve(sourcePath);
+cancellationToken.ThrowIfCancellationRequested();
+```
+
 - builtin + Dynamic 已在 resolver 前直接失败；不自动变成 Preload，也不创建 builtin entry/pixel buffer。
 - Dynamic 不验证两个 preload 上限。
 - Preload 验证两个上限大于 0，并按 entry 顺序加载；所有配置/容量失败都包装成包含 `VirtualCamera` 和 `_imageDirectory` 的启动 `InvalidOperationException`。
 - 启动失败时清空所有字段，不能让半成品 sequence 留到下一次启动；清理路径必须重新使用幂等的 `StopSessionAsync` 或等价的无条件字段清空，然后原样重新抛出 primary exception，不能让 cleanup exception 覆盖启动错误。
 
-executor 的字段至少包含 `_entries`, `_imageDirectory`, `_index`, `_current`, `_currentEntry`, `_skipErrorImages`, `_loadMode` 和生命周期 state；`_index` 初始为 `-1`，`_current`/`_currentEntry` 初始为 null。生命周期调用按 Flow runtime 的 session 顺序串行处理，state 只允许 `Stopped -> Starting -> Started -> Stopped`。
+executor 的字段至少包含 `_entries`, `_imageDirectory`, `_index`, `_current`, `_currentEntry`, `_skipErrorImages`, `_loadMode` 和生命周期 state；`_index` 初始为 `-1`，`_current`/`_currentEntry` 初始为 null。生命周期调用依赖 Flow runtime 的 session 顺序串行处理，state 只允许 `Stopped -> Starting -> Started -> Stopped`（启动失败/取消为 `Starting -> Stopped`）。不把 executor 当成可由外部并发调用的独立并发组件，也不为这个不受支持的调用方式设计额外状态承诺。
 
 生命周期状态表：
 
 | 当前状态/调用 | `StartSessionAsync` | `StopSessionAsync` | `PrepareIterationAsync` | `ExecuteAsync` |
 | --- | --- | --- | --- | --- |
 | `Stopped`（未启动或已停止） | 开始新的 `Starting` 流程；启动失败回到 `Stopped` | 清空字段并返回，不抛“未启动” | 抛 `InvalidOperationException`：`VirtualCamera source '<source>' session is not started.` | 抛 `InvalidOperationException`：`VirtualCamera source '<source>' has no prepared image for this iteration.` |
-| `Starting` | 抛带 source 上下文的 `InvalidOperationException`：已有启动流程 | 清空当前半成品并安全返回；正常 Flow 生命周期由启动取消/完成后串行进入此路径 | 不允许执行，抛 session 未启动 | 不允许执行，抛无 prepared image |
+| `Starting` | 抛带 source 上下文的 `InvalidOperationException`：已有启动流程 | 仅供 Start catch 内部串行清理；正常 runtime 不会在此状态调用，外部直接并发调用不属于 executor 契约 | 不允许执行，抛 session 未启动 | 不允许执行，抛无 prepared image |
 | `Started` | 幂等 no-op，不重新解析、解码或重置 index | 清空字段并转换到 `Stopped` | 清 `_current` 和 `_currentEntry` 后按模式准备下一项 | 仅消费当前已准备项；没有 prepared 项时抛无 prepared image |
 
-`source` 文本取自当前 context（启动后优先使用规范化 `_imageDirectory`），所以 Stop 后的状态错误也必须带 `VirtualCamera` 和相关 source path/URI。启动期间 cancellation 必须在 resolver 前、Preload 每项前、Dynamic 每轮加载前及成功加载后检查；取消时清空半成品、state 回到 `Stopped`，并原样传播 `OperationCanceledException`，不得包装成图片错误或启动配置错误。
+`source` 文本取自当前 context（启动后优先使用规范化 `_imageDirectory`），所以 Stop 后的状态错误也必须带 `VirtualCamera` 和相关 source path/URI。`GraphExecutionSession.StopCoreAsync` 会先等待 start task，再调用 lifecycle Stop；测试只覆盖这个真实调用边界，不构造 Start/Stop 直接并发。启动期间 cancellation 必须在 resolver 前后、Preload 每项前和成功加载后、Dynamic 每轮加载前和成功加载后检查；取消时由 Start 自身清空半成品、state 回到 `Stopped`，并原样传播 `OperationCanceledException`，不得包装成图片错误或启动配置错误。
 
 - [ ] **Step 4: 实现 Preload 加载、limit 和 session/iteration 输出**
 
-Preload 循环使用 `validEntries`，对本地 entry 调 `_imageLoader.Load(entry.Path, (ulong)entry.Ordinal)`；builtin entry 复用 `entry.PreloadedImage`。`SkipErrorImages=true` 时只捕获精确的 `VirtualCameraImageLoadException`，记录最后一个被跳过的异常后继续；不得捕获其它 `Exception`。只有成功取得 `FlowImage` 后才检查数量、累计字节和加入 `validEntries`，因此坏图不消耗 `MaxPreloadedImages` 或 `MaxPreloadedBytes`：
+Preload 循环使用 `validEntries`，对本地 entry 调 `_imageLoader.Load(entry.Path, (ulong)entry.Ordinal)`；builtin entry 复用 `entry.PreloadedImage`。`SkipErrorImages=true` 时使用与 Dynamic 相同的 `IsSkippableImageLoadError` filter，只让 `VirtualCameraImageLoadException` 进入 catch，记录最后一个被跳过的异常后继续；不得吞掉其它 `Exception`。只有成功取得 `FlowImage` 且 post-load cancellation check 通过后才检查数量、累计字节和加入 `validEntries`，因此坏图和被取消的 load 都不消耗 `MaxPreloadedImages` 或 `MaxPreloadedBytes`：
 
 ```csharp
 long totalBytes = 0;
@@ -1052,11 +1129,17 @@ foreach (var entry in source.Entries)
         image = entry.PreloadedImage
             ?? _imageLoader.Load(entry.Path, (ulong)entry.Ordinal);
     }
-    catch (VirtualCameraImageLoadException exception) when (_skipErrorImages)
+    catch (Exception exception) when (
+        _skipErrorImages
+        && VirtualCameraImageLoader.IsSkippableImageLoadError(exception))
     {
-        lastSkippedError = exception;
+        cancellationToken.ThrowIfCancellationRequested();
+        lastSkippedError = (VirtualCameraImageLoadException)exception;
         continue;
     }
+
+    // loader 可能在耗时解码期间收到取消；检查通过前不提交计数或缓存。
+    cancellationToken.ThrowIfCancellationRequested();
 
     if (validEntries.Count >= maxPreloadedImages)
     {
@@ -1128,7 +1211,7 @@ new Dictionary<string, object>
 
 Run: `dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj --no-restore`
 
-Expected: 首图 ordinal 0、重复 Start no-op、循环复用同一 cached FlowImage、session directory、positive limit、actual decoded bytes、缺失/错误 runtime input、坏图不计入数量/字节上限、全坏来源、overflow seam、取消传播、正常 Stop、重复 Stop、失败启动后的清理和成功重启测试 PASS。
+Expected: 首图 ordinal 0、重复 Start no-op、循环复用同一 cached FlowImage、session directory、positive limit、用压缩文件反证 actual decoded bytes、缺失/错误 runtime input、坏图不计入数量/字节上限、全坏来源、overflow seam、pre-canceled 与最后一次 load 期间取消、正常 Stop、重复 Stop、失败启动后的清理和成功重启测试 PASS。
 
 - [ ] **Step 6: 提交 Preload executor**
 
@@ -1211,8 +1294,87 @@ await RunAsync("virtual camera dynamic skip removes bad entry without skipping n
         paths.Add((string)output["imagePath"]);
         frames.Add(((FlowImage)output["image"]).FrameId);
     }
-        return paths.SequenceEqual(new[] { Path.GetFullPath(a), Path.GetFullPath(c), Path.GetFullPath(a) })
-            && frames.SequenceEqual(new[] { 0UL, 2UL, 0UL });
+    await executor.StopSessionAsync(context, CancellationToken.None);
+
+    return paths.SequenceEqual(new[]
+        { Path.GetFullPath(a), Path.GetFullPath(c), Path.GetFullPath(a) })
+        && frames.SequenceEqual(new[] { 0UL, 2UL, 0UL })
+        && loader.Loads.Select(load => Path.GetFileName(load.Path)).SequenceEqual(
+            new[] { "A.jpg", "Bad.jpg", "C.jpg", "A.jpg" })
+        && loader.Loads.Select(load => load.FrameId).SequenceEqual(
+            new[] { 0UL, 1UL, 2UL, 0UL });
+    }));
+
+await RunAsync("virtual camera dynamic cancellation does not commit cursor", () =>
+    RunOnStaAsync(async () =>
+    {
+        using var fixture = new TemporaryVirtualCameraFiles();
+        fixture.WriteImage("A.png", new byte[] { 1 });
+        fixture.WriteImage("B.png", new byte[] { 2 });
+        using var cancellation = new CancellationTokenSource();
+        var loader = new CancelOnLoadVirtualCameraImageLoader(
+            cancellation,
+            cancelOnLoad: 1);
+        var executor = new VirtualCameraExecutor(loader);
+        var context = CreateVirtualCameraContext(
+            fixture.DirectoryPath, VirtualCameraLoadMode.Dynamic, 0, 0, false,
+            out var node, out var definition);
+        await executor.StartSessionAsync(context, CancellationToken.None);
+
+        var canceled = false;
+        try
+        {
+            await executor.PrepareIterationAsync(context, cancellation.Token);
+        }
+        catch (OperationCanceledException exception)
+        {
+            canceled = exception.CancellationToken == cancellation.Token;
+        }
+
+        await executor.PrepareIterationAsync(context, CancellationToken.None);
+        var output = await executor.ExecuteAsync(
+            new FlowExecutionContext(), node, definition,
+            new Dictionary<string, object>(), CancellationToken.None);
+        await executor.StopSessionAsync(context, CancellationToken.None);
+
+        return canceled
+            && loader.LoadCount == 2
+            && (string)output["imagePath"] == Path.Combine(fixture.DirectoryPath, "A.png")
+            && ((FlowImage)output["image"]).FrameId == 0;
+    }));
+
+await RunAsync("virtual camera dynamic empty sequence fails every prepare", () =>
+    RunOnStaAsync(async () =>
+    {
+        using var fixture = new TemporaryVirtualCameraFiles();
+        var bad = fixture.WriteImage("Bad.png", new byte[] { 1 });
+        var loader = new SelectiveVirtualCameraImageLoader(bad);
+        var executor = new VirtualCameraExecutor(loader);
+        var context = CreateVirtualCameraContext(
+            fixture.DirectoryPath, VirtualCameraLoadMode.Dynamic, 0, 0, true,
+            out _, out _);
+        await executor.StartSessionAsync(context, CancellationToken.None);
+
+        var failures = 0;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                await executor.PrepareIterationAsync(context, CancellationToken.None);
+            }
+            catch (InvalidOperationException exception)
+            {
+                if (exception.Message.Contains("VirtualCamera", StringComparison.Ordinal)
+                    && exception.Message.Contains(
+                        fixture.DirectoryPath, StringComparison.Ordinal))
+                {
+                    failures++;
+                }
+            }
+        }
+
+        await executor.StopSessionAsync(context, CancellationToken.None);
+        return failures == 2 && loader.Loads.Count == 1;
     }));
 ```
 
@@ -1351,7 +1513,7 @@ private static bool ThrowsVirtualCamera<TException>(
 }
 ```
 
-两个 fake loader 的最小实现如下：
+三个 fake loader 的最小实现如下：
 
 ```csharp
 private sealed class RecordingVirtualCameraImageLoader : IVirtualCameraImageLoader
@@ -1376,13 +1538,47 @@ private sealed class SelectiveVirtualCameraImageLoader : IVirtualCameraImageLoad
         _badPath = Path.GetFullPath(badPath);
     }
 
+    public List<(string Path, ulong FrameId)> Loads { get; }
+        = new List<(string Path, ulong FrameId)>();
+
     public FlowImage Load(string path, ulong frameId)
     {
+        Loads.Add((path, frameId));
         if (string.Equals(Path.GetFullPath(path), _badPath, StringComparison.Ordinal))
         {
             throw new VirtualCameraImageLoadException(
                 path,
                 new InvalidDataException("bad image"));
+        }
+
+        return FlowImage.CopyFrom(
+            1, 1, 3, FlowPixelFormat.Bgr24, FlowImageKind.Color,
+            new byte[] { (byte)frameId, 2, 3 },
+            frameId, 0, DateTimeOffset.UtcNow);
+    }
+}
+
+private sealed class CancelOnLoadVirtualCameraImageLoader : IVirtualCameraImageLoader
+{
+    private readonly CancellationTokenSource _cancellation;
+    private readonly int _cancelOnLoad;
+
+    internal CancelOnLoadVirtualCameraImageLoader(
+        CancellationTokenSource cancellation,
+        int cancelOnLoad)
+    {
+        _cancellation = cancellation;
+        _cancelOnLoad = cancelOnLoad;
+    }
+
+    public int LoadCount { get; private set; }
+
+    public FlowImage Load(string path, ulong frameId)
+    {
+        LoadCount++;
+        if (LoadCount == _cancelOnLoad)
+        {
+            _cancellation.Cancel();
         }
 
         return FlowImage.CopyFrom(
@@ -1432,6 +1628,12 @@ Dynamic `StartSessionAsync` 只保留 resolver 返回的本地路径 entry，不
 ```csharp
 _current = null;
 _currentEntry = null;
+if (_entries.Count == 0)
+{
+    throw new InvalidOperationException(
+        $"VirtualCamera source '{_imageDirectory}' has no readable images.");
+}
+
 while (_entries.Count > 0)
 {
     cancellationToken.ThrowIfCancellationRequested();
@@ -1439,16 +1641,21 @@ while (_entries.Count > 0)
     var entry = _entries[nextIndex];
     try
     {
-        _current = _imageLoader.Load(entry.Path, (ulong)entry.Ordinal);
+        var image = _imageLoader.Load(entry.Path, (ulong)entry.Ordinal);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // post-load cancellation check 通过后才提交本轮状态。
+        _current = image;
         _currentEntry = entry;
         _index = nextIndex;
-        cancellationToken.ThrowIfCancellationRequested();
         return;
     }
     catch (Exception exception) when (
         _skipErrorImages
         && VirtualCameraImageLoader.IsSkippableImageLoadError(exception))
     {
+        // cancellation 优先于 skip；不能因同时发生的 load error 删除候选项。
+        cancellationToken.ThrowIfCancellationRequested();
         _entries.RemoveAt(nextIndex);
         if (_entries.Count == 0)
         {
@@ -1459,15 +1666,18 @@ while (_entries.Count > 0)
         _index = nextIndex - 1;
     }
 }
+
+throw new InvalidOperationException(
+    $"VirtualCamera source '{_imageDirectory}' has no readable images.");
 ```
 
-删除 bad entry 后不重新分配 ordinal；`nextIndex - 1` 让原 nextIndex 位置的下一候选项在下一循环立即尝试。捕获条件只匹配专用 wrapper，因此取消、OOM 和逻辑异常直接向上冒泡。
+删除 bad entry 后不重新分配 ordinal；`nextIndex - 1` 让原 nextIndex 位置的下一候选项在下一循环立即尝试。捕获条件只匹配专用 wrapper；catch body 在删除前再次检查 token，因此取消优先于 skip，OOM 和逻辑异常也直接向上冒泡。成功 load 使用局部变量，只有 post-load cancellation check 通过后才提交 `_current`、`_currentEntry`、`_index`；取消后的下一次 Prepare 会重试同一候选项。入口 empty guard 和循环后的 terminal throw 保证最后一项被删除后，后续 Prepare 不会静默返回。
 
 - [ ] **Step 4: 运行 Dynamic/error 测试确认通过**
 
 Run: `dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj --no-restore`
 
-Expected: dynamic 首次加载、文件变化、A/Bad/C -> A/C/A、FrameId 0/2/0、Prepare 前清理 `_currentEntry`、专用错误可 Skip、取消传播以及三类非可 Skip 异常传播测试 PASS。
+Expected: dynamic 首次加载、文件变化、A/Bad/C -> A/C/A、FrameId 0/2/0、精确 load 记录、Prepare 前清理 `_currentEntry`、load 期间取消不提交 cursor、空序列重复 Prepare 均失败、专用错误可 Skip、取消传播以及三类非可 Skip 异常传播测试 PASS。
 
 - [ ] **Step 5: 提交 Dynamic executor**
 
@@ -1520,15 +1730,59 @@ await RunAsync("virtual camera registration exposes image, path and session dire
         && registration.PaletteDescription.Contains("FlowImage", StringComparison.Ordinal);
 });
 
-await RunAsync("virtual camera editor has an embedded content factory", () =>
+await RunAsync("virtual camera editor mutates all properties and notifies graph changes", () =>
     RunOnSta(() =>
     {
-        var content = VirtualCameraEditor.CreateContent(
-            new FlowCanvas(),
-            new VirtualCameraNodeModel());
-        return content is FrameworkElement;
+        var canvas = new FlowCanvas();
+        var node = new VirtualCameraNodeModel();
+        var graphChanges = 0;
+        canvas.GraphChanged += (_, __) => graphChanges++;
+        var content = VirtualCameraEditor.CreateContent(canvas, node);
+        var initializedWithoutChange = graphChanges == 0;
+
+        var source = GetPrivateField<TextBox>(content, "_sourcePathEditor");
+        var mode = GetPrivateField<ComboBox>(content, "_loadModeEditor");
+        var maxImages = GetPrivateField<TextBox>(content, "_maxPreloadedImagesEditor");
+        var maxBytes = GetPrivateField<TextBox>(content, "_maxPreloadedBytesEditor");
+        var skipErrors = GetPrivateField<CheckBox>(content, "_skipErrorImagesEditor");
+
+        source.Text = "C:\\frames";
+        mode.SelectedItem = VirtualCameraLoadMode.Dynamic;
+        maxImages.Text = "7";
+        maxBytes.Text = "123456";
+        skipErrors.IsChecked = true;
+
+        var changesAfterValidInput = graphChanges;
+        maxImages.Text = "not-an-int";
+        maxBytes.Text = "not-a-long";
+
+        return content is FrameworkElement
+            && initializedWithoutChange
+            && node.SourcePath == "C:\\frames"
+            && node.LoadMode == VirtualCameraLoadMode.Dynamic
+            && node.MaxPreloadedImages == 7
+            && node.MaxPreloadedBytes == 123456L
+            && node.SkipErrorImages
+            && changesAfterValidInput == 5
+            && graphChanges == changesAfterValidInput;
     }));
 ```
+
+在 partial `Program` class 的 helper 区域（不在 `RunVirtualCameraTestsAsync` 方法体内）加入：
+
+```csharp
+private static T GetPrivateField<T>(object instance, string fieldName)
+    where T : class
+{
+    return instance.GetType()
+        .GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+        ?.GetValue(instance) as T
+        ?? throw new InvalidOperationException(
+            $"Missing editor field '{fieldName}'.");
+}
+```
+
+测试文件若尚未包含，增加 `using System.Reflection;` 和 `using System.Windows.Controls;`。反射只用于验证 private editor wiring，不扩大生产 API。
 
 - [ ] **Step 2: 运行注册/UI 测试确认失败**
 
@@ -1556,9 +1810,212 @@ OutputPorts =
 
 - [ ] **Step 4: 实现编辑器和资源嵌入**
 
-XAML 使用现有 DynamicResource 主题 key，包含命名控件 `SourcePathEditor`, `LoadModeEditor`, `MaxPreloadedImagesEditor`, `MaxPreloadedBytesEditor`, `SkipErrorImagesEditor`。code-behind 按现有 `VisionCameraEditor` 的 resource parse pattern：解析 embedded XAML、拆出 root content、订阅事件、初始化五个控件并调用 `_canvas.NotifyGraphChanged(refreshNodeContents: false)`。
+XAML 使用现有 DynamicResource 主题 key，并精确包含五个命名控件：
 
-事件规则固定为：路径文本直接更新 `SourcePath`；ComboBox 只接受 `VirtualCameraLoadMode` enum；数量/bytes 文本只有 `int.TryParse`/`long.TryParse` 成功时更新对应属性；CheckBox 更新 bool。UI 不扫描文件、不解码、不维护 index，也不把 builtin Dynamic 自动改成 Preload；运行时 executor 负责拒绝该配置。
+```xml
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             MinWidth="220">
+    <Border Padding="8"
+            CornerRadius="8"
+            Background="{DynamicResource colorSubtleBackground}"
+            BorderBrush="{DynamicResource colorNeutralStroke1}"
+            BorderThickness="1">
+        <StackPanel>
+            <TextBlock Text="Virtual Camera"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource colorNeutralForeground1}"
+                       Margin="0,0,0,6" />
+            <TextBlock Text="Source path or builtin URI"
+                       Foreground="{DynamicResource colorNeutralForeground3}"
+                       Margin="0,0,0,3" />
+            <TextBox x:Name="SourcePathEditor" Margin="0,0,0,6" />
+            <TextBlock Text="Load mode"
+                       Foreground="{DynamicResource colorNeutralForeground3}"
+                       Margin="0,0,0,3" />
+            <ComboBox x:Name="LoadModeEditor" Margin="0,0,0,6" />
+            <TextBlock Text="Maximum preloaded images"
+                       Foreground="{DynamicResource colorNeutralForeground3}"
+                       Margin="0,0,0,3" />
+            <TextBox x:Name="MaxPreloadedImagesEditor" Margin="0,0,0,6" />
+            <TextBlock Text="Maximum preloaded bytes"
+                       Foreground="{DynamicResource colorNeutralForeground3}"
+                       Margin="0,0,0,3" />
+            <TextBox x:Name="MaxPreloadedBytesEditor" Margin="0,0,0,6" />
+            <CheckBox x:Name="SkipErrorImagesEditor"
+                      Content="Skip unreadable images" />
+        </StackPanel>
+    </Border>
+</UserControl>
+```
+
+code-behind 按现有 `VisionCameraEditor` 的 embedded resource parse pattern 完整实现；初始化期间不发 GraphChanged，只有一次有效用户修改才通知一次：
+
+```csharp
+using System;
+using System.Globalization;
+using System.IO;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Markup;
+using NodeCraft.Flow;
+using NodeCraft.Vision.Nodes;
+
+namespace NodeCraft.Vision.Views
+{
+    internal sealed class VirtualCameraEditor : UserControl
+    {
+        private readonly FlowCanvas _canvas;
+        private readonly VirtualCameraNodeModel _node;
+        private readonly TextBox _sourcePathEditor;
+        private readonly ComboBox _loadModeEditor;
+        private readonly TextBox _maxPreloadedImagesEditor;
+        private readonly TextBox _maxPreloadedBytesEditor;
+        private readonly CheckBox _skipErrorImagesEditor;
+        private bool _initializing = true;
+
+        private VirtualCameraEditor(FlowCanvas canvas, VirtualCameraNodeModel node)
+        {
+            _canvas = canvas ?? throw new ArgumentNullException(nameof(canvas));
+            _node = node ?? throw new ArgumentNullException(nameof(node));
+
+            var root = LoadEditorRoot();
+            var parsedContent = root.Content;
+            root.Content = null;
+            Content = parsedContent;
+            _sourcePathEditor = Find<TextBox>(root, "SourcePathEditor");
+            _loadModeEditor = Find<ComboBox>(root, "LoadModeEditor");
+            _maxPreloadedImagesEditor = Find<TextBox>(root, "MaxPreloadedImagesEditor");
+            _maxPreloadedBytesEditor = Find<TextBox>(root, "MaxPreloadedBytesEditor");
+            _skipErrorImagesEditor = Find<CheckBox>(root, "SkipErrorImagesEditor");
+
+            _loadModeEditor.ItemsSource = Enum.GetValues(typeof(VirtualCameraLoadMode));
+            _sourcePathEditor.TextChanged += SourcePathEditor_TextChanged;
+            _loadModeEditor.SelectionChanged += LoadModeEditor_SelectionChanged;
+            _maxPreloadedImagesEditor.TextChanged += MaxPreloadedImagesEditor_TextChanged;
+            _maxPreloadedBytesEditor.TextChanged += MaxPreloadedBytesEditor_TextChanged;
+            _skipErrorImagesEditor.Checked += SkipErrorImagesEditor_Changed;
+            _skipErrorImagesEditor.Unchecked += SkipErrorImagesEditor_Changed;
+
+            _sourcePathEditor.Text = _node.SourcePath ?? string.Empty;
+            _loadModeEditor.SelectedItem = _node.LoadMode;
+            _maxPreloadedImagesEditor.Text = _node.MaxPreloadedImages.ToString(
+                CultureInfo.InvariantCulture);
+            _maxPreloadedBytesEditor.Text = _node.MaxPreloadedBytes.ToString(
+                CultureInfo.InvariantCulture);
+            _skipErrorImagesEditor.IsChecked = _node.SkipErrorImages;
+            _initializing = false;
+        }
+
+        internal static FrameworkElement CreateContent(FlowCanvas canvas, NodeModel node)
+        {
+            if (!(node is VirtualCameraNodeModel virtualCameraNode))
+            {
+                throw new InvalidOperationException(
+                    "VirtualCameraEditor requires a VirtualCameraNodeModel.");
+            }
+
+            return new VirtualCameraEditor(canvas, virtualCameraNode);
+        }
+
+        private static T Find<T>(UserControl root, string name)
+            where T : FrameworkElement
+        {
+            return root.FindName(name) as T
+                ?? throw new InvalidOperationException(
+                    $"VirtualCameraEditor is missing {name}.");
+        }
+
+        private static UserControl LoadEditorRoot()
+        {
+            var assembly = typeof(VirtualCameraEditor).Assembly;
+            using var stream = assembly.GetManifestResourceStream(
+                "NodeCraft.Vision.Views.VirtualCameraEditor.xaml");
+            if (stream == null)
+            {
+                throw new InvalidOperationException(
+                    "VirtualCameraEditor.xaml was not embedded into the plugin assembly.");
+            }
+
+            using var reader = new StreamReader(stream);
+            return XamlReader.Parse(reader.ReadToEnd()) as UserControl
+                ?? throw new InvalidOperationException(
+                    "VirtualCameraEditor.xaml did not produce a UserControl root.");
+        }
+
+        private void SourcePathEditor_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_initializing) return;
+            _node.SourcePath = _sourcePathEditor.Text ?? string.Empty;
+            NotifyChanged();
+        }
+
+        private void LoadModeEditor_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            if (_initializing
+                || !(_loadModeEditor.SelectedItem is VirtualCameraLoadMode mode))
+            {
+                return;
+            }
+
+            _node.LoadMode = mode;
+            NotifyChanged();
+        }
+
+        private void MaxPreloadedImagesEditor_TextChanged(
+            object sender,
+            TextChangedEventArgs e)
+        {
+            if (_initializing
+                || !int.TryParse(
+                    _maxPreloadedImagesEditor.Text,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var value))
+            {
+                return;
+            }
+
+            _node.MaxPreloadedImages = value;
+            NotifyChanged();
+        }
+
+        private void MaxPreloadedBytesEditor_TextChanged(
+            object sender,
+            TextChangedEventArgs e)
+        {
+            if (_initializing
+                || !long.TryParse(
+                    _maxPreloadedBytesEditor.Text,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var value))
+            {
+                return;
+            }
+
+            _node.MaxPreloadedBytes = value;
+            NotifyChanged();
+        }
+
+        private void SkipErrorImagesEditor_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            _node.SkipErrorImages = _skipErrorImagesEditor.IsChecked == true;
+            NotifyChanged();
+        }
+
+        private void NotifyChanged()
+        {
+            _canvas.NotifyGraphChanged(refreshNodeContents: false);
+        }
+    }
+}
+```
+
+UI 不扫描文件、不解码、不维护 index，也不把 builtin Dynamic 自动改成 Preload；运行时 executor 负责拒绝该配置。数字解析使用 invariant integer 语义；无效数字既不更新模型也不触发 GraphChanged。
 
 在 `.csproj` 的 WPF ItemGroup 中 `Page Remove="Views\\VirtualCameraEditor.xaml"` 并 `EmbeddedResource Include="Views\\VirtualCameraEditor.xaml"`，保证 resource name 为 `NodeCraft.Vision.Views.VirtualCameraEditor.xaml`。
 
@@ -1586,35 +2043,123 @@ git commit -m "feat: register virtual camera node"
 
 - [ ] **Step 1: 写 graph integration 的失败测试**
 
-在测试文件中定义 test-only `SessionObservationExecutor`，它只实现 `IFlowNodeExecutor`，输入 ports 为：`image` (`Image`, required, Iteration)、`imagePath` (`String`, required, Iteration)、`imageDirectory` (`String`, required, Session)，输出 `observation` (`Object`, Iteration)，并将三项 inputs 放进一个 `SessionObservation` 对象返回。它故意不实现 `IFlowNodeSessionInitializer`，用来验证 session required input 检查和 session store。`SessionObservation` 必须有 `FlowImage Image`、`string ImagePath`、`string ImageDirectory` 三个只读属性。
-
-构造 workflow：Virtual Camera 节点链接到现有 FlowImage Preview 的 `image` 输入，同时链接到 observation 节点的三个输入。用一个真实临时 folder，执行两次 `GraphExecutionSession.ExecuteIterationAsync`，断言：
+构造 workflow：Virtual Camera 节点链接到现有 FlowImage Preview 的 `image` 输入，同时链接到 test-only observation 节点的三个输入。用一个真实临时 folder，执行两次 `GraphExecutionSession.ExecuteIterationAsync`。测试必须通过 `PluginRegistrationContext` 暂存 Vision registrations，再调用 `FlowNodeRegistry.RegisterPlugin`；不能把 plugin context 当 registry，也不能写入全局 `NodeExecutorFactory.Registry`：
 
 ```csharp
-var validation = new GraphExecutor(workflow, registry).Validate();
-if (!validation.IsValid) return false;
+await RunAsync("virtual camera graph links preview, path and session directory", () =>
+    RunOnStaAsync(async () =>
+    {
+        using var fixture = new TemporaryVirtualCameraFiles();
+        var firstPath = fixture.WriteBitmap(
+            "A.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
+        var secondPath = fixture.WriteBitmap(
+            "B.png", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
 
-await using var session = new GraphExecutor(workflow, registry).CreateSession();
-await session.StartAsync(CancellationToken.None);
-var firstContext = await session.ExecuteIterationAsync(CancellationToken.None);
-var secondContext = await session.ExecuteIterationAsync(CancellationToken.None);
-var firstObservation = (SessionObservation)firstContext.Values
-    .Single(pair => pair.Key.Item1 == "observation").Value;
-var secondObservation = (SessionObservation)secondContext.Values
-    .Single(pair => pair.Key.Item1 == "observation").Value;
-var previewOutput = firstContext.Values
-    .Single(pair => pair.Key.Item1 == "preview").Value;
-await session.StopAsync();
+        var plugin = new VisionPlugin();
+        var pluginContext = new PluginRegistrationContext(
+            NullLogger.Instance,
+            new Version(1, 0));
+        plugin.Register(pluginContext);
+        var registry = new FlowNodeRegistry();
+        registry.RegisterPlugin(plugin.Metadata.Id, pluginContext.Registrations);
+        registry.Register(new FlowNodeRegistration(
+            CreateSessionObservationDefinition(),
+            () => new SessionObservationExecutor())
+        {
+            ShowInPalette = false,
+        });
 
-return firstObservation.Image is FlowImage
-    && firstObservation.ImagePath == Path.GetFullPath(firstPath)
-    && firstObservation.ImageDirectory == Path.GetFullPath(folder)
-    && secondObservation.ImagePath != firstObservation.ImagePath
-    && previewOutput is FlowImage
-    && firstObservation.Image.FrameId == 0;
+        var workflow = new WorkflowDocument();
+        workflow.Nodes.Add(new WorkflowNode
+        {
+            Id = "virtual-camera",
+            TypeKey = VirtualCameraNodeModel.FlowNodeTypeKey,
+            Inputs =
+            {
+                ["sourcePath"] = fixture.DirectoryPath,
+                ["loadMode"] = VirtualCameraLoadMode.Preload,
+                ["maxPreloadedImages"] = 10,
+                ["maxPreloadedBytes"] = 100L,
+                ["skipErrorImages"] = false,
+            },
+        });
+        workflow.Nodes.Add(new WorkflowNode
+        {
+            Id = "preview",
+            TypeKey = FlowImagePreviewNodeModel.FlowNodeTypeKey,
+            Inputs =
+            {
+                ["image"] = new LinkRef
+                    { SourceNodeId = "virtual-camera", SourceSlot = 0 },
+            },
+        });
+        workflow.Nodes.Add(new WorkflowNode
+        {
+            Id = "observation",
+            TypeKey = SessionObservationExecutor.FlowNodeTypeKey,
+            Inputs =
+            {
+                ["image"] = new LinkRef
+                    { SourceNodeId = "virtual-camera", SourceSlot = 0 },
+                ["imagePath"] = new LinkRef
+                    { SourceNodeId = "virtual-camera", SourceSlot = 1 },
+                ["imageDirectory"] = new LinkRef
+                    { SourceNodeId = "virtual-camera", SourceSlot = 2 },
+            },
+        });
+
+        var graphExecutor = new GraphExecutor(workflow, registry);
+        var validation = graphExecutor.Validate();
+        if (!validation.IsValid)
+        {
+            return false;
+        }
+
+        await using var session = graphExecutor.CreateSession();
+        await session.StartAsync(CancellationToken.None);
+        try
+        {
+            var firstContext = await session.ExecuteIterationAsync(
+                CancellationToken.None);
+            var secondContext = await session.ExecuteIterationAsync(
+                CancellationToken.None);
+
+            var hasFirstObservation = firstContext.TryGetPortValue(
+                "observation", 0, out var firstObservationValue);
+            var hasSecondObservation = secondContext.TryGetPortValue(
+                "observation", 0, out var secondObservationValue);
+            var hasFirstPreview = firstContext.TryGetPortValue(
+                "preview", 0, out var firstPreviewValue);
+            var hasSecondPreview = secondContext.TryGetPortValue(
+                "preview", 0, out var secondPreviewValue);
+            var firstObservation = firstObservationValue as SessionObservation;
+            var secondObservation = secondObservationValue as SessionObservation;
+
+            return hasFirstObservation
+                && hasSecondObservation
+                && hasFirstPreview
+                && hasSecondPreview
+                && firstObservation != null
+                && secondObservation != null
+                && firstObservation.ImagePath == Path.GetFullPath(firstPath)
+                && secondObservation.ImagePath == Path.GetFullPath(secondPath)
+                && firstObservation.ImageDirectory
+                    == Path.GetFullPath(fixture.DirectoryPath)
+                && secondObservation.ImageDirectory
+                    == firstObservation.ImageDirectory
+                && firstObservation.Image.FrameId == 0
+                && secondObservation.Image.FrameId == 1
+                && ReferenceEquals(firstObservation.Image, firstPreviewValue)
+                && ReferenceEquals(secondObservation.Image, secondPreviewValue);
+        }
+        finally
+        {
+            await session.StopAsync();
+        }
+    }));
 ```
 
-同时使用 `imagePath` 链接到 `FlowDataType.String` 输入的 observation port，确认不会把字符串当作 FlowImage 或走 Preview 的错误路径。
+该 workflow 同时把 `imagePath` 链接到严格的 `FlowDataType.String` 输入、把 `imageDirectory` 链接到 required Session 输入；因此 `Validate()`、`StartAsync()` 和 observation 的类型断言分别覆盖 link type、session store 和 runtime value。Preview/observation 的 `ReferenceEquals` 断言证明同一 iteration 的 `FlowImage` 没有被中间节点复制。
 
 - [ ] **Step 2: 运行集成测试确认失败**
 
@@ -1624,7 +2169,118 @@ Expected: 在注册/图构造或 executor 尚未完成时失败；记录具体�
 
 - [ ] **Step 3: 完成 test-only registry 和 observation executor**
 
-使用 `VisionPlugin.Register` 把 Vision registrations 放入本地 `FlowNodeRegistry`，再注册 `SessionObservationExecutor` 的 test registration；不要修改生产 Flow registry。`SessionObservationExecutor.ExecuteAsync` 必须对三项输入做类型断言并返回 `observation`，缺任何 required input 就抛错，这会直接暴露 session output 未写入的问题。
+在测试文件中加入以下完整 test-only definition/executor。它只实现 `IFlowNodeExecutor`，故意不实现 `IFlowNodeSessionInitializer`；required Session input 只能来自 Virtual Camera 在 graph startup 写入的 session store：
+
+```csharp
+private static FlowNodeDefinition CreateSessionObservationDefinition()
+{
+    return new FlowNodeDefinition
+    {
+        TypeKey = SessionObservationExecutor.FlowNodeTypeKey,
+        DisplayName = "Session Observation",
+        InputPorts =
+        {
+            new FlowPortDefinition
+            {
+                Id = "image",
+                DisplayName = "Image",
+                IOType = EIOType.Input,
+                DataType = FlowDataType.Image,
+                PreferredDirection = EPortDirection.Left,
+                IsRequired = true,
+                Availability = FlowPortAvailability.Iteration,
+            },
+            new FlowPortDefinition
+            {
+                Id = "imagePath",
+                DisplayName = "Image Path",
+                IOType = EIOType.Input,
+                DataType = FlowDataType.String,
+                PreferredDirection = EPortDirection.Left,
+                IsRequired = true,
+                Availability = FlowPortAvailability.Iteration,
+            },
+            new FlowPortDefinition
+            {
+                Id = "imageDirectory",
+                DisplayName = "Image Directory",
+                IOType = EIOType.Input,
+                DataType = FlowDataType.String,
+                PreferredDirection = EPortDirection.Left,
+                IsRequired = true,
+                Availability = FlowPortAvailability.Session,
+            },
+        },
+        OutputPorts =
+        {
+            new FlowPortDefinition
+            {
+                Id = "observation",
+                DisplayName = "Observation",
+                IOType = EIOType.Output,
+                DataType = FlowDataType.Object,
+                PreferredDirection = EPortDirection.Right,
+                Availability = FlowPortAvailability.Iteration,
+            },
+        },
+    };
+}
+
+private sealed class SessionObservation
+{
+    internal SessionObservation(
+        FlowImage image,
+        string imagePath,
+        string imageDirectory)
+    {
+        Image = image;
+        ImagePath = imagePath;
+        ImageDirectory = imageDirectory;
+    }
+
+    public FlowImage Image { get; }
+
+    public string ImagePath { get; }
+
+    public string ImageDirectory { get; }
+}
+
+private sealed class SessionObservationExecutor : IFlowNodeExecutor
+{
+    internal const string FlowNodeTypeKey = "test.session-observation";
+
+    public Task<IReadOnlyDictionary<string, object>> ExecuteAsync(
+        FlowExecutionContext context,
+        WorkflowNode node,
+        FlowNodeDefinition definition,
+        IReadOnlyDictionary<string, object> inputs,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!inputs.TryGetValue("image", out var imageValue)
+            || !(imageValue is FlowImage image)
+            || !inputs.TryGetValue("imagePath", out var pathValue)
+            || !(pathValue is string imagePath)
+            || !inputs.TryGetValue("imageDirectory", out var directoryValue)
+            || !(directoryValue is string imageDirectory))
+        {
+            throw new InvalidOperationException(
+                "SessionObservation requires image, imagePath, and imageDirectory inputs.");
+        }
+
+        return Task.FromResult<IReadOnlyDictionary<string, object>>(
+            new Dictionary<string, object>
+            {
+                ["observation"] = new SessionObservation(
+                    image,
+                    imagePath,
+                    imageDirectory),
+            });
+    }
+}
+```
+
+使用 Step 1 展示的 `PluginRegistrationContext -> FlowNodeRegistry.RegisterPlugin` 路径注册 Vision 节点，再用本地 registry 的 `Register` 添加上述 observation registration；不要修改生产 registry 或全局 `NodeExecutorFactory.Registry`。
 
 - [ ] **Step 4: 运行图级集成测试确认通过**
 
@@ -1670,7 +2326,7 @@ Expected: 输出末尾为 `ALL PASS`，且新增 Virtual Camera 测试全部出�
 
 - [ ] **Step 4: 对照规格逐项审查**
 
-确认以下事实均有测试或实现证据：五个属性 XML round-trip、runtime key/type/缺失输入和 `LoadMode` enum 值域校验、三个 output availability、默认 builtin、canonical builtin URI 大小写规则和固定资产尺寸/像素、local absolute path、folder direct-child deterministic sort（含嵌套目录排除）、source resolver 的路径/目录环境异常包装、首次 ordinal 0、Preload decoded-byte checked limit 与 overflow seam、坏图不计入 limit 和全坏来源、Dynamic 每轮加载与 `_currentEntry` 清理、builtin Dynamic 预 materialize 拒绝、Gray8/Bgr24/JPEG/BMP、STA/MTA 线程模型、文件句柄释放、取消传播、窄 Skip filter、异常消息、幂等 stop/失败启动清理、Preview 消费和 session directory 链接。
+确认以下事实均有测试或实现证据：五个属性 XML round-trip、runtime key/type/缺失输入和 `LoadMode` enum 值域校验、三个 output availability、默认 builtin、canonical builtin URI 大小写规则和固定资产尺寸/像素、local absolute path、folder direct-child deterministic sort（含嵌套目录排除）、source resolver 的路径/目录环境异常包装、首次 ordinal 0、Preload decoded-byte checked limit 与 overflow seam（含压缩源文件大小反证）、坏图不计入 limit 和全坏来源、Preload 最后一项 load 期间取消会回滚、Dynamic 每轮加载与 `_currentEntry` 清理、Dynamic load 期间取消不提交 cursor、空列表重复 Prepare 失败、builtin Dynamic 预 materialize 拒绝、Gray8/Bgr24/JPEG/BMP、dispatcher-pumped STA helper/MTA loader、文件句柄释放、窄 Skip filter、异常消息、幂等 stop/失败启动清理、editor 五属性/GraphChanged wiring，以及通过本地 plugin registry 的 Preview/string/session-directory 图级集成。
 
 - [ ] **Step 5: 提交最终验证修正并报告**
 
@@ -1696,16 +2352,18 @@ git commit -m "test: verify virtual camera implementation"
 | source path normalization/目录枚举的外部异常包装和来源上下文 | Task 2 |
 | builtin sample-set、单图 URI、目录语义、builtin 禁止 Dynamic | Tasks 2, 4 |
 | WPF OnLoad 解码、Gray8/Mono8、Bgr24、FlowImage metadata | Task 3 |
-| WPF STA/MTA 线程模型、JPEG/BMP 解码和文件句柄释放 | Task 3 |
-| Preload 全量缓存、数量/decoded bytes/checked/overflow context wrapping/坏图跳过/全坏来源/正数校验 | Task 4 |
+| WPF dispatcher-pumped STA helper/MTA loader、JPEG/BMP 解码和文件句柄释放 | Task 3 |
+| Preload 全量缓存、数量/decoded bytes source-size 反证/checked/overflow context wrapping/坏图跳过/全坏来源/正数校验 | Task 4 |
+| Preload load 期间取消检查与失败回滚 | Task 4 |
 | Dynamic 每轮解码、文件修改可见、无历史缓存 | Task 5 |
-| ordinal、首图不跳过、坏图删除游标 | Tasks 4, 5 |
+| ordinal、首图不跳过、坏图删除游标、空列表重复 Prepare 失败 | Tasks 4, 5 |
+| Dynamic load 期间取消不提交 current/cursor | Task 5 |
 | 专用可 Skip 异常和取消/OOM/逻辑异常传播 | Tasks 3, 5 |
 | session initializer、停止清理、未准备状态错误 | Task 4 |
 | StopSessionAsync 幂等、失败启动后可清理并重启 | Task 4 |
-| 生命周期状态、取消传播、Prepare/Execute 停止后错误 | Task 4 |
-| palette、editor、embedded resource | Task 6 |
-| FlowImage Preview、string input、session directory integration | Task 7 |
+| 生命周期串行边界、取消传播、Prepare/Execute 停止后错误 | Task 4 |
+| palette、editor 五属性 mutation/GraphChanged、embedded resource | Task 6 |
+| 本地 plugin registry、FlowImage Preview、string input、session directory integration | Task 7 |
 | 全量测试和完成标准 | Task 8 |
 
 计划中的接口名称在前置任务定义后由后续任务复用：`VirtualCameraEntry`、`VirtualCameraSourceResolver.Resolve`、`IVirtualCameraImageLoader.Load`、`VirtualCameraImageLoader.IsSkippableImageLoadError` 和 `VirtualCameraExecutor`。实现阶段不得以另一个同义名称替换这些跨任务接口而不同时更新后续步骤。
