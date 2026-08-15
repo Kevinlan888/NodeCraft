@@ -38,10 +38,10 @@ nodecraft.vision.virtual-camera
 模型属性：
 
 ```csharp
-public string SourcePath { get; set; }
-public VirtualCameraLoadMode LoadMode { get; set; }
-public int MaxPreloadedImages { get; set; }
-public long MaxPreloadedBytes { get; set; }
+public string SourcePath { get; set; } = "builtin://vision/sample-set";
+public VirtualCameraLoadMode LoadMode { get; set; } = VirtualCameraLoadMode.Dynamic;
+public int MaxPreloadedImages { get; set; } = 100;
+public long MaxPreloadedBytes { get; set; } = 536870912;
 public bool SkipErrorImages { get; set; }
 ```
 
@@ -56,13 +56,39 @@ SkipErrorImages = false
 
 `MaxPreloadedImages` 和 `MaxPreloadedBytes` 只在 `Preload` 模式生效；`Dynamic` 模式不使用解码图片缓存，因此忽略这两个限制。`VirtualCameraLoadMode` 只有 `Preload` 和 `Dynamic` 两个值。
 
-属性写入 workflow 节点的隐藏配置值：
+### 3.1 XML 持久化
 
-```text
-WorkflowNode.Inputs["sourcePath"]
+以上五个配置属性（包括 `SourcePath`）都是 `VirtualCameraNodeModel` 的公开、可读写属性。现有 `GraphModelXmlSerializer` 会自动将它们写入节点的 `<Properties>`，加载时根据 `Name`、`Type` 和 `Value` 恢复到新建的节点模型；不需要新增专用 XML serializer，也不需要提升当前 graph format version。
+
+保存的结构类似：
+
+```xml
+<Properties>
+  <Property Name="SourcePath" Type="System.String" Value="builtin://vision/sample-set" />
+  <Property Name="LoadMode" Type="...VirtualCameraLoadMode..." Value="Dynamic" />
+  <Property Name="MaxPreloadedImages" Type="System.Int32" Value="100" />
+  <Property Name="MaxPreloadedBytes" Type="System.Int64" Value="536870912" />
+  <Property Name="SkipErrorImages" Type="System.Boolean" Value="False" />
+</Properties>
 ```
 
-该值不是 Flow 输入端口。新建节点的默认值为：
+如果旧 graph 没有这些 Property，节点构造函数提供上述默认值。运行时配置不保存 `_index`、`_current`、图片缓存或任何 `FlowImage` 内容。
+
+### 3.2 运行时配置映射
+
+`GraphModelWorkflowAdapter.Convert` 调用 `IWorkflowNodeValueProvider.WriteWorkflowInputs`。Virtual Camera 必须把模型属性按以下固定 key 和类型写入 `WorkflowNode.Inputs`：
+
+| NodeModel property | WorkflowNode input key | 运行时值类型 |
+| --- | --- | --- |
+| `SourcePath` | `sourcePath` | `string` |
+| `LoadMode` | `loadMode` | `VirtualCameraLoadMode` |
+| `MaxPreloadedImages` | `maxPreloadedImages` | `int` |
+| `MaxPreloadedBytes` | `maxPreloadedBytes` | `long` |
+| `SkipErrorImages` | `skipErrorImages` | `bool` |
+
+`VirtualCameraExecutor.StartSessionAsync` 只从这些运行时输入读取配置，并在启动时校验枚举值、数量上限和字节上限。UI 修改的是 NodeModel 属性；保存 graph 由通用 serializer 持久化，执行前由 adapter 生成运行时输入。
+
+这些配置不是 Flow 输入端口，而是由 adapter 写入的运行时配置值。新建节点的 `SourcePath` 默认值为：
 
 ```text
 builtin://vision/sample-set
@@ -248,21 +274,22 @@ _current = LoadCurrent(entry)
 继续使用仓库现有的控制台测试跑棒，不引入新的测试框架。新增测试覆盖：
 
 1. 插件注册 Virtual Camera，验证类型键、三个输出端口、数据类型和 availability。
-2. 节点模型持久化 `SourcePath`，默认值为 `builtin://vision/sample-set`。
-3. 单个本地 JPG/PNG/BMP 文件形成单元素序列，并重复输出 index 0。
-4. 本地文件夹按文件名排序，并在最后一张后回到第一张。
-5. 文件夹忽略不支持扩展名，空文件夹启动失败。
-6. 第一次 iteration 选择序列项 0，不跳过第一张；停止和重新启动后同样从 0 开始。
-7. `Preload` 模式在启动时发现坏图、遵守图片数量限制和 decoded byte 限制。
-8. `Dynamic` 模式每次 iteration 重新读取图片，不保留历史解码缓存；修改文件后后续 iteration 可观察到新内容。
-9. `SkipErrorImages=false` 和 `true` 分别覆盖失败和跳过坏图路径的行为。
-10. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
-11. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
-12. `image` 可以被现有 FlowImage Preview 节点消费。
-13. `imagePath` 可以连接兼容 `FlowDataType.String` 的输入节点。
-14. 不存在路径、非法路径类型、不支持扩展名、损坏图片和未知内置 URI 都抛出明确异常。
-15. session 启动、停止、重复 iteration 和 session 清理不会保留上一轮的图片或 index。
-16. 集成 graph 执行验证 session 级 `imageDirectory` 可被后续节点稳定读取。
+2. 节点模型的五个配置属性通过 `<Properties>` 保存并可从 `.flow.xml` round-trip 恢复，旧 XML 缺失属性时使用默认值。
+3. `GraphModelWorkflowAdapter` 将五个属性按约定 key 和类型写入 `WorkflowNode.Inputs`。
+4. 单个本地 JPG/PNG/BMP 文件形成单元素序列，并重复输出 index 0。
+5. 本地文件夹按文件名排序，并在最后一张后回到第一张。
+6. 文件夹忽略不支持扩展名，空文件夹启动失败。
+7. 第一次 iteration 选择序列项 0，不跳过第一张；停止和重新启动后同样从 0 开始。
+8. `Preload` 模式在启动时发现坏图、遵守图片数量限制和 decoded byte 限制。
+9. `Dynamic` 模式每次 iteration 重新读取图片，不保留历史解码缓存；修改文件后后续 iteration 可观察到新内容。
+10. `SkipErrorImages=false` 和 `true` 分别覆盖失败和跳过坏图路径的行为。
+11. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
+12. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
+13. `image` 可以被现有 FlowImage Preview 节点消费。
+14. `imagePath` 可以连接兼容 `FlowDataType.String` 的输入节点。
+15. 不存在路径、非法路径类型、不支持扩展名、损坏图片和未知内置 URI 都抛出明确异常。
+16. session 启动、停止、重复 iteration 和 session 清理不会保留上一轮的图片或 index。
+17. 集成 graph 执行验证 session 级 `imageDirectory` 可被后续节点稳定读取。
 
 ## 10. 完成标准
 
