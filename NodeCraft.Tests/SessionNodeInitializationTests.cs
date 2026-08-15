@@ -259,6 +259,151 @@ internal static partial class Program
                 && fixture.Algorithm.ExecuteCount == 2
                 && fixture.Algorithm.StopCount == 1;
         });
+
+        await RunAsync("stopping a session clears its session values", async () =>
+        {
+            var fixture = CreateSessionFixture();
+            await using var session = fixture.Executor.CreateSession();
+
+            await session.StartAsync(CancellationToken.None);
+            var availableBeforeStop = session.SessionValues.TryGetPortValue(
+                    "camera",
+                    0,
+                    out var calibration)
+                && ReferenceEquals(calibration, fixture.Camera.Calibration);
+            await session.StopAsync();
+
+            return availableBeforeStop
+                && !session.SessionValues.TryGetPortValue("camera", 0, out _)
+                && session.State == GraphExecutionSessionState.Stopped;
+        });
+
+        await RunAsync("invalid session output cleans started nodes in reverse order", async () =>
+        {
+            var fixture = CreateInvalidSessionOutputFixture();
+            await using var session = fixture.Executor.CreateSession();
+
+            try
+            {
+                await session.StartAsync(CancellationToken.None);
+                return false;
+            }
+            catch (InvalidOperationException exception)
+            {
+                return exception.Message.Contains("unknown output", StringComparison.Ordinal)
+                    && session.State == GraphExecutionSessionState.Stopped
+                    && !session.SessionValues.TryGetPortValue("source", 0, out _)
+                    && fixture.Calls.SequenceEqual(new[]
+                    {
+                        "start:source",
+                        "initialize:source",
+                        "start:target",
+                        "initialize:target",
+                        "stop:target",
+                        "stop:source",
+                    });
+            }
+        });
+
+        await RunAsync("iteration cannot write a session output", async () =>
+        {
+            var fixture = CreateIterationSessionOutputFixture();
+            await using var session = fixture.Executor.CreateSession();
+            await session.StartAsync(CancellationToken.None);
+            var availableBeforeIteration = session.SessionValues.TryGetPortValue(
+                "source",
+                0,
+                out var initializedValue);
+
+            var rejected = false;
+            try
+            {
+                await session.ExecuteIterationAsync(CancellationToken.None);
+            }
+            catch (InvalidOperationException exception)
+            {
+                rejected = exception.Message.Contains(
+                    "does not declare Iteration availability",
+                    StringComparison.Ordinal);
+            }
+
+            var faulted = session.State == GraphExecutionSessionState.Faulted
+                && availableBeforeIteration
+                && Equals(initializedValue, "initialized");
+            await session.StopAsync();
+
+            return rejected
+                && faulted
+                && !session.SessionValues.TryGetPortValue("source", 0, out _)
+                && session.State == GraphExecutionSessionState.Stopped;
+        });
+
+        await RunAsync("independent sessions isolate their session values", async () =>
+        {
+            var definition = CreateSessionOutputDefinition(
+                "test.session.isolated",
+                FlowDataType.Object);
+            var registry = new FlowNodeRegistry();
+            registry.Register(new FlowNodeRegistration(
+                definition,
+                () => new SessionOutputTestExecutor(
+                    new List<string>(),
+                    "isolated",
+                    new Dictionary<string, object>
+                    {
+                        ["output"] = new object(),
+                    },
+                    new Dictionary<string, object>())));
+
+            var workflow = new WorkflowDocument();
+            workflow.Nodes.Add(new WorkflowNode
+            {
+                Id = "source",
+                TypeKey = definition.TypeKey,
+            });
+            var executor = new GraphExecutor(workflow, registry);
+            await using var first = executor.CreateSession();
+            await using var second = executor.CreateSession();
+
+            await first.StartAsync(CancellationToken.None);
+            await second.StartAsync(CancellationToken.None);
+            var firstHasValue = first.SessionValues.TryGetPortValue("source", 0, out var firstValue);
+            var secondHasValue = second.SessionValues.TryGetPortValue("source", 0, out var secondValue);
+            await first.StopAsync();
+            var secondRetainedValue = second.SessionValues.TryGetPortValue(
+                "source",
+                0,
+                out var retainedValue);
+            await second.StopAsync();
+
+            return firstHasValue
+                && secondHasValue
+                && firstValue != null
+                && secondValue != null
+                && !ReferenceEquals(firstValue, secondValue)
+                && secondRetainedValue
+                && ReferenceEquals(secondValue, retainedValue);
+        });
+
+        await RunAsync("stopped sessions cannot be started again", async () =>
+        {
+            var fixture = CreateSessionFixture();
+            await using var session = fixture.Executor.CreateSession();
+            await session.StartAsync(CancellationToken.None);
+            await session.StopAsync();
+
+            var rejected = false;
+            try
+            {
+                await session.StartAsync(CancellationToken.None);
+            }
+            catch (InvalidOperationException)
+            {
+                rejected = true;
+            }
+
+            return rejected && session.State == GraphExecutionSessionState.Stopped;
+        });
     }
 
     private static SessionFixture CreateSessionFixture(
@@ -440,6 +585,106 @@ internal static partial class Program
             isLeftReference: true);
     }
 
+    private static FlowNodeDefinition CreateSessionOutputDefinition(
+        string typeKey,
+        FlowDataType dataType,
+        FlowPortAvailability availability = FlowPortAvailability.Session)
+    {
+        var definition = new FlowNodeDefinition
+        {
+            TypeKey = typeKey,
+            DisplayName = typeKey,
+            Category = "Tests",
+        };
+        definition.OutputPorts.Add(new FlowPortDefinition
+        {
+            Id = "output",
+            DisplayName = "Output",
+            IOType = EIOType.Output,
+            DataType = dataType,
+            Availability = availability,
+        });
+        return definition;
+    }
+
+    private static SessionOutputFixture CreateInvalidSessionOutputFixture()
+    {
+        var calls = new List<string>();
+        var sourceDefinition = CreateSessionOutputDefinition(
+            "test.session.invalid.source",
+            FlowDataType.String);
+        var targetDefinition = CreateSessionOutputDefinition(
+            "test.session.invalid.target",
+            FlowDataType.String);
+        var sourceExecutor = new SessionOutputTestExecutor(
+            calls,
+            "source",
+            new Dictionary<string, object>
+            {
+                ["output"] = "stable",
+            },
+            new Dictionary<string, object>());
+        var targetExecutor = new SessionOutputTestExecutor(
+            calls,
+            "target",
+            new Dictionary<string, object>
+            {
+                ["missing"] = "invalid",
+            },
+            new Dictionary<string, object>());
+        var registry = new FlowNodeRegistry();
+        registry.Register(new FlowNodeRegistration(sourceDefinition, () => sourceExecutor));
+        registry.Register(new FlowNodeRegistration(targetDefinition, () => targetExecutor));
+
+        var workflow = new WorkflowDocument();
+        workflow.Nodes.Add(new WorkflowNode
+        {
+            Id = "source",
+            TypeKey = sourceDefinition.TypeKey,
+        });
+        workflow.Nodes.Add(new WorkflowNode
+        {
+            Id = "target",
+            TypeKey = targetDefinition.TypeKey,
+        });
+
+        return new SessionOutputFixture(
+            new GraphExecutor(workflow, registry),
+            calls);
+    }
+
+    private static SessionOutputFixture CreateIterationSessionOutputFixture()
+    {
+        var calls = new List<string>();
+        var definition = CreateSessionOutputDefinition(
+            "test.session.iteration-output",
+            FlowDataType.String);
+        var executor = new SessionOutputTestExecutor(
+            calls,
+            "source",
+            new Dictionary<string, object>
+            {
+                ["output"] = "initialized",
+            },
+            new Dictionary<string, object>
+            {
+                ["output"] = "iteration",
+            });
+        var registry = new FlowNodeRegistry();
+        registry.Register(new FlowNodeRegistration(definition, () => executor));
+
+        var workflow = new WorkflowDocument();
+        workflow.Nodes.Add(new WorkflowNode
+        {
+            Id = "source",
+            TypeKey = definition.TypeKey,
+        });
+
+        return new SessionOutputFixture(
+            new GraphExecutor(workflow, registry),
+            calls);
+    }
+
     private static MissingIterationSourceFixture CreateMissingIterationSourceFixture()
     {
         var source = CreateDefinition("test.stage.iteration-source");
@@ -533,6 +778,19 @@ internal static partial class Program
         public GraphExecutor Executor { get; }
 
         public RequiredSessionConsumerTestExecutor Consumer { get; }
+    }
+
+    private sealed class SessionOutputFixture
+    {
+        public SessionOutputFixture(GraphExecutor executor, IList<string> calls)
+        {
+            Executor = executor;
+            Calls = calls;
+        }
+
+        public GraphExecutor Executor { get; }
+
+        public IList<string> Calls { get; }
     }
 
     private sealed class CameraTestExecutor :
@@ -708,6 +966,60 @@ internal static partial class Program
             ExecuteCount++;
             return Task.FromResult<IReadOnlyDictionary<string, object>>(
                 new Dictionary<string, object>());
+        }
+    }
+
+    private sealed class SessionOutputTestExecutor :
+        IFlowNodeExecutor,
+        IFlowNodeSessionLifecycle,
+        IFlowNodeSessionInitializer
+    {
+        private readonly IList<string> _calls;
+        private readonly string _name;
+        private readonly IReadOnlyDictionary<string, object> _sessionOutputs;
+        private readonly IReadOnlyDictionary<string, object> _iterationOutputs;
+
+        public SessionOutputTestExecutor(
+            IList<string> calls,
+            string name,
+            IReadOnlyDictionary<string, object> sessionOutputs,
+            IReadOnlyDictionary<string, object> iterationOutputs)
+        {
+            _calls = calls;
+            _name = name;
+            _sessionOutputs = sessionOutputs;
+            _iterationOutputs = iterationOutputs;
+        }
+
+        public Task StartSessionAsync(FlowNodeSessionContext context, CancellationToken cancellationToken)
+        {
+            _calls.Add("start:" + _name);
+            return Task.CompletedTask;
+        }
+
+        public Task StopSessionAsync(FlowNodeSessionContext context, CancellationToken cancellationToken)
+        {
+            _calls.Add("stop:" + _name);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyDictionary<string, object>> InitializeSessionAsync(
+            FlowNodeSessionContext context,
+            IReadOnlyDictionary<string, object> inputs,
+            CancellationToken cancellationToken)
+        {
+            _calls.Add("initialize:" + _name);
+            return Task.FromResult(_sessionOutputs);
+        }
+
+        public Task<IReadOnlyDictionary<string, object>> ExecuteAsync(
+            FlowExecutionContext context,
+            WorkflowNode node,
+            FlowNodeDefinition definition,
+            IReadOnlyDictionary<string, object> inputs,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(_iterationOutputs);
         }
     }
 

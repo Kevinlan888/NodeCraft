@@ -357,7 +357,6 @@ internal static partial class Program
     {
         private readonly CameraCalibration _colorCalibration;
         private readonly CameraCalibration _depthCalibration;
-        private Action<Exception> _disconnectCallback;
 
         public ScriptedStereoDevice(
             CameraCalibration colorCalibration,
@@ -381,12 +380,10 @@ internal static partial class Program
 
         public void RegisterDisconnectCallback(Action<Exception> callback)
         {
-            _disconnectCallback = callback;
         }
 
         public void UnregisterDisconnectCallback()
         {
-            _disconnectCallback = null;
         }
 
         public CameraCalibration ReadCalibration(CameraStream stream, bool isLeftReference)
