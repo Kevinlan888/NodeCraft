@@ -21,6 +21,7 @@
 - 外部环境或配置导致的预期失败（非法/无法规范化/无法访问 source、目录枚举 I/O、无效扩展名或空目录、无效 preload 上限、decoded byte 超限以及 checked overflow）必须包装成 `InvalidOperationException`（必要时保留原异常为 `InnerException`），消息同时包含 `VirtualCamera` 和相关 source path/URI；图片读取/解码失败使用 `VirtualCameraImageLoadException`，消息还必须包含图片绝对路径。
 - 坏图只允许通过 `VirtualCameraImageLoadException` 被 Skip；`OperationCanceledException`、`OutOfMemoryException` 和底层/程序自身的 `InvalidOperationException` 不得被包装或吞掉。上一条只约束 Virtual Camera 自己创建的预期失败；取消、OOM 和程序 bug 即使原始消息没有 `VirtualCamera` 也必须原样传播。
 - 输出顺序和 key 固定为 `image`（Iteration）、`imagePath`（Iteration）、`imageDirectory`（Session）；session 输出只由 `InitializeSessionAsync` 返回。
+- `VirtualCameraExecutor.StopSessionAsync` 必须是幂等清理操作：未启动、启动中途失败、已启动或已停止都只清空当前 session 状态并返回，不得因“未启动/已停止”抛异常；清理不能覆盖 `StartSessionAsync` 的原始异常。
 - 所有 Virtual Camera 自己创建或包装的异常消息都必须包含 `VirtualCamera` 和相关来源路径/URI；本地图片错误还必须包含该图片的绝对路径。
 - 每个任务完成后运行该任务的测试并提交一个小 commit；实现阶段在本计划执行时使用 TDD。
 
@@ -609,6 +610,7 @@ await RunAsync("virtual camera preload starts at ordinal zero and exposes sessio
         new FlowExecutionContext(), node, definition,
         new Dictionary<string, object>(), CancellationToken.None);
     await executor.StopSessionAsync(context, CancellationToken.None);
+    await executor.StopSessionAsync(context, CancellationToken.None);
 
     return (string)sessionOutputs["imageDirectory"] == Path.GetFullPath(fixture.DirectoryPath)
         && ((FlowImage)first["image"]).FrameId == 0
@@ -645,6 +647,45 @@ await RunAsync("virtual camera preload enforces positive count and checked decod
             fixture.DirectoryPath, (VirtualCameraLoadMode)123, 10, 100, false));
     return invalidCount && invalidBytes && tooSmall && tooMany && invalidMode;
 });
+
+await RunAsync("virtual camera failed start can be stopped and restarted cleanly", async () =>
+{
+    using var fixture = new TemporaryVirtualCameraFiles();
+    fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
+    var executor = new VirtualCameraExecutor();
+    var failedContext = CreateVirtualCameraContext(
+        fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 10, 0, false,
+        out _, out _);
+    await executor.StopSessionAsync(failedContext, CancellationToken.None);
+    var primaryFailurePreserved = false;
+    try
+    {
+        await executor.StartSessionAsync(failedContext, CancellationToken.None);
+    }
+    catch (InvalidOperationException exception)
+    {
+        primaryFailurePreserved = exception.Message.Contains(
+            "VirtualCamera", StringComparison.Ordinal)
+            && exception.Message.Contains(
+                fixture.DirectoryPath, StringComparison.Ordinal);
+    }
+
+    await executor.StopSessionAsync(failedContext, CancellationToken.None);
+    await executor.StopSessionAsync(failedContext, CancellationToken.None);
+
+    var validContext = CreateVirtualCameraContext(
+        fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 10, 100, false,
+        out var node, out var definition);
+    await executor.StartSessionAsync(validContext, CancellationToken.None);
+    await executor.PrepareIterationAsync(validContext, CancellationToken.None);
+    var output = await executor.ExecuteAsync(
+        new FlowExecutionContext(), node, definition,
+        new Dictionary<string, object>(), CancellationToken.None);
+    await executor.StopSessionAsync(validContext, CancellationToken.None);
+
+    return primaryFailurePreserved
+        && ((FlowImage)output["image"]).FrameId == 0;
+});
 ```
 
 另加 builtin 行为断言：`StartVirtualCameraAsync("builtin://vision/sample-set", VirtualCameraLoadMode.Preload, 100, 536870912L, false)` 成功；同一 source 配置为 `Dynamic` 必须在启动阶段抛包含 `VirtualCamera` 的配置异常，且不发生自动模式切换。
@@ -679,7 +720,7 @@ if (!Enum.IsDefined(typeof(VirtualCameraLoadMode), loadMode))
 - builtin + Dynamic 直接失败；不自动变成 Preload。
 - Dynamic 不验证两个 preload 上限。
 - Preload 验证两个上限大于 0，并按 entry 顺序加载；所有配置/容量失败都包装成包含 `VirtualCamera` 和 `_imageDirectory` 的启动 `InvalidOperationException`。
-- 启动失败时清空所有字段，不能让半成品 sequence 留到下一次启动。
+- 启动失败时清空所有字段，不能让半成品 sequence 留到下一次启动；清理路径必须重新使用幂等的 `StopSessionAsync` 或等价的无条件字段清空，然后原样重新抛出 primary exception，不能让 cleanup exception 覆盖启动错误。
 
 executor 的字段至少包含 `_entries`, `_imageDirectory`, `_index`, `_current`, `_skipErrorImages`, `_loadMode`；`_index` 初始为 `-1`，`_current` 初始为 null。
 
@@ -716,13 +757,13 @@ new Dictionary<string, object>
 }
 ```
 
-停止时清空 current、current entry、entries、directory 和 index；任何 stale image 不得从下一 session 泄漏。
+`StopSessionAsync` 是无外部资源的幂等清理操作：无论 `_entries`/`_imageDirectory` 是否已初始化，都清空 current、current entry、entries、directory、index、load mode 和其它 session flags，然后直接返回 `Task.CompletedTask`；不得先检查“session 已启动”，也不因重复 Stop 抛异常，也不得在清理前因 `cancellationToken` 已取消而抛出。启动失败、未启动、已停止和正常停止都走这条路径，任何 stale image 不得从下一 session 泄漏。
 
 - [ ] **Step 5: 运行 Preload 测试确认通过**
 
 Run: `dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj --no-restore`
 
-Expected: 首图 ordinal 0、循环复用同一 cached FlowImage、session directory、positive limit、actual decoded bytes、stop cleanup 测试 PASS。
+Expected: 首图 ordinal 0、循环复用同一 cached FlowImage、session directory、positive limit、actual decoded bytes、正常 Stop、重复 Stop、失败启动后的清理和成功重启测试 PASS。
 
 - [ ] **Step 6: 提交 Preload executor**
 
@@ -840,7 +881,7 @@ private static bool ThrowsVirtualCamera<TException>(
     where TException : Exception;
 ```
 
-`CreateVirtualCameraContext` 的 definition output ports 必须按 `image`/`imagePath`/`imageDirectory` 顺序设置对应 data type 和 availability；`node.Inputs` 必须写五个 runtime key。`StartVirtualCameraAsync` 必须在 `finally` 中调用 `StopSessionAsync`，避免失败测试留下 executor 状态。两个 `ThrowsVirtualCamera` helper 只在捕获到 `TException` 且消息同时包含 `VirtualCamera` 与相关 source path/URI 时返回 true，其他异常重新抛出。
+`CreateVirtualCameraContext` 的 definition output ports 必须按 `image`/`imagePath`/`imageDirectory` 顺序设置对应 data type 和 availability；`node.Inputs` 必须写五个 runtime key。`StartVirtualCameraAsync` 保持在 `finally` 中调用 `StopSessionAsync`，因为该 Stop 是幂等清理，失败启动也必须清字段且不抛“未启动”错误，从而不会覆盖 `StartSessionAsync` 的 primary exception。另加一个直接复用 executor 的失败启动后 Stop/重复 Stop/成功重启测试，验证半成品状态已清空。两个 `ThrowsVirtualCamera` helper 只在捕获到 `TException` 且消息同时包含 `VirtualCamera` 与相关 source path/URI 时返回 true，其他异常重新抛出。
 
 helper 的具体实现契约如下，后续测试直接复用，不再创建第二套上下文约定：
 
@@ -1261,7 +1302,7 @@ Expected: 输出末尾为 `ALL PASS`，且新增 Virtual Camera 测试全部出�
 
 - [ ] **Step 4: 对照规格逐项审查**
 
-确认以下事实均有测试或实现证据：五个属性 XML round-trip、runtime key/type 和 `LoadMode` enum 值域校验、三个 output availability、默认 builtin、local absolute path、folder direct-child deterministic sort、source resolver 的路径/目录环境异常包装、首次 ordinal 0、Preload decoded-byte checked limit 与 overflow context wrapping、Dynamic 每轮加载、builtin Dynamic fail、Gray8/Bgr24、窄 Skip filter、异常消息、stop cleanup、Preview 消费和 session directory 链接。
+确认以下事实均有测试或实现证据：五个属性 XML round-trip、runtime key/type 和 `LoadMode` enum 值域校验、三个 output availability、默认 builtin、local absolute path、folder direct-child deterministic sort、source resolver 的路径/目录环境异常包装、首次 ordinal 0、Preload decoded-byte checked limit 与 overflow context wrapping、Dynamic 每轮加载、builtin Dynamic fail、Gray8/Bgr24、窄 Skip filter、异常消息、幂等 stop/失败启动清理、Preview 消费和 session directory 链接。
 
 - [ ] **Step 5: 提交最终验证修正并报告**
 
@@ -1291,6 +1332,7 @@ git commit -m "test: verify virtual camera implementation"
 | ordinal、首图不跳过、坏图删除游标 | Tasks 4, 5 |
 | 专用可 Skip 异常和取消/OOM/逻辑异常传播 | Tasks 3, 5 |
 | session initializer、停止清理、未准备状态错误 | Task 4 |
+| StopSessionAsync 幂等、失败启动后可清理并重启 | Task 4 |
 | palette、editor、embedded resource | Task 6 |
 | FlowImage Preview、string input、session directory integration | Task 7 |
 | 全量测试和完成标准 | Task 8 |
