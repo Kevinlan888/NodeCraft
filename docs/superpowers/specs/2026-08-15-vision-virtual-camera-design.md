@@ -117,6 +117,15 @@ builtin://vision/sample-set
 
 `SourcePath` 可以指向整个集合，也可以指向集合中的单张内置图片；前者形成完整序列，后者形成单元素序列。内置集合由插件内置图片提供器提供，第一版直接构造固定的托管像素数据，不依赖用户机器上的文件。内置图片保持固定顺序，不能因为字典枚举顺序而变化。
 
+`imageDirectory` 始终表示当前 sequence 的容器：
+
+| SourcePath | imagePath | imageDirectory |
+| --- | --- | --- |
+| `C:\data\a.png` | `C:\data\a.png` | `C:\data` |
+| `C:\data` | 当前选中的图片绝对路径 | `C:\data` |
+| `builtin://vision/sample-set/checkerboard` | `builtin://vision/sample-set/checkerboard` | `builtin://vision/sample-set` |
+| `builtin://vision/sample-set` | 当前选中的内置图片 URI | `builtin://vision/sample-set` |
+
 ## 5. 图片解码和像素格式
 
 图片解码放在 `NodeCraft.Vision`，使用现有 WPF 依赖中的 `BitmapDecoder`，不增加第三方图片包。文件流使用 `OnLoad` 缓存选项；解码后立即复制到独立托管缓冲区并关闭文件流，不把文件句柄或 `BitmapSource` 暴露给 Flow 层。
@@ -152,16 +161,18 @@ builtin://vision/sample-set
 1. 读取 `sourcePath`。
 2. 识别 `builtin://vision/` URI 或本地文件系统路径。
 3. 验证来源类型和图片数量。
-4. 构建 session 内固定的图片序列，并重置 index。
+4. 构建 session 内固定的图片序列，并设置 `_index = -1`、`_current = null`。
 
 `InitializeSessionAsync` 在生命周期启动之后执行，返回 `imageDirectory`。这样 session 输出会在 `StartAsync` 成功进入 Running 前写入 session store。
 
 `PrepareIterationAsync` 执行：
 
 ```text
-index = (index + 1) % imageCount
-current = images[index]
+_index = (_index + 1) % _images.Count
+_current = _images[_index]
 ```
+
+因此第一次 iteration 选择 ordinal 0，最后一项之后才回到 0；单图片序列也会始终选择 0。
 
 图片必须在 session 启动时解码并缓存，以便把路径或解码错误尽早报告为启动错误，并避免 iteration 热路径重复打开文件。停止 session 时清空当前图片、序列和 index。
 
@@ -206,12 +217,13 @@ current = images[index]
 3. 单个本地 JPG/PNG/BMP 文件形成单元素序列，并重复输出 index 0。
 4. 本地文件夹按文件名排序，并在最后一张后回到第一张。
 5. 文件夹忽略不支持扩展名，空文件夹启动失败。
-6. 内置 sample-set 输出稳定 URI、稳定目录值和稳定顺序。
-7. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
-8. `FlowImage`、`imagePath` 可以被现有 FlowImage Preview 节点消费。
-9. 不存在路径、非法路径类型、不支持扩展名、损坏图片和未知内置 URI 都抛出明确异常。
-10. session 启动、停止、重复 iteration 和 session 清理不会保留上一轮的图片或 index。
-11. 集成 graph 执行验证 session 级 `imageDirectory` 可被后续节点稳定读取。
+6. 第一次 iteration 选择序列项 0，不跳过第一张；停止和重新启动后同样从 0 开始。
+7. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
+8. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
+9. `FlowImage`、`imagePath` 可以被现有 FlowImage Preview 节点消费。
+10. 不存在路径、非法路径类型、不支持扩展名、损坏图片和未知内置 URI 都抛出明确异常。
+11. session 启动、停止、重复 iteration 和 session 清理不会保留上一轮的图片或 index。
+12. 集成 graph 执行验证 session 级 `imageDirectory` 可被后续节点稳定读取。
 
 ## 10. 完成标准
 
