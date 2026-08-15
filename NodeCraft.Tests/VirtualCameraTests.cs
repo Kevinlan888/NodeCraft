@@ -783,6 +783,269 @@ internal static partial class Program
             await executor.StopSessionAsync(context, CancellationToken.None);
             return rejected && loader.LoadCount == 0;
         });
+
+        await RunAsync("virtual camera dynamic loads only during prepare and observes file changes", () =>
+            RunOnStaAsync(async () =>
+            {
+                using var fixture = new TemporaryVirtualCameraFiles();
+                var path = fixture.WriteBitmap(
+                    "a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
+                var loader = new RecordingVirtualCameraImageLoader();
+                var executor = new VirtualCameraExecutor(loader);
+                var context = CreateVirtualCameraContext(
+                    path,
+                    VirtualCameraLoadMode.Dynamic,
+                    0,
+                    0,
+                    false,
+                    out var node,
+                    out var definition);
+
+                await executor.StartSessionAsync(context, CancellationToken.None);
+                var startedWithoutLoad = loader.Loads.Count == 0;
+                await executor.PrepareIterationAsync(context, CancellationToken.None);
+                var first = await executor.ExecuteAsync(
+                    new FlowExecutionContext(),
+                    node,
+                    definition,
+                    new Dictionary<string, object>(),
+                    CancellationToken.None);
+                fixture.WriteBitmap(
+                    "a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 9, 8, 7 }, 3);
+                await executor.PrepareIterationAsync(context, CancellationToken.None);
+                var second = await executor.ExecuteAsync(
+                    new FlowExecutionContext(),
+                    node,
+                    definition,
+                    new Dictionary<string, object>(),
+                    CancellationToken.None);
+                await executor.StopSessionAsync(context, CancellationToken.None);
+
+                return startedWithoutLoad
+                    && loader.Loads.Count == 2
+                    && (string)first["imagePath"] == Path.GetFullPath(path)
+                    && (string)second["imagePath"] == Path.GetFullPath(path)
+                    && ((FlowImage)first["image"]).FrameId == 0
+                    && ((FlowImage)second["image"]).FrameId == 0
+                    && !((FlowImage)first["image"]).Buffer.Span.SequenceEqual(
+                        ((FlowImage)second["image"]).Buffer.Span)
+                    && !ReferenceEquals(first["image"], second["image"]);
+            }));
+
+        await RunAsync("virtual camera dynamic skip removes bad entry without skipping next", () =>
+            RunOnStaAsync(async () =>
+            {
+                var bad = string.Empty;
+                using var fixture = new TemporaryVirtualCameraFiles();
+                var a = fixture.WriteBitmap(
+                    "A.jpg", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 1, 1 }, 3);
+                bad = fixture.WriteBitmap(
+                    "Bad.jpg", PixelFormats.Bgr24, 1, 1, new byte[] { 2, 2, 2 }, 3);
+                var c = fixture.WriteBitmap(
+                    "C.jpg", PixelFormats.Bgr24, 1, 1, new byte[] { 3, 3, 3 }, 3);
+                var loader = new SelectiveVirtualCameraImageLoader(bad);
+                var executor = new VirtualCameraExecutor(loader);
+                var context = CreateVirtualCameraContext(
+                    fixture.DirectoryPath,
+                    VirtualCameraLoadMode.Dynamic,
+                    0,
+                    0,
+                    true,
+                    out var node,
+                    out var definition);
+                await executor.StartSessionAsync(context, CancellationToken.None);
+                var paths = new List<string>();
+                var frames = new List<ulong>();
+                for (var i = 0; i < 3; i++)
+                {
+                    await executor.PrepareIterationAsync(context, CancellationToken.None);
+                    var output = await executor.ExecuteAsync(
+                        new FlowExecutionContext(),
+                        node,
+                        definition,
+                        new Dictionary<string, object>(),
+                        CancellationToken.None);
+                    paths.Add((string)output["imagePath"]);
+                    frames.Add(((FlowImage)output["image"]).FrameId);
+                }
+                await executor.StopSessionAsync(context, CancellationToken.None);
+
+                return paths.SequenceEqual(new[]
+                    { Path.GetFullPath(a), Path.GetFullPath(c), Path.GetFullPath(a) })
+                    && frames.SequenceEqual(new[] { 0UL, 2UL, 0UL })
+                    && loader.Loads.Select(load => Path.GetFileName(load.Path)).SequenceEqual(
+                        new[] { "A.jpg", "Bad.jpg", "C.jpg", "A.jpg" })
+                    && loader.Loads.Select(load => load.FrameId).SequenceEqual(
+                        new[] { 0UL, 1UL, 2UL, 0UL });
+            }));
+
+        await RunAsync("virtual camera dynamic cancellation does not commit cursor", () =>
+            RunOnStaAsync(async () =>
+            {
+                using var fixture = new TemporaryVirtualCameraFiles();
+                fixture.WriteImage("A.png", new byte[] { 1 });
+                fixture.WriteImage("B.png", new byte[] { 2 });
+                using var cancellation = new CancellationTokenSource();
+                var loader = new CancelOnLoadVirtualCameraImageLoader(
+                    cancellation,
+                    cancelOnLoad: 1);
+                var executor = new VirtualCameraExecutor(loader);
+                var context = CreateVirtualCameraContext(
+                    fixture.DirectoryPath,
+                    VirtualCameraLoadMode.Dynamic,
+                    0,
+                    0,
+                    false,
+                    out var node,
+                    out var definition);
+                await executor.StartSessionAsync(context, CancellationToken.None);
+
+                var canceled = false;
+                try
+                {
+                    await executor.PrepareIterationAsync(context, cancellation.Token);
+                }
+                catch (OperationCanceledException exception)
+                {
+                    canceled = exception.CancellationToken == cancellation.Token;
+                }
+
+                await executor.PrepareIterationAsync(context, CancellationToken.None);
+                var output = await executor.ExecuteAsync(
+                    new FlowExecutionContext(),
+                    node,
+                    definition,
+                    new Dictionary<string, object>(),
+                    CancellationToken.None);
+                await executor.StopSessionAsync(context, CancellationToken.None);
+
+                return canceled
+                    && loader.LoadCount == 2
+                    && (string)output["imagePath"] == Path.Combine(fixture.DirectoryPath, "A.png")
+                    && ((FlowImage)output["image"]).FrameId == 0;
+            }));
+
+        await RunAsync("virtual camera dynamic empty sequence fails every prepare", () =>
+            RunOnStaAsync(async () =>
+            {
+                using var fixture = new TemporaryVirtualCameraFiles();
+                var bad = fixture.WriteImage("Bad.png", new byte[] { 1 });
+                var loader = new SelectiveVirtualCameraImageLoader(bad);
+                var executor = new VirtualCameraExecutor(loader);
+                var context = CreateVirtualCameraContext(
+                    fixture.DirectoryPath,
+                    VirtualCameraLoadMode.Dynamic,
+                    0,
+                    0,
+                    true,
+                    out _,
+                    out _);
+                await executor.StartSessionAsync(context, CancellationToken.None);
+
+                var failures = 0;
+                for (var attempt = 0; attempt < 2; attempt++)
+                {
+                    try
+                    {
+                        await executor.PrepareIterationAsync(context, CancellationToken.None);
+                    }
+                    catch (InvalidOperationException exception)
+                    {
+                        if (exception.Message.Contains("VirtualCamera", StringComparison.Ordinal)
+                            && exception.Message.Contains(
+                                fixture.DirectoryPath, StringComparison.Ordinal))
+                        {
+                            failures++;
+                        }
+                    }
+                }
+
+                await executor.StopSessionAsync(context, CancellationToken.None);
+                return failures == 2 && loader.Loads.Count == 1;
+            }));
+
+        await RunAsync("virtual camera dynamic propagates a skippable error when skipping is disabled", () =>
+            RunOnStaAsync(async () =>
+            {
+                using var fixture = new TemporaryVirtualCameraFiles();
+                var bad = fixture.WriteImage("Bad.png", new byte[] { 1 });
+                var executor = new VirtualCameraExecutor(
+                    new SelectiveVirtualCameraImageLoader(bad));
+                var context = CreateVirtualCameraContext(
+                    fixture.DirectoryPath,
+                    VirtualCameraLoadMode.Dynamic,
+                    0,
+                    0,
+                    false,
+                    out _,
+                    out _);
+                await executor.StartSessionAsync(context, CancellationToken.None);
+                var propagated = false;
+                try
+                {
+                    await executor.PrepareIterationAsync(context, CancellationToken.None);
+                }
+                catch (VirtualCameraImageLoadException exception)
+                {
+                    propagated = exception.Message.Contains(
+                        "VirtualCamera", StringComparison.Ordinal);
+                }
+                await executor.StopSessionAsync(context, CancellationToken.None);
+                return propagated;
+            }));
+
+        await RunAsync("virtual camera never skips non-image load exceptions", async () =>
+        {
+            var exceptions = new Exception[]
+            {
+                new OperationCanceledException(),
+                new OutOfMemoryException(),
+                new InvalidOperationException("logic failure"),
+            };
+            var allPropagated = true;
+            foreach (var exception in exceptions)
+            {
+                using var fixture = new TemporaryVirtualCameraFiles();
+                fixture.WriteImage("a.png", new byte[] { 1 });
+                foreach (var loadMode in new[]
+                {
+                    VirtualCameraLoadMode.Preload,
+                    VirtualCameraLoadMode.Dynamic,
+                })
+                {
+                    var executor = new VirtualCameraExecutor(
+                        new ThrowingVirtualCameraImageLoader(exception));
+                    var context = CreateVirtualCameraContext(
+                        fixture.DirectoryPath,
+                        loadMode,
+                        10,
+                        100,
+                        true,
+                        out _,
+                        out _);
+                    try
+                    {
+                        await executor.StartSessionAsync(context, CancellationToken.None);
+                        if (loadMode == VirtualCameraLoadMode.Dynamic)
+                        {
+                            await executor.PrepareIterationAsync(context, CancellationToken.None);
+                        }
+                        allPropagated = false;
+                    }
+                    catch (Exception actual)
+                    {
+                        allPropagated = allPropagated
+                            && actual.GetType() == exception.GetType();
+                    }
+                    finally
+                    {
+                        await executor.StopSessionAsync(context, CancellationToken.None);
+                    }
+                }
+            }
+
+            return allPropagated;
+        });
     }
 
     private static bool ThrowsVirtualCamera<TException>(string sourcePath, Action action)
@@ -940,21 +1203,67 @@ internal static partial class Program
 
     private sealed class RecordingVirtualCameraImageLoader : IVirtualCameraImageLoader
     {
-        internal int LoadCount { get; private set; }
+        private readonly VirtualCameraImageLoader _inner = new VirtualCameraImageLoader();
+
+        internal List<(string Path, ulong FrameId)> Loads { get; }
+            = new List<(string Path, ulong FrameId)>();
+
+        internal int LoadCount => Loads.Count;
 
         public FlowImage Load(string path, ulong frameId)
         {
-            LoadCount++;
+            Loads.Add((path, frameId));
+            return _inner.Load(path, frameId);
+        }
+    }
+
+    private sealed class SelectiveVirtualCameraImageLoader : IVirtualCameraImageLoader
+    {
+        private readonly string _badPath;
+
+        internal SelectiveVirtualCameraImageLoader(string badPath)
+        {
+            _badPath = Path.GetFullPath(badPath);
+        }
+
+        internal List<(string Path, ulong FrameId)> Loads { get; }
+            = new List<(string Path, ulong FrameId)>();
+
+        public FlowImage Load(string path, ulong frameId)
+        {
+            Loads.Add((path, frameId));
+            if (string.Equals(Path.GetFullPath(path), _badPath, StringComparison.Ordinal))
+            {
+                throw new VirtualCameraImageLoadException(
+                    path,
+                    new InvalidDataException("bad image"));
+            }
+
             return FlowImage.CopyFrom(
                 1,
                 1,
                 3,
                 FlowPixelFormat.Bgr24,
                 FlowImageKind.Color,
-                new byte[] { 1, 2, 3 },
+                new byte[] { (byte)frameId, 2, 3 },
                 frameId,
                 0,
                 DateTimeOffset.UtcNow);
+        }
+    }
+
+    private sealed class ThrowingVirtualCameraImageLoader : IVirtualCameraImageLoader
+    {
+        private readonly Exception _exception;
+
+        internal ThrowingVirtualCameraImageLoader(Exception exception)
+        {
+            _exception = exception;
+        }
+
+        public FlowImage Load(string path, ulong frameId)
+        {
+            throw _exception;
         }
     }
 

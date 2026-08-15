@@ -14,8 +14,8 @@ namespace NodeCraft.Vision.Nodes
         IFlowIterationSource
     {
         private readonly IVirtualCameraImageLoader _imageLoader;
-        private IReadOnlyList<VirtualCameraEntry> _entries
-            = Array.Empty<VirtualCameraEntry>();
+        private List<VirtualCameraEntry> _entries
+            = new List<VirtualCameraEntry>();
         private string _imageDirectory;
         private int _index = -1;
         private FlowImage _current;
@@ -90,7 +90,7 @@ namespace NodeCraft.Vision.Nodes
                 _skipErrorImages = skipErrorImages;
                 _loadMode = loadMode;
 
-                IReadOnlyList<VirtualCameraEntry> preparedEntries;
+                List<VirtualCameraEntry> preparedEntries;
                 if (loadMode == VirtualCameraLoadMode.Preload)
                 {
                     preparedEntries = PreloadEntries(
@@ -101,7 +101,7 @@ namespace NodeCraft.Vision.Nodes
                 }
                 else
                 {
-                    preparedEntries = source.Entries.ToArray();
+                    preparedEntries = source.Entries.ToList();
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -159,6 +159,11 @@ namespace NodeCraft.Vision.Nodes
 
             _current = null;
             _currentEntry = null;
+            if (_loadMode == VirtualCameraLoadMode.Dynamic)
+            {
+                return PrepareDynamicIteration(context, cancellationToken);
+            }
+
             _index = (_index + 1) % _entries.Count;
             var entry = _entries[_index];
             _currentEntry = entry;
@@ -206,7 +211,7 @@ namespace NodeCraft.Vision.Nodes
             }
         }
 
-        private IReadOnlyList<VirtualCameraEntry> PreloadEntries(
+        private List<VirtualCameraEntry> PreloadEntries(
             VirtualCameraSource source,
             int maxPreloadedImages,
             long maxPreloadedBytes,
@@ -267,7 +272,58 @@ namespace NodeCraft.Vision.Nodes
                     lastSkippedError);
             }
 
-            return validEntries.ToArray();
+            return validEntries;
+        }
+
+        private Task PrepareDynamicIteration(
+            FlowNodeSessionContext context,
+            CancellationToken cancellationToken)
+        {
+            if (_entries.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"VirtualCamera source '{GetSourceLabel(context.Node)}' has no readable images.");
+            }
+
+            while (_entries.Count > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var nextIndex = (_index + 1) % _entries.Count;
+                var entry = _entries[nextIndex];
+                try
+                {
+                    var image = _imageLoader.Load(entry.Path, (ulong)entry.Ordinal);
+                    if (image == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"VirtualCamera source '{_imageDirectory}' loader returned no image for '{entry.Path}'.");
+                    }
+
+                    cancellationToken.ThrowIfCancellationRequested();
+                    _current = image;
+                    _currentEntry = entry;
+                    _index = nextIndex;
+                    return Task.CompletedTask;
+                }
+                catch (Exception exception) when (
+                    _skipErrorImages
+                    && VirtualCameraImageLoader.IsSkippableImageLoadError(exception))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    _entries.RemoveAt(nextIndex);
+                    if (_entries.Count == 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"VirtualCamera source '{_imageDirectory}' has no readable images after '{entry.Path}'.",
+                            exception);
+                    }
+
+                    _index = nextIndex - 1;
+                }
+            }
+
+            throw new InvalidOperationException(
+                $"VirtualCamera source '{_imageDirectory}' has no readable images.");
         }
 
         private void EnsureStarted(FlowNodeSessionContext context)
@@ -319,7 +375,7 @@ namespace NodeCraft.Vision.Nodes
 
         private void ClearSessionState()
         {
-            _entries = Array.Empty<VirtualCameraEntry>();
+            _entries = new List<VirtualCameraEntry>();
             _imageDirectory = null;
             _index = -1;
             _current = null;
