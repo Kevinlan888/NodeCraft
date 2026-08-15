@@ -4,7 +4,7 @@
 
 **Goal:** 在不改变旧节点生命周期契约和 `.flow.xml` 格式的前提下，为 `GraphExecutionSession` 增加按拓扑顺序执行的一次性 session 初始化阶段，使前置节点的稳定输出可以被后置节点用于创建 session 级资源。
 
-**Architecture:** 新增可选的 `IFlowNodeSessionInitializer` 和 `FlowPortAvailability` 元数据；初始化阶段使用内部可写的 `SessionValueStore`，完成后只把 `IReadOnlySessionValueStore` 交给 iteration 输入解析。`GraphExecutionSession` 负责启动、初始化、封存和清理，`FlowGraphIterationRunner` 按 `LinkRef` source output 的阶段选择当前轮 context 或 `SessionValueStore`，处理未配置 input 的 `DefaultValue`，并校验 iteration 输出；立体相机把 calibration 从每轮 `FrameBundle` 输出迁移到 session 初始化输出。
+**Architecture:** 新增可选的 `IFlowNodeSessionInitializer` 和 `FlowPortAvailability` 元数据；初始化阶段使用内部可写的 `SessionValueStore`，完成后只把 `IReadOnlySessionValueStore` 交给 iteration 输入解析。`GraphExecutionSession` 负责启动、按拓扑为所有节点解析并校验 session inputs、对可选 initializer 执行初始化、封存和清理；`FlowGraphIterationRunner` 按 `LinkRef` source output 的阶段选择当前轮 context 或 `SessionValueStore`，处理未配置 input 的 `DefaultValue`，并校验 iteration 输出；立体相机把 calibration 从每轮 `FrameBundle` 输出迁移到 session 初始化输出。
 
 **Tech Stack:** C# 9、.NET 8 Windows、WPF、`NodeCraft.Flow` 插件 API、现有 `GraphExecutionSession`/`FlowGraphIterationRunner`、Windows 控制台测试跑棒。
 
@@ -17,7 +17,9 @@
 - `GraphExecutionSession` 实例为一次性运行对象；停止后重新执行必须创建新的 session。
 - V1 的 input 和 output 的 `Availability` 都必须恰好为 `Iteration` 或 `Session`；不允许单个端口跨阶段复用，也不保留组合枚举。需要稳定 baseline 和每轮临时结果时，使用独立 output 端口或增加 session 初始化计算节点。
 - `SessionValueStore` 只由 session 初始化阶段写入；iteration 只能读取 session 绑定，不能向 store 写回、替换或删除值。引擎不复制或冻结存储对象；session 输出应由节点视为逻辑只读值。
+- iteration hot path 必须复用 session 级的 node/definition lookup；不得在每个 input 上执行 LINQ `Single`、`Registry.Resolve` 或重复构建 lookup。LinkRef metadata 的进一步预解析属于后续可选优化，不作为 V1 公共 API。
 - 初始化阶段只调用显式实现 `IFlowNodeSessionInitializer` 的节点，不调用普通 `ExecuteAsync`，不触发普通逐轮副作用。
+- `GraphExecutionSession` 在启动阶段对每个节点执行非 control 的 `Session` input 解析和 required 检查；该检查不依赖 executor 是否实现 `IFlowNodeSessionInitializer`。没有 initializer 的节点不产生 session output，但其缺失 required session input 仍必须使 `StartAsync` 失败。
 - 初始化只依赖普通数据端口；第一版不依赖 `control` 端口，不实现条件分支内部的动态 session 初始化。
 - `Session` output 只在初始化阶段写入 `SessionValueStore`；`Iteration` output 只写入当前 `FlowExecutionContext`。需要两类结果时必须使用不同 output ID。
 - 对 `IsRequired = true` 且 `Availability == Session` 的输入，已配置的 `LinkRef` 找不到 session source value 时必须报 `SessionInputUnavailable`；绝不能使用 `DefaultValue`。当前计划对所有已配置 `LinkRef` 统一采用同样的不回退规则，避免 optional 和 required link 产生两套连接语义。
@@ -33,8 +35,8 @@
 - `NodeCraft.Flow/Flow/SessionValueStore.cs`：实现一次性写入、封存、读取和清理；不把写入 API 暴露给 executor 或 iteration runner。
 - `NodeCraft.Flow/Flow/FlowRuntimeValueValidator.cs`：集中校验初始化输出和 iteration 输出，保证未知端口、阶段不匹配和类型错误都失败。
 - `NodeCraft.Flow/Flow/GraphExecutor.cs`：在已有类型校验旁增加 session link 能力校验，产生 `SessionInputUnavailable`。
-- `NodeCraft.Flow/Flow/GraphExecutionSession.cs`：编排生命周期启动、session 输入解析、初始化输出写入、封存和逆序清理，并把只读 store 传给 iteration runner。
-- `NodeCraft.Flow/Flow/FlowGraphIterationRunner.cs`：按 source output 的 `Availability` 解析当前轮输出或 session 值，未配置 input 时使用默认值，校验 iteration 输出后只写当前 `FlowExecutionContext`。
+- `NodeCraft.Flow/Flow/GraphExecutionSession.cs`：编排生命周期启动、session 输入解析、初始化输出写入、封存和逆序清理；在 session 构造阶段缓存按 node ID 索引的 definitions，并把该 lookup 与只读 store 传给 iteration runner。
+- `NodeCraft.Flow/Flow/FlowGraphIterationRunner.cs`：使用 session 级 definitions lookup 按 source output 的 `Availability` 解析当前轮输出或 session 值，未配置 input 时使用默认值，校验 iteration 输出后只写当前 `FlowExecutionContext`。
 - `NodeCraft.Vision/Camera/FrameBundle.cs`：只保留同步的每轮 color/depth image，不再把 calibration 当作逐轮数据携带。
 - `NodeCraft.Vision/Camera/StereoCameraCaptureSession.cs`：继续在设备 session 启动时读取并缓存 calibration，逐轮 bundle 不再重复保存 calibration。
 - `NodeCraft.Vision/Nodes/StereoCameraExecutor.cs`：实现初始化器并返回 calibration session 输出；`ExecuteAsync` 只返回 image 输出。
@@ -216,6 +218,7 @@ git commit -m "feat: add session initialization contracts"
 - Create: `NodeCraft.Flow/Flow/FlowRuntimeValueValidator.cs`
 - Modify: `NodeCraft.Flow/Flow/GraphExecutor.cs`
 - Modify: `NodeCraft.Flow/Flow/FlowGraphIterationRunner.cs`
+- Modify: `NodeCraft.Flow/Flow/GraphExecutionSession.cs`
 - Modify: `NodeCraft.Tests/SessionNodeInitializationTests.cs`
 
 **Interfaces:**
@@ -373,46 +376,107 @@ if (!targetPort.IsControlPort
 
 `Iteration` 输入可以从 `Iteration` 输出读取当前轮值，也可以从 `Session` 输出读取稳定值；`Session` input 则只能连接 `Session` output。每个 port 只属于一个阶段，不允许跨阶段复用同一个 port。`control` 端口跳过此规则，保持第一版不参与 session 初始化。
 
-- [ ] **Step 5: 修改 iteration runner 的签名和 source-stage 解析。** 把 `FlowGraphIterationRunner.ExecuteAsync` 增加一个 `IReadOnlySessionValueStore sessionValues` 参数。已配置 `LinkRef` 时先查找它指向的 source output definition，再根据 source port 的单一 `Availability` 选择当前轮 context 或 session store；只有 `node.Inputs` 没有该 input key 时才使用 `DefaultValue`：
+- [ ] **Step 5: 修改 iteration runner 的签名和 source-stage 解析。** 不要在每轮、每个 input 的热路径中执行 `sortedNodes.Single(...)`、`registry.Resolve(...)` 或重复构建 node/definition lookup。`GraphExecutionSession` 构造 session 时已经为每个 node 创建了 `FlowNodeSessionContext`；在同一阶段建立并保存一个按 node ID 索引的 `IReadOnlyDictionary<string, FlowNodeDefinition> definitionsByNodeId`，然后把它传给 runner。将 `FlowGraphIterationRunner.ExecuteAsync` 的 `FlowNodeRegistry registry` 参数替换为该字典，并增加一个 `IReadOnlySessionValueStore sessionValues` 参数：
 
 ```csharp
-if (configured is LinkRef linkRef)
-{
-    var sourceNode = sortedNodes.Single(
-        candidate => candidate.Id == linkRef.SourceNodeId);
-    var sourceDefinition = registry.Resolve(sourceNode.TypeKey).Definition;
-    var sourcePort = sourceDefinition.OutputPorts[linkRef.SourceSlot];
+public static Task ExecuteAsync(
+    IReadOnlyList<WorkflowNode> sortedNodes,
+    IReadOnlyDictionary<string, IFlowNodeExecutor> executors,
+    IReadOnlyDictionary<string, FlowNodeDefinition> definitionsByNodeId,
+    FlowExecutionContext context,
+    IReadOnlySessionValueStore sessionValues,
+    ILogger logger,
+    CancellationToken cancellationToken);
+```
 
-    if (sourcePort.Availability == FlowPortAvailability.Iteration)
-    {
-        if (context.TryGetPortValue(
-                linkRef.SourceNodeId,
-                linkRef.SourceSlot,
-                out var currentValue))
-        {
-            inputs[inputPort.Id] = currentValue;
-        }
-    }
-    else if (sourcePort.Availability == FlowPortAvailability.Session)
-    {
-        if (sessionValues.TryGetPortValue(
-                linkRef.SourceNodeId,
-                linkRef.SourceSlot,
-                out var sessionValue))
-        {
-            inputs[inputPort.Id] = sessionValue;
-        }
-    }
-}
-else
-{
-    inputs[inputPort.Id] = configured;
-}
+在 `GraphExecutionSession` 构造函数中复用已经解析出的 registration definition，建立一次性的只读 lookup；不要在 `ExecuteIterationCoreAsync` 或 `FlowGraphIterationRunner.ExecuteAsync` 内重复构建：
 
-if (!node.Inputs.ContainsKey(inputPort.Id)
-    && inputPort.DefaultValue != null)
+```csharp
+private readonly IReadOnlyDictionary<string, FlowNodeDefinition> _definitionsByNodeId;
+private readonly SessionValueStore _sessionValueStore = new SessionValueStore();
+private readonly IReadOnlySessionValueStore _readOnlySessionValues;
+
+// 构造函数中，_sessionContexts 填充完成后
+_definitionsByNodeId = _sessionContexts.ToDictionary(
+    pair => pair.Key,
+    pair => pair.Value.Definition,
+    StringComparer.Ordinal);
+_readOnlySessionValues = _sessionValueStore.CreateReadOnlyView();
+```
+
+Task 2 仍需让旧 graph 能运行：沿用 Task 1 的 `SessionValueStore`，为该 session 建立只读视图但暂不写入初始化 output；Task 3 会复用同一个 store 写入并在停止路径清理。runner 只需要 `definitionsByNodeId`，不需要单独的 `nodesById`，因为 `LinkRef.SourceNodeId` 已经直接对应 definition dictionary 的 key；若未来需要更多 LinkRef 元数据，再在 session 创建阶段扩展为预解析的 immutable link metadata，不在本 task 增加新的公共 API。
+
+runner 每轮开始处理 node 时直接执行 `definitionsByNodeId[node.Id]`；已配置 `LinkRef` 时直接以 `linkRef.SourceNodeId` 做一次字典访问，再以已校验的 `linkRef.SourceSlot` 做 `OutputPorts[slot]` 访问。source-stage 选择仍按单一 `Availability` 读取当前轮 context 或 session store；只有 `node.Inputs` 没有该 input key 时才使用 `DefaultValue`：
+
+```csharp
+// FlowGraphIterationRunner.ExecuteAsync 的 sortedNodes 循环内
+var definition = definitionsByNodeId[node.Id];
+var inputs = ResolveInputs(
+    node,
+    definition,
+    definitionsByNodeId,
+    context,
+    sessionValues);
+```
+
+```csharp
+private static Dictionary<string, object> ResolveInputs(
+    WorkflowNode node,
+    FlowNodeDefinition definition,
+    IReadOnlyDictionary<string, FlowNodeDefinition> definitionsByNodeId,
+    FlowExecutionContext context,
+    IReadOnlySessionValueStore sessionValues)
 {
-    inputs[inputPort.Id] = inputPort.DefaultValue;
+    var inputs = new Dictionary<string, object>();
+
+    foreach (var inputPort in definition.InputPorts)
+    {
+        if (!node.Inputs.TryGetValue(inputPort.Id, out var configured))
+        {
+            if (inputPort.DefaultValue != null)
+            {
+                inputs[inputPort.Id] = inputPort.DefaultValue;
+            }
+
+            continue;
+        }
+
+        if (configured is LinkRef linkRef)
+        {
+            if (!definitionsByNodeId.TryGetValue(
+                    linkRef.SourceNodeId,
+                    out var sourceDefinition))
+            {
+                throw new InvalidOperationException(
+                    $"Link source node '{linkRef.SourceNodeId}' was not found.");
+            }
+
+            var sourcePort = sourceDefinition.OutputPorts[linkRef.SourceSlot];
+            if (sourcePort.Availability == FlowPortAvailability.Iteration
+                && context.TryGetPortValue(
+                    linkRef.SourceNodeId,
+                    linkRef.SourceSlot,
+                    out var currentValue))
+            {
+                inputs[inputPort.Id] = currentValue;
+            }
+            else if (sourcePort.Availability == FlowPortAvailability.Session
+                && sessionValues.TryGetPortValue(
+                    linkRef.SourceNodeId,
+                    linkRef.SourceSlot,
+                    out var sessionValue))
+            {
+                inputs[inputPort.Id] = sessionValue;
+            }
+
+            // 已配置 LinkRef 但 source value 缺失时，不回退 DefaultValue。
+            continue;
+        }
+
+        inputs[inputPort.Id] = configured;
+    }
+
+    return inputs;
 }
 ```
 
@@ -422,12 +486,12 @@ if (!node.Inputs.ContainsKey(inputPort.Id)
 
 Run: `dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj -f net8.0-windows --no-restore`
 
-Expected: 阶段能力测试、未知/错误阶段 output 测试，以及现有 built-in、条件分支、iteration runner 测试全部通过；此时 GraphExecutionSession 尚未传入实际 session store，因此旧节点仍使用空读取视图。
+Expected: 阶段能力测试、未知/错误阶段 output 测试，以及现有 built-in、条件分支、iteration runner 测试全部通过；此时 GraphExecutionSession 只传入 session 构造阶段创建的空只读 session view，尚未写入初始化 output，但 runner 已经通过 `_definitionsByNodeId` 复用 definition lookup。
 
 - [ ] **Step 7: 提交校验和解析层。**
 
 ```powershell
-git add NodeCraft.Flow/Flow/FlowRuntimeValueValidator.cs NodeCraft.Flow/Flow/GraphExecutor.cs NodeCraft.Flow/Flow/FlowGraphIterationRunner.cs NodeCraft.Tests/SessionNodeInitializationTests.cs
+git add NodeCraft.Flow/Flow/FlowRuntimeValueValidator.cs NodeCraft.Flow/Flow/GraphExecutor.cs NodeCraft.Flow/Flow/FlowGraphIterationRunner.cs NodeCraft.Flow/Flow/GraphExecutionSession.cs NodeCraft.Tests/SessionNodeInitializationTests.cs
 git commit -m "feat: validate session port availability"
 ```
 
@@ -442,11 +506,15 @@ git commit -m "feat: validate session port availability"
 `GraphExecutionSession` 增加私有字段：
 
 ```csharp
+// Task 2 已建立并在每轮 runner 调用中复用
+private readonly IReadOnlyDictionary<string, FlowNodeDefinition> _definitionsByNodeId;
 private readonly SessionValueStore _sessionValueStore = new SessionValueStore();
 private readonly IReadOnlySessionValueStore _readOnlySessionValues;
 ```
 
-构造函数建立 `_readOnlySessionValues = _sessionValueStore.CreateReadOnlyView()`；只读视图可在 store 清理后自然返回 false。为测试保留一个 `internal IReadOnlySessionValueStore SessionValues => _readOnlySessionValues;`，不把写入端公开给插件。
+Task 2 已在构造函数中建立 `_definitionsByNodeId`、`_sessionValueStore` 和 `_readOnlySessionValues`；Task 3 必须复用同一批字段和同一个 store，不能重新分配第二个 session store。只读视图可在 store 清理后自然返回 false。为测试保留一个 `internal IReadOnlySessionValueStore SessionValues => _readOnlySessionValues;`，不把写入端公开给插件。
+
+本 task 的关键时序约束是：`ResolveSessionInputs` 和 `EnsureRequiredSessionInputs` 对 `_orderedNodes` 中的每一个节点都执行；`IFlowNodeSessionInitializer` 只决定当前节点是否继续调用初始化器并写入 session outputs，不能决定 required session input 是否检查。
 
 - [ ] **Step 1: 添加初始化时序和输入传递的失败测试。** 用两个节点定义建立如下 fixture：
 
@@ -550,13 +618,62 @@ return fixture.Algorithm.InitializeCount == 1
 
 同时添加断言，`InitializeSessionAsync` 从未调用 camera 的 `PrepareIterationAsync` 或 `ExecuteAsync`；初始化阶段只读取其返回的 session output。
 
+另加一个专门覆盖无 initializer 节点的失败用例。`CreateSessionInputOnlyFixture()` 复用 camera 的 `Session` calibration output 定义，但让 camera initializer 返回空字典；下游 `consumer` 定义一个 required 的 `Session` calibration input 并通过 `LinkRef` 连接 camera，同时注册一个只实现 `IFlowNodeExecutor`、不实现 `IFlowNodeSessionInitializer` 的 `RequiredSessionConsumerTestExecutor`：
+
+```csharp
+await RunAsync("required session input is checked without an initializer", async () =>
+{
+    var fixture = CreateSessionInputOnlyFixture();
+    await using var session = fixture.Executor.CreateSession();
+
+    try
+    {
+        await session.StartAsync(CancellationToken.None);
+        return false;
+    }
+    catch (InvalidOperationException exception)
+    {
+        return exception.Message.Contains(
+                   "SessionInputUnavailable",
+                   StringComparison.Ordinal)
+            && exception.Message.Contains("consumer", StringComparison.Ordinal)
+            && fixture.Consumer.ExecuteCount == 0;
+    }
+});
+```
+
+`CreateSessionInputOnlyFixture()` 必须把 `camera` 放在 `consumer` 的拓扑前方，camera initializer 返回空字典，`consumer.Inputs["calibration"]` 写入 camera slot 0 的 `LinkRef`；`RequiredSessionConsumerTestExecutor.ExecuteAsync` 仅递增 `ExecuteCount` 并返回空字典。这样即使 consumer 没有 initializer，启动阶段也必须在进入任何 iteration 前抛出 `SessionInputUnavailable`。
+
+为使这个 fixture 可直接实现，`CameraTestExecutor` 增加 `bool producesCalibration = true` 构造参数；为 false 时 `InitializeSessionAsync` 返回空字典，为 true 时返回固定的 `CameraCalibration`。无 initializer executor 使用以下最小形状：
+
+```csharp
+private sealed class RequiredSessionConsumerTestExecutor : IFlowNodeExecutor
+{
+    public int ExecuteCount { get; private set; }
+
+    public Task<IReadOnlyDictionary<string, object>> ExecuteAsync(
+        FlowExecutionContext context,
+        WorkflowNode node,
+        FlowNodeDefinition definition,
+        IReadOnlyDictionary<string, object> inputs,
+        CancellationToken cancellationToken)
+    {
+        ExecuteCount++;
+        return Task.FromResult<IReadOnlyDictionary<string, object>>(
+            new Dictionary<string, object>());
+    }
+}
+```
+
+`CreateSessionInputOnlyFixture()` 返回的 fixture 至少暴露 `GraphExecutor Executor` 和 `RequiredSessionConsumerTestExecutor Consumer`，并使用该 executor 注册 `consumer`；不得通过让 consumer 的 initializer 返回空字典来模拟本用例，因为那样无法证明检查逻辑与 `IFlowNodeSessionInitializer` 无关。
+
 把上述 registry、workflow、executor 和 counters 封装在 `private sealed class SessionFixture` 中，至少提供 `GraphExecutor Executor`、`CameraTestExecutor Camera`、`AlgorithmTestExecutor Algorithm` 和 `IList<string> Calls` 属性；实现一个无参数的 `CreateSessionFixture()` 工厂完成 registry 注册、两个 workflow node 的 link 配置和 executor 注入，后续 one-shot/continuous 测试直接调用它，不复制另一套 graph 构造逻辑。`CameraTestExecutor` 和 `AlgorithmTestExecutor` 都必须显式实现下面四个接口中的适用成员：`IFlowNodeExecutor.ExecuteAsync`、`IFlowNodeSessionLifecycle.StartSessionAsync/StopSessionAsync`、`IFlowNodeSessionInitializer.InitializeSessionAsync`、`IFlowIterationSource.PrepareIterationAsync`。
 
 - [ ] **Step 2: 运行测试确认红灯。**
 
 Run: `dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj -f net8.0-windows --no-restore`
 
-Expected: 新测试失败，因为 `StartCoreAsync` 当前只调用 lifecycle，不解析 session 输入、不调用 initializer，算法会在 iteration 阶段缺失 calibration。
+Expected: 新测试失败，因为 `StartCoreAsync` 当前只调用 lifecycle，不解析 session 输入、不调用 initializer；有 initializer 的算法会把缺失 calibration 拖到 iteration，而无 initializer 的 consumer 甚至会错误地让 `StartAsync` 成功。
 
 - [ ] **Step 3: 在 `GraphExecutionSession.StartCoreAsync` 实现逐节点时序。** 对 `_orderedNodes` 中的每个节点严格执行：
 
@@ -575,10 +692,11 @@ if (executor is IFlowNodeSessionLifecycle lifecycle)
         .ConfigureAwait(false);
 }
 
+var inputs = ResolveSessionInputs(node, context.Definition, _readOnlySessionValues);
+EnsureRequiredSessionInputs(node, context.Definition, inputs);
+
 if (executor is IFlowNodeSessionInitializer initializer)
 {
-    var inputs = ResolveSessionInputs(node, context.Definition, _readOnlySessionValues);
-    EnsureRequiredSessionInputs(node, context.Definition, inputs);
     var outputs = await initializer.InitializeSessionAsync(
             context,
             inputs,
@@ -599,7 +717,9 @@ if (executor is IFlowNodeSessionInitializer initializer)
 _sessionValueStore.Seal();
 ```
 
-新增私有方法 `AddStartedLifecycleOrCleanupIfStoppingAsync(IFlowNodeSessionLifecycle lifecycle, FlowNodeSessionContext context, CancellationToken cancellationToken)`，把现有 `StartCoreAsync` 中的注册竞态逻辑原样抽出：在 `_stateGate` 内仅当 state 仍为 `Starting` 且 token 未取消时加入 `_startedLifecycles`；否则使用 `CancellationToken.None` 调用当前 lifecycle 的 `StopSessionAsync`，记录 cleanup error，随后抛出取消异常。`StartSessionAsync` 成功后立即加入 `_startedLifecycles`，然后才允许执行 initializer。这样当前节点初始化失败时，当前节点也在逆序清理集合中；`StartSessionAsync` 自身失败则继续依靠节点内部 catch 清理部分资源，不把未成功启动的 lifecycle 加入集合。
+上面的两行输入解析和 required 检查必须位于 initializer 条件之外，并且对每个节点执行。没有 initializer 的节点只完成 session input 检查，不调用普通 `ExecuteAsync`，也不会向 `SessionValueStore` 写入任何 output；有 initializer 的节点复用同一个 `inputs` 字典调用 `InitializeSessionAsync`。
+
+新增私有方法 `AddStartedLifecycleOrCleanupIfStoppingAsync(IFlowNodeSessionLifecycle lifecycle, FlowNodeSessionContext context, CancellationToken cancellationToken)`，把现有 `StartCoreAsync` 中的注册竞态逻辑原样抽出：在 `_stateGate` 内仅当 state 仍为 `Starting` 且 token 未取消时加入 `_startedLifecycles`；否则使用 `CancellationToken.None` 调用当前 lifecycle 的 `StopSessionAsync`，记录 cleanup error，随后抛出取消异常。`StartSessionAsync` 成功后立即加入 `_startedLifecycles`，然后才允许执行当前节点的 session input validation 和（若存在）initializer。这样当前节点输入检查或初始化失败时，当前节点也在逆序清理集合中；`StartSessionAsync` 自身失败则继续依靠节点内部 catch 清理部分资源，不把未成功启动的 lifecycle 加入集合。
 
 在 `Seal()` 前重新调用 `cancellationToken.ThrowIfCancellationRequested()` 并确认 state 仍为 `Starting`；只有所有节点初始化成功时才封存 store，随后在同一个 state gate 过渡到 `Running`。
 
@@ -617,7 +737,7 @@ private static void EnsureRequiredSessionInputs(
     IReadOnlyDictionary<string, object> inputs);
 ```
 
-`ResolveSessionInputs` 只处理非 control 且 `Availability == FlowPortAvailability.Session` 的输入端口，并严格区分三种状态：
+`ResolveSessionInputs` 由每个节点无条件调用，但只处理非 control 且 `Availability == FlowPortAvailability.Session` 的输入端口，并严格区分三种状态：
 
 ```csharp
 if (!node.Inputs.TryGetValue(inputPort.Id, out var configured))
@@ -644,15 +764,15 @@ else
 }
 ```
 
-`EnsureRequiredSessionInputs` 只对 `!inputPort.IsControlPort && inputPort.IsRequired && inputPort.Availability == FlowPortAvailability.Session` 的端口执行缺失检查：缺失时抛出包含 `SessionInputUnavailable` 和 node/port ID 的 `InvalidOperationException`，无论该端口定义是否有 `DefaultValue`。optional session input 可以保持缺失；但只要 workflow 已配置 `LinkRef`，也不使用 `DefaultValue`。只有 workflow 未配置该 input key 时，`ResolveSessionInputs` 才会把 `DefaultValue` 放入 inputs。这样连接存在但上游 initializer 没有产生值时，错误会在 session 初始化阶段暴露，不会被默认值掩盖。
+`EnsureRequiredSessionInputs` 也由每个节点无条件调用，只对 `!inputPort.IsControlPort && inputPort.IsRequired && inputPort.Availability == FlowPortAvailability.Session` 的端口执行缺失检查：缺失时抛出包含 `SessionInputUnavailable` 和 node/port ID 的 `InvalidOperationException`，无论该端口定义是否有 `DefaultValue`。optional session input 可以保持缺失；但只要 workflow 已配置 `LinkRef`，也不使用 `DefaultValue`。只有 workflow 未配置该 input key 时，`ResolveSessionInputs` 才会把 `DefaultValue` 放入 inputs。这样连接存在但上游 initializer 没有产生值时，无论当前节点是否实现 initializer，错误都会在 session 初始化阶段暴露，不会被默认值掩盖。
 
-- [ ] **Step 4: 把只读 store 传给 iteration runner。** 在 `ExecuteIterationCoreAsync` 的现有调用中加入 `_readOnlySessionValues`：
+- [ ] **Step 4: 把预解析 definition lookup 和只读 store 传给 iteration runner。** 在 `ExecuteIterationCoreAsync` 的现有调用中传入 session 构造阶段保存的 `_definitionsByNodeId` 和 `_readOnlySessionValues`：
 
 ```csharp
 await FlowGraphIterationRunner.ExecuteAsync(
         _orderedNodes,
         _executors,
-        Registry,
+        _definitionsByNodeId,
         context,
         _readOnlySessionValues,
         _logger,
@@ -660,7 +780,7 @@ await FlowGraphIterationRunner.ExecuteAsync(
     .ConfigureAwait(false);
 ```
 
-不改变 `FlowExecutionContext` 的 `_values` 结构；当前轮输出仍只走 `SetPortValue`，不能访问 `_sessionValueStore` 的写入端。
+不改变 `FlowExecutionContext` 的 `_values` 结构；当前轮输出仍只走 `SetPortValue`，不能访问 `_sessionValueStore` 的写入端。此处的 `_definitionsByNodeId` 和 `_readOnlySessionValues` 都是 session 级复用对象，不能在每轮重新由 `Registry.Resolve` 或 LINQ 查询构造。
 
 - [ ] **Step 5: 为所有停止路径清理 session store。** 在 `StopStartedLifecyclesCoreAsync` 的 cleanup `finally` 中执行 `_sessionValueStore.Clear()`，确保以下路径都清理：正常 `StopAsync`、初始化异常的 outer catch、初始化取消、iteration fault 后停止、用户在启动或 iteration 阻塞时停止。保持现有 `CancellationToken.None` 清理 token、逆序 lifecycle 和 `AggregateException` 语义。
 
@@ -671,6 +791,7 @@ await FlowGraphIterationRunner.ExecuteAsync(
   - source 使用两个独立 output：`baseline` 为 `Session`、`current` 为 `Iteration`；initializer 只返回 `baseline`，iteration 只返回 `current`。下游通过两个独立 `LinkRef` 分别读取稳定值和当前轮值，证明 iteration output 不会覆盖 session output。
   - initializer 返回的 `CameraCalibration` 在两个 iteration 中都是同一个稳定引用；另一个正确实现的节点显式复制一个可变 payload 后修改副本，原始 session payload 保持不变，验证节点遵守逻辑只读约定，同时确认引擎不做隐式深拷贝也不把副本写回 store。
   - initializer 返回未知 output、错误类型或只含 `Iteration` 能力的 output 时 `StartAsync` 失败，state 不为 `Running`，且该节点以及之前已启动节点按当前节点优先、随后逆拓扑顺序停止。
+  - 一个只实现 `IFlowNodeExecutor`、不实现 `IFlowNodeSessionInitializer` 的 consumer 具有 required `Session` calibration input，并连接到一个未产生 calibration 的 Camera；consumer 在没有进入任何 iteration 的情况下，`StartAsync` 仍必须以 `SessionInputUnavailable` 失败。
   - Algorithm 的 required `Session` 输入配置为指向 Camera 的 `LinkRef`，Camera initializer 不返回 calibration，即使 Algorithm 输入端口定义了 `DefaultValue`，session 仍以 `SessionInputUnavailable` 失败；删除该 `LinkRef` 后才允许使用同一个 `DefaultValue`。
   - iteration 对只有 `Session` 能力的 output 返回值时失败，`FlowExecutionContext` 不写入该值，`session.SessionValues` 中的初始化对象仍是原引用；随后 `StopAsync` 完成后读取视图为空且 `session.State == GraphExecutionSessionState.Stopped`。
   - 两个独立 session 使用相同 workflow 时各自持有不同的 initializer 输出；停止第一个 session 不影响第二个 session 的读取视图。
@@ -937,7 +1058,7 @@ Expected: CLI 测试跑棒通过；session 端口阶段元数据不影响 CLI �
 
 Run: `rg -n "SetPortValue\(|SessionValueStore|InitializeSessionAsync|Availability|SessionInputUnavailable" NodeCraft.Flow NodeCraft.Vision NodeCraft.Tests -g '*.cs'`
 
-Expected: 只有 `SessionValueStore` 内部初始化路径调用 session store 的写入 API；`FlowExecutionContext.SetPortValue` 仍只出现在当前轮路径；旧节点未被批量添加 initializer；立体相机 calibration output 只在 initializer 和 session store 进入稳定输入。
+Expected: 只有 `SessionValueStore` 内部初始化路径调用 session store 的写入 API；`FlowExecutionContext.SetPortValue` 仍只出现在当前轮路径；`FlowGraphIterationRunner` 不再包含 `sortedNodes.Single` 或 `Registry.Resolve` 的 per-input/per-iteration lookup；旧节点未被批量添加 initializer；立体相机 calibration output 只在 initializer 和 session store 进入稳定输入。
 
 逐段阅读本计划，确认每个 task 都有明确文件、接口、失败测试、运行命令、通过标准和 commit；确认没有未定义的 executor、controller 方法、数据类型或模糊的“稍后实现”步骤。
 
@@ -952,12 +1073,12 @@ git commit -m "test: cover session initialization execution paths"
 
 - `IFlowNodeSessionInitializer`、`FlowPortAvailability` 和默认 `Iteration`：Task 1。
 - V1 input/output 的 `Availability` 都只能精确选择 `Iteration` 或 `Session`；需要稳定值和临时值时使用独立 output 或 session 初始化计算节点：Task 1 文档契约、Task 2/3 按 source output stage 解析。
-- 按拓扑顺序执行 `StartSessionAsync` → initializer → 校验写入：Task 3；拓扑排序本身沿用 `GraphExecutor.TopologicalSort`，不引入并行 DAG。
+- 按拓扑顺序执行 `StartSessionAsync` → 所有节点的 session input 解析/required 校验 →（若存在）initializer → output 校验写入：Task 3；拓扑排序本身沿用 `GraphExecutor.TopologicalSort`，不引入并行 DAG。
 - session input 只从 `Availability == Session` 的 link、常量和默认值解析；iteration input 按 source output stage 选择 context 或 session store：Task 2/3；control 端口明确排除。
 - `DefaultValue` 只对未配置输入生效，已配置但缺失的 `LinkRef` 不回退默认值：Task 2/3。
 - `SessionValueStore` 一次性写入、封存、只读视图、跨 session 隔离和停止清理：Task 1/3。
 - `LinkRef` 按 source output 的 `Availability` 选择当前 `FlowExecutionContext` 或 `SessionValueStore`；已配置 link 缺值不回退 `DefaultValue`，独立 `Iteration` output 不覆盖 `Session` output：Task 2/3。
-- 初始化 output 未知 ID、阶段错误和类型错误，以及 required session input 缺失：Task 2/3。
+- 初始化 output 未知 ID、阶段错误和类型错误，以及所有节点（包括无 initializer 节点）的 required session input 缺失：Task 2/3。
 - iteration output 未知 ID、`Availability == Session` 或类型错误：Task 2/3。
 - 初始化失败、取消、iteration 异常和正常停止的逆序清理：Task 3。
 - 相机 calibration 从逐轮 bundle 迁移到一次性初始化 output，算法实例只初始化一次：Task 4/5。
