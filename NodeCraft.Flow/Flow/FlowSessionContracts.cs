@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -29,6 +30,19 @@ namespace NodeCraft.Flow
         Task StartSessionAsync(FlowNodeSessionContext context, CancellationToken cancellationToken);
 
         Task StopSessionAsync(FlowNodeSessionContext context, CancellationToken cancellationToken);
+    }
+
+    public interface IFlowNodeSessionInitializer
+    {
+        Task<IReadOnlyDictionary<string, object>> InitializeSessionAsync(
+            FlowNodeSessionContext context,
+            IReadOnlyDictionary<string, object> inputs,
+            CancellationToken cancellationToken);
+    }
+
+    public interface IReadOnlySessionValueStore
+    {
+        bool TryGetPortValue(string nodeId, int outputSlot, out object value);
     }
 
     public interface IFlowIterationSource

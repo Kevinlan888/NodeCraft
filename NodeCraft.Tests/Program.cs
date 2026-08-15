@@ -65,6 +65,7 @@ internal static partial class Program
         await RunVisionIntegrationTestsAsync();
         await RunGraphExecutionSessionLifecycleTestsAsync();
         await RunGraphExecutionSessionIterationTestsAsync();
+        await RunSessionNodeInitializationTestsAsync();
         await RunFlowExecutionControllerTestsAsync();
         RunExecutionErrorFormatterTests();
 

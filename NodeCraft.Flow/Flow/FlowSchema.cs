@@ -4,6 +4,12 @@ using System.Linq;
 
 namespace NodeCraft.Flow
 {
+    public enum FlowPortAvailability
+    {
+        Iteration,
+        Session,
+    }
+
     public class FlowDataType : IEquatable<FlowDataType>
     {
         public static readonly FlowDataType String = new FlowDataType("string", typeof(string));
@@ -164,6 +170,9 @@ namespace NodeCraft.Flow
         public bool AllowMultipleConnections { get; set; }
 
         public object DefaultValue { get; set; }
+
+        public FlowPortAvailability Availability { get; set; }
+            = FlowPortAvailability.Iteration;
 
         public bool IsControlPort => DataType != null && DataType.Equals(FlowDataType.Control);
     }
