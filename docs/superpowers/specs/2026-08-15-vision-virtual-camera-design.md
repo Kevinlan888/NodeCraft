@@ -39,7 +39,22 @@ nodecraft.vision.virtual-camera
 
 ```csharp
 public string SourcePath { get; set; }
+public VirtualCameraLoadMode LoadMode { get; set; }
+public int MaxPreloadedImages { get; set; }
+public long MaxPreloadedBytes { get; set; }
+public bool SkipErrorImages { get; set; }
 ```
+
+配置默认值为：
+
+```text
+LoadMode = Dynamic
+MaxPreloadedImages = 100
+MaxPreloadedBytes = 512 MiB
+SkipErrorImages = false
+```
+
+`MaxPreloadedImages` 和 `MaxPreloadedBytes` 只在 `Preload` 模式生效；`Dynamic` 模式不使用解码图片缓存，因此忽略这两个限制。`VirtualCameraLoadMode` 只有 `Preload` 和 `Dynamic` 两个值。
 
 属性写入 workflow 节点的隐藏配置值：
 
@@ -55,7 +70,7 @@ builtin://vision/sample-set
 
 这个默认值只是节点初始配置；用户填写无效路径时，运行时不得回退到内置图片。
 
-节点编辑器显示 `SourcePath` 文本框，接受本地文件路径、本地文件夹路径或 `builtin://vision/...` URI。编辑器修改属性时沿用现有 Vision 节点的 graph-changed 通知模式。
+节点编辑器显示 `SourcePath`、加载模式、预加载数量上限、预加载字节上限和“跳过错误图片”选项。编辑器修改属性时沿用现有 Vision 节点的 graph-changed 通知模式。
 
 ## 4. 输出契约
 
@@ -161,20 +176,39 @@ builtin://vision/sample-set
 1. 读取 `sourcePath`。
 2. 识别 `builtin://vision/` URI 或本地文件系统路径。
 3. 验证来源类型和图片数量。
-4. 构建 session 内固定的图片序列，并设置 `_index = -1`、`_current = null`。
+4. 构建 session 内固定的图片路径序列，并设置 `_index = -1`、`_current = null`。
+5. 按 `LoadMode` 执行预加载或保留动态来源。
 
 `InitializeSessionAsync` 在生命周期启动之后执行，返回 `imageDirectory`。这样 session 输出会在 `StartAsync` 成功进入 Running 前写入 session store。
 
-`PrepareIterationAsync` 执行：
+### 6.1 Preload 模式
+
+`Preload` 模式在 `StartSessionAsync` 中依次解码整个图片序列，并缓存所有有效的 `FlowImage`。缓存必须同时满足：
+
+- 成功解码的图片数量不超过 `MaxPreloadedImages`。
+- 所有解码缓冲区的总字节数不超过 `MaxPreloadedBytes`。
+
+超过任一限制时，session 启动失败，不静默截断图片序列。解码失败时，如果 `SkipErrorImages=false`，session 启动失败；如果为 `true`，该图片被排除后继续加载。所有图片都被跳过时，session 启动失败。
+
+### 6.2 Dynamic 模式
+
+`Dynamic` 模式在 `StartSessionAsync` 中只验证来源并建立排序后的路径元数据列表，不解码图片、不建立 `FlowImage` 缓存。路径列表用于维持文件名排序和循环索引；内存中不会累积图片像素数据。
+
+每次 `PrepareIterationAsync` 只读取并解码当前路径。当前图片替换上一轮的当前图片；执行器不保留 LRU 或其他历史图片缓存。文件在 session 运行期间被修改时，后续 iteration 会读取修改后的内容。
+
+`Dynamic` 模式下，解码失败时，如果 `SkipErrorImages=false`，当前 `PrepareIterationAsync` 失败；如果为 `true`，当前路径从本次 session 的有效候选中跳过并继续尝试下一张。整个序列都无法读取时，`PrepareIterationAsync` 失败。
+
+两种模式的 index 规则相同，`PrepareIterationAsync` 执行：
 
 ```text
-_index = (_index + 1) % _images.Count
-_current = _images[_index]
+_index = (_index + 1) % _entries.Count
+var entry = _entries[_index]
+_current = LoadCurrent(entry)
 ```
 
-因此第一次 iteration 选择 ordinal 0，最后一项之后才回到 0；单图片序列也会始终选择 0。
+在 `Preload` 中 `LoadCurrent(entry)` 返回已缓存的 `FlowImage`；在 `Dynamic` 中它从 `entry` 的路径重新读取并解码。`_entries` 只包含当前 session 的有效候选项。因此第一次 iteration 选择 ordinal 0，最后一项之后才回到 0；单图片序列也会始终选择 0。
 
-图片必须在 session 启动时解码并缓存，以便把路径或解码错误尽早报告为启动错误，并避免 iteration 热路径重复打开文件。停止 session 时清空当前图片、序列和 index。
+停止 session 时清空当前图片、序列、路径元数据和 index。
 
 `ExecuteAsync` 返回：
 
@@ -199,6 +233,7 @@ _current = _images[_index]
 - 内置 URI 不存在或没有图片。
 - 图片无法解码、像素尺寸无效或像素复制失败。
 - iteration 在没有已准备图片时执行。
+- `Preload` 模式超过预加载图片数量或字节上限。
 
 异常消息必须包含 `VirtualCamera` 和相关来源路径或 URI；若为文件夹图片错误，应包含当前图片的绝对路径。
 
@@ -218,12 +253,15 @@ _current = _images[_index]
 4. 本地文件夹按文件名排序，并在最后一张后回到第一张。
 5. 文件夹忽略不支持扩展名，空文件夹启动失败。
 6. 第一次 iteration 选择序列项 0，不跳过第一张；停止和重新启动后同样从 0 开始。
-7. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
-8. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
-9. `FlowImage`、`imagePath` 可以被现有 FlowImage Preview 节点消费。
-10. 不存在路径、非法路径类型、不支持扩展名、损坏图片和未知内置 URI 都抛出明确异常。
-11. session 启动、停止、重复 iteration 和 session 清理不会保留上一轮的图片或 index。
-12. 集成 graph 执行验证 session 级 `imageDirectory` 可被后续节点稳定读取。
+7. `Preload` 模式在启动时发现坏图、遵守图片数量限制和 decoded byte 限制。
+8. `Dynamic` 模式每次 iteration 重新读取图片，不保留历史解码缓存；修改文件后后续 iteration 可观察到新内容。
+9. `SkipErrorImages=false` 和 `true` 分别覆盖失败和跳过坏图路径的行为。
+10. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
+11. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
+12. `FlowImage`、`imagePath` 可以被现有 FlowImage Preview 节点消费。
+13. 不存在路径、非法路径类型、不支持扩展名、损坏图片和未知内置 URI 都抛出明确异常。
+14. session 启动、停止、重复 iteration 和 session 清理不会保留上一轮的图片或 index。
+15. 集成 graph 执行验证 session 级 `imageDirectory` 可被后续节点稳定读取。
 
 ## 10. 完成标准
 
