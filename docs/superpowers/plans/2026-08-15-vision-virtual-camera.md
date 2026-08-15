@@ -217,13 +217,14 @@ git commit -m "feat: add virtual camera node model"
 await RunAsync("virtual camera resolves a single absolute image and its directory", () =>
 {
     using var fixture = new TemporaryVirtualCameraFiles();
-    var relative = Path.GetRelativePath(Environment.CurrentDirectory, fixture.ImagePath);
+    var imagePath = fixture.WriteImage("single.jpg", new byte[] { 1, 2, 3 });
+    var relative = Path.GetRelativePath(Environment.CurrentDirectory, imagePath);
     var source = VirtualCameraSourceResolver.Resolve(relative);
     return !source.IsBuiltin
-        && source.ImageDirectory == Path.GetDirectoryName(Path.GetFullPath(fixture.ImagePath))
+        && source.ImageDirectory == Path.GetDirectoryName(Path.GetFullPath(imagePath))
         && source.Entries.Count == 1
         && source.Entries[0].Ordinal == 0
-        && source.Entries[0].Path == Path.GetFullPath(fixture.ImagePath)
+        && source.Entries[0].Path == Path.GetFullPath(imagePath)
         && source.Entries[0].PreloadedImage == null;
 });
 
@@ -273,7 +274,7 @@ await RunAsync("virtual camera rejects invalid source kinds and empty folders", 
 });
 ```
 
-`TemporaryVirtualCameraFiles` 在本任务中就提供临时目录、`ImagePath` 和 `WriteImage(string fileName, byte[] bytes)`；`WriteImage` 使用 `File.WriteAllBytes` 写入明确的临时路径，来源解析测试只验证存在性和排序，不在此处解码。Task 3 再在同一 helper 增加 `WriteBitmap`，最终所有测试仍只操作 helper 创建的临时目录。
+`TemporaryVirtualCameraFiles` 在本任务中就提供空临时目录和 `WriteImage(string fileName, byte[] bytes)`；`WriteImage` 使用 `File.WriteAllBytes` 写入明确的临时路径，来源解析测试只验证存在性和排序，不在此处解码。Task 3 再在同一 helper 增加 `WriteBitmap`，最终所有测试仍只操作 helper 创建的临时目录。
 
 - [ ] **Step 2: 运行来源测试确认失败**
 
@@ -337,7 +338,7 @@ builtin 的固定 pixel buffer 直接用 `FlowImage.FromOwnedBuffer` 构造，`D
 
 - [ ] **Step 4: 完成临时文件 helper 并运行来源测试**
 
-在 `VirtualCameraTests.cs` 添加 `IDisposable TemporaryVirtualCameraFiles`，构造唯一临时目录，`Dispose` 只删除该目录；提供 `DirectoryPath`、`ImagePath` 和 `WriteImage(string fileName, byte[] bgrPixel)`。使用 `File.Delete`/`Directory.Delete` 前只操作该 helper 创建的明确目录。
+在 `VirtualCameraTests.cs` 添加 `IDisposable TemporaryVirtualCameraFiles`，构造唯一临时目录但不创建任何文件，`Dispose` 只删除该目录；提供 `DirectoryPath` 和 `WriteImage(string fileName, byte[] bgrPixel)`。使用 `File.Delete`/`Directory.Delete` 前只操作该 helper 创建的明确目录。
 
 其构造和清理接口固定为：
 
@@ -350,11 +351,9 @@ private sealed class TemporaryVirtualCameraFiles : IDisposable
             Path.GetTempPath(),
             "nodecraft-virtual-camera-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(DirectoryPath);
-        ImagePath = WriteImage("single.jpg", new byte[] { 1, 2, 3 });
     }
 
     internal string DirectoryPath { get; }
-    internal string ImagePath { get; }
 
     public void Dispose()
     {
