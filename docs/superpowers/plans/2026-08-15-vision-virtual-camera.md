@@ -378,12 +378,14 @@ internal string WriteImage(string fileName, byte[] bytes)
 internal string WriteBitmap(
     string fileName,
     PixelFormat pixelFormat,
+    int width,
+    int height,
     byte[] pixels,
     int stride)
 {
     var path = Path.Combine(DirectoryPath, fileName);
     var bitmap = BitmapSource.Create(
-        1, pixels.Length / stride, 96, 96, pixelFormat, null, pixels, stride);
+        width, height, 96, 96, pixelFormat, null, pixels, stride);
     BitmapEncoder encoder = Path.GetExtension(path).ToLowerInvariant() switch
     {
         ".jpg" => new JpegBitmapEncoder(),
@@ -400,7 +402,7 @@ internal string WriteBitmap(
 }
 ```
 
-`WriteBitmap` 的测试输入固定为 width 1；调用方传入 `Gray8`/stride 1 或 `Bgr24`/stride 3，因此 height 始终为正整数。
+`WriteBitmap` 的调用方必须显式传入 width、height、stride，并保证 `pixels.Length == stride * height`；Gray8 的测试使用 width 2、height 1、stride 2，彩色 1x1 测试使用 stride 3。
 
 Run: `dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj --no-restore`
 
@@ -432,8 +434,10 @@ await RunAsync("virtual camera decodes gray8 as mono8 and color as bgr24", () =>
     RunOnSta(() =>
     {
         using var fixture = new TemporaryVirtualCameraFiles();
-        var monoPath = fixture.WriteBitmap("mono.png", PixelFormats.Gray8, new byte[] { 9, 10 }, 2);
-        var colorPath = fixture.WriteBitmap("color.png", PixelFormats.Bgr24, new byte[] { 1, 2, 3 }, 3);
+        var monoPath = fixture.WriteBitmap(
+            "mono.png", PixelFormats.Gray8, 2, 1, new byte[] { 9, 10 }, 2);
+        var colorPath = fixture.WriteBitmap(
+            "color.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
         var mono = new VirtualCameraImageLoader().Load(monoPath, 4);
         var color = new VirtualCameraImageLoader().Load(colorPath, 5);
         return mono.PixelFormat == FlowPixelFormat.Mono8
@@ -538,8 +542,8 @@ git commit -m "feat: add virtual camera image loader"
 await RunAsync("virtual camera preload starts at ordinal zero and exposes session directory", async () =>
 {
     using var fixture = new TemporaryVirtualCameraFiles();
-    fixture.WriteBitmap("a.png", PixelFormats.Bgr24, new byte[] { 1, 2, 3 }, 3);
-    fixture.WriteBitmap("b.png", PixelFormats.Bgr24, new byte[] { 4, 5, 6 }, 3);
+    fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
+    fixture.WriteBitmap("b.png", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
     var executor = new VirtualCameraExecutor();
     var context = CreateVirtualCameraContext(
         fixture.DirectoryPath,
@@ -580,8 +584,8 @@ await RunAsync("virtual camera preload starts at ordinal zero and exposes sessio
 await RunAsync("virtual camera preload enforces positive count and checked decoded bytes", async () =>
 {
     using var fixture = new TemporaryVirtualCameraFiles();
-    fixture.WriteBitmap("a.png", PixelFormats.Bgr24, new byte[] { 1, 2, 3 }, 3);
-    fixture.WriteBitmap("b.png", PixelFormats.Bgr24, new byte[] { 4, 5, 6 }, 3);
+    fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
+    fixture.WriteBitmap("b.png", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
     var invalidCount = await ThrowsAsync<InvalidOperationException>(() =>
         StartVirtualCameraAsync(fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 0, 100, false));
     var invalidBytes = await ThrowsAsync<InvalidOperationException>(() =>
@@ -676,7 +680,7 @@ git commit -m "feat: implement virtual camera preload execution"
 await RunAsync("virtual camera dynamic loads only during prepare and observes file changes", async () =>
 {
     using var fixture = new TemporaryVirtualCameraFiles();
-    var path = fixture.WriteBitmap("a.png", PixelFormats.Bgr24, new byte[] { 1, 2, 3 }, 3);
+    var path = fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
     var loader = new RecordingVirtualCameraImageLoader();
     var executor = new VirtualCameraExecutor(loader);
     var context = CreateVirtualCameraContext(
@@ -689,7 +693,7 @@ await RunAsync("virtual camera dynamic loads only during prepare and observes fi
     var first = await executor.ExecuteAsync(
         new FlowExecutionContext(), node, definition,
         new Dictionary<string, object>(), CancellationToken.None);
-    fixture.WriteBitmap("a.png", PixelFormats.Bgr24, new byte[] { 9, 8, 7 }, 3);
+    fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 9, 8, 7 }, 3);
     await executor.PrepareIterationAsync(context, CancellationToken.None);
     var second = await executor.ExecuteAsync(
         new FlowExecutionContext(), node, definition,
@@ -710,9 +714,9 @@ await RunAsync("virtual camera dynamic loads only during prepare and observes fi
 await RunAsync("virtual camera dynamic skip removes bad entry without skipping next", async () =>
 {
     using var fixture = new TemporaryVirtualCameraFiles();
-    var a = fixture.WriteBitmap("A.jpg", PixelFormats.Bgr24, new byte[] { 1, 1, 1 }, 3);
-    var bad = fixture.WriteBitmap("Bad.jpg", PixelFormats.Bgr24, new byte[] { 2, 2, 2 }, 3);
-    var c = fixture.WriteBitmap("C.jpg", PixelFormats.Bgr24, new byte[] { 3, 3, 3 }, 3);
+    var a = fixture.WriteBitmap("A.jpg", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 1, 1 }, 3);
+    var bad = fixture.WriteBitmap("Bad.jpg", PixelFormats.Bgr24, 1, 1, new byte[] { 2, 2, 2 }, 3);
+    var c = fixture.WriteBitmap("C.jpg", PixelFormats.Bgr24, 1, 1, new byte[] { 3, 3, 3 }, 3);
     var loader = new SelectiveVirtualCameraImageLoader(bad);
     var executor = new VirtualCameraExecutor(loader);
     var context = CreateVirtualCameraContext(
