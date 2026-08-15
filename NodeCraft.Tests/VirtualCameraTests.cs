@@ -1114,6 +1114,130 @@ internal static partial class Program
                     && changesAfterValidInput == 5
                     && graphChanges == changesAfterValidInput;
             })));
+
+        await RunAsync("virtual camera graph links preview, path and session directory", () =>
+            RunOnStaAsync(async () =>
+            {
+                using var fixture = new TemporaryVirtualCameraFiles();
+                var firstPath = fixture.WriteBitmap(
+                    "A.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
+                var secondPath = fixture.WriteBitmap(
+                    "B.png", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
+
+                var plugin = new VisionPlugin();
+                var pluginContext = new PluginRegistrationContext(
+                    NullLogger.Instance,
+                    new Version(1, 0));
+                plugin.Register(pluginContext);
+                var registry = new FlowNodeRegistry();
+                registry.RegisterPlugin(plugin.Metadata.Id, pluginContext.Registrations);
+                registry.Register(new FlowNodeRegistration(
+                    CreateSessionObservationDefinition(),
+                    () => new SessionObservationExecutor())
+                {
+                    ShowInPalette = false,
+                });
+
+                var workflow = new WorkflowDocument();
+                workflow.Nodes.Add(new WorkflowNode
+                {
+                    Id = "virtual-camera",
+                    TypeKey = VirtualCameraNodeModel.FlowNodeTypeKey,
+                    Inputs =
+                    {
+                        ["sourcePath"] = fixture.DirectoryPath,
+                        ["loadMode"] = VirtualCameraLoadMode.Preload,
+                        ["maxPreloadedImages"] = 10,
+                        ["maxPreloadedBytes"] = 100L,
+                        ["skipErrorImages"] = false,
+                    },
+                });
+                workflow.Nodes.Add(new WorkflowNode
+                {
+                    Id = "preview",
+                    TypeKey = FlowImagePreviewNodeModel.FlowNodeTypeKey,
+                    Inputs =
+                    {
+                        ["image"] = new LinkRef
+                        {
+                            SourceNodeId = "virtual-camera",
+                            SourceSlot = 0,
+                        },
+                    },
+                });
+                workflow.Nodes.Add(new WorkflowNode
+                {
+                    Id = "observation",
+                    TypeKey = SessionObservationExecutor.FlowNodeTypeKey,
+                    Inputs =
+                    {
+                        ["image"] = new LinkRef
+                        {
+                            SourceNodeId = "virtual-camera",
+                            SourceSlot = 0,
+                        },
+                        ["imagePath"] = new LinkRef
+                        {
+                            SourceNodeId = "virtual-camera",
+                            SourceSlot = 1,
+                        },
+                        ["imageDirectory"] = new LinkRef
+                        {
+                            SourceNodeId = "virtual-camera",
+                            SourceSlot = 2,
+                        },
+                    },
+                });
+
+                var graphExecutor = new GraphExecutor(workflow, registry);
+                var validation = graphExecutor.Validate();
+                if (!validation.IsValid)
+                {
+                    return false;
+                }
+
+                await using var session = graphExecutor.CreateSession();
+                await session.StartAsync(CancellationToken.None);
+                try
+                {
+                    var firstContext = await session.ExecuteIterationAsync(
+                        CancellationToken.None);
+                    var secondContext = await session.ExecuteIterationAsync(
+                        CancellationToken.None);
+
+                    var hasFirstObservation = firstContext.TryGetPortValue(
+                        "observation", 0, out var firstObservationValue);
+                    var hasSecondObservation = secondContext.TryGetPortValue(
+                        "observation", 0, out var secondObservationValue);
+                    var hasFirstPreview = firstContext.TryGetPortValue(
+                        "preview", 0, out var firstPreviewValue);
+                    var hasSecondPreview = secondContext.TryGetPortValue(
+                        "preview", 0, out var secondPreviewValue);
+                    var firstObservation = firstObservationValue as SessionObservation;
+                    var secondObservation = secondObservationValue as SessionObservation;
+
+                    return hasFirstObservation
+                        && hasSecondObservation
+                        && hasFirstPreview
+                        && hasSecondPreview
+                        && firstObservation != null
+                        && secondObservation != null
+                        && firstObservation.ImagePath == Path.GetFullPath(firstPath)
+                        && secondObservation.ImagePath == Path.GetFullPath(secondPath)
+                        && firstObservation.ImageDirectory
+                            == Path.GetFullPath(fixture.DirectoryPath)
+                        && secondObservation.ImageDirectory
+                            == firstObservation.ImageDirectory
+                        && firstObservation.Image.FrameId == 0
+                        && secondObservation.Image.FrameId == 1
+                        && ReferenceEquals(firstObservation.Image, firstPreviewValue)
+                        && ReferenceEquals(secondObservation.Image, secondPreviewValue);
+                }
+                finally
+                {
+                    await session.StopAsync();
+                }
+            }));
     }
 
     private static bool ThrowsVirtualCamera<TException>(string sourcePath, Action action)
@@ -1158,6 +1282,113 @@ internal static partial class Program
             ?.GetValue(instance) as T
             ?? throw new InvalidOperationException(
                 $"Missing editor field '{fieldName}'.");
+    }
+
+    private static FlowNodeDefinition CreateSessionObservationDefinition()
+    {
+        return new FlowNodeDefinition
+        {
+            TypeKey = SessionObservationExecutor.FlowNodeTypeKey,
+            DisplayName = "Session Observation",
+            InputPorts =
+            {
+                new FlowPortDefinition
+                {
+                    Id = "image",
+                    DisplayName = "Image",
+                    IOType = EIOType.Input,
+                    DataType = FlowDataType.Image,
+                    PreferredDirection = EPortDirection.Left,
+                    IsRequired = true,
+                    Availability = FlowPortAvailability.Iteration,
+                },
+                new FlowPortDefinition
+                {
+                    Id = "imagePath",
+                    DisplayName = "Image Path",
+                    IOType = EIOType.Input,
+                    DataType = FlowDataType.String,
+                    PreferredDirection = EPortDirection.Left,
+                    IsRequired = true,
+                    Availability = FlowPortAvailability.Iteration,
+                },
+                new FlowPortDefinition
+                {
+                    Id = "imageDirectory",
+                    DisplayName = "Image Directory",
+                    IOType = EIOType.Input,
+                    DataType = FlowDataType.String,
+                    PreferredDirection = EPortDirection.Left,
+                    IsRequired = true,
+                    Availability = FlowPortAvailability.Session,
+                },
+            },
+            OutputPorts =
+            {
+                new FlowPortDefinition
+                {
+                    Id = "observation",
+                    DisplayName = "Observation",
+                    IOType = EIOType.Output,
+                    DataType = FlowDataType.Object,
+                    PreferredDirection = EPortDirection.Right,
+                    Availability = FlowPortAvailability.Iteration,
+                },
+            },
+        };
+    }
+
+    private sealed class SessionObservation
+    {
+        internal SessionObservation(
+            FlowImage image,
+            string imagePath,
+            string imageDirectory)
+        {
+            Image = image;
+            ImagePath = imagePath;
+            ImageDirectory = imageDirectory;
+        }
+
+        public FlowImage Image { get; }
+
+        public string ImagePath { get; }
+
+        public string ImageDirectory { get; }
+    }
+
+    private sealed class SessionObservationExecutor : IFlowNodeExecutor
+    {
+        internal const string FlowNodeTypeKey = "test.session-observation";
+
+        public Task<IReadOnlyDictionary<string, object>> ExecuteAsync(
+            FlowExecutionContext context,
+            WorkflowNode node,
+            FlowNodeDefinition definition,
+            IReadOnlyDictionary<string, object> inputs,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!inputs.TryGetValue("image", out var imageValue)
+                || !(imageValue is FlowImage image)
+                || !inputs.TryGetValue("imagePath", out var pathValue)
+                || !(pathValue is string imagePath)
+                || !inputs.TryGetValue("imageDirectory", out var directoryValue)
+                || !(directoryValue is string imageDirectory))
+            {
+                throw new InvalidOperationException(
+                    "SessionObservation requires image, imagePath, and imageDirectory inputs.");
+            }
+
+            return Task.FromResult<IReadOnlyDictionary<string, object>>(
+                new Dictionary<string, object>
+                {
+                    ["observation"] = new SessionObservation(
+                        image,
+                        imagePath,
+                        imageDirectory),
+                });
+        }
     }
 
     private static FlowNodeSessionContext CreateVirtualCameraContext(
