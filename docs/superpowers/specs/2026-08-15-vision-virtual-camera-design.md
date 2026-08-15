@@ -186,7 +186,7 @@ builtin://vision/sample-set
 
 创建的 `FlowImage` 为不可变值对象。虚拟相机不持有 WPF UI 对象；预览节点可以直接接收该 `FlowImage`。
 
-图片元数据不代表真实设备：`DeviceTimestamp` 使用 0，`FrameId` 使用序列项的稳定 ordinal，采集时间使用图片被加载时的 UTC 时间。重复循环到同一序列项时，其像素和路径保持一致。
+图片元数据不代表真实设备：`DeviceTimestamp` 使用 0，`FrameId` 使用图片在 session 初始序列中的稳定 ordinal，不代表 workflow iteration 序号；`imagePath` 在整个 session 中保持稳定，`CapturedAtUtc` 使用图片被加载时的 UTC 时间。`Preload` 模式重复访问同一项时复用已缓存的 `FlowImage`，其像素和加载时间保持不变；`Dynamic` 模式每次重新加载，因此文件内容和加载时间允许发生变化。
 
 ## 6. 执行器和生命周期
 
@@ -281,7 +281,7 @@ _current = LoadCurrent(entry)
 6. 文件夹忽略不支持扩展名，空文件夹启动失败。
 7. 第一次 iteration 选择序列项 0，不跳过第一张；停止和重新启动后同样从 0 开始。
 8. `Preload` 模式在启动时发现坏图、遵守图片数量限制和 decoded byte 限制。
-9. `Dynamic` 模式每次 iteration 重新读取图片，不保留历史解码缓存；修改文件后后续 iteration 可观察到新内容。
+9. `Dynamic` 模式每次 iteration 重新读取图片，不保留历史解码缓存；修改文件后后续 iteration 可观察到新内容，同时验证同一项的 `FrameId` 和 `imagePath` 稳定、像素和 `CapturedAtUtc` 可以变化。
 10. `SkipErrorImages=false` 和 `true` 分别覆盖失败和跳过坏图路径的行为。
 11. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
 12. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
