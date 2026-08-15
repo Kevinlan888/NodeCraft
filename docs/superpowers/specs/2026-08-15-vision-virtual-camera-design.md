@@ -39,7 +39,7 @@ nodecraft.vision.virtual-camera
 
 ```csharp
 public string SourcePath { get; set; } = "builtin://vision/sample-set";
-public VirtualCameraLoadMode LoadMode { get; set; } = VirtualCameraLoadMode.Dynamic;
+public VirtualCameraLoadMode LoadMode { get; set; } = VirtualCameraLoadMode.Preload;
 public int MaxPreloadedImages { get; set; } = 100;
 public long MaxPreloadedBytes { get; set; } = 536870912;
 public bool SkipErrorImages { get; set; }
@@ -48,13 +48,13 @@ public bool SkipErrorImages { get; set; }
 配置默认值为：
 
 ```text
-LoadMode = Dynamic
+LoadMode = Preload
 MaxPreloadedImages = 100
 MaxPreloadedBytes = 512 MiB
 SkipErrorImages = false
 ```
 
-`MaxPreloadedImages` 和 `MaxPreloadedBytes` 只在 `Preload` 模式生效；`Dynamic` 模式不使用解码图片缓存，因此忽略这两个限制。`VirtualCameraLoadMode` 只有 `Preload` 和 `Dynamic` 两个值。
+`MaxPreloadedImages` 和 `MaxPreloadedBytes` 只在 `Preload` 模式生效；`Dynamic` 模式不使用解码图片缓存，因此忽略这两个限制。`VirtualCameraLoadMode` 只有 `Preload` 和 `Dynamic` 两个值，但内置来源只允许 `Preload`。
 
 ### 3.1 XML 持久化
 
@@ -65,7 +65,7 @@ SkipErrorImages = false
 ```xml
 <Properties>
   <Property Name="SourcePath" Type="System.String" Value="builtin://vision/sample-set" />
-  <Property Name="LoadMode" Type="...VirtualCameraLoadMode..." Value="Dynamic" />
+  <Property Name="LoadMode" Type="...VirtualCameraLoadMode..." Value="Preload" />
   <Property Name="MaxPreloadedImages" Type="System.Int32" Value="100" />
   <Property Name="MaxPreloadedBytes" Type="System.Int64" Value="536870912" />
   <Property Name="SkipErrorImages" Type="System.Boolean" Value="False" />
@@ -158,6 +158,8 @@ builtin://vision/sample-set
 
 `SourcePath` 可以指向整个集合，也可以指向集合中的单张内置图片；前者形成完整序列，后者形成单元素序列。内置集合由插件内置图片提供器提供，第一版直接构造固定的托管像素数据，不依赖用户机器上的文件。内置图片保持固定顺序，不能因为字典枚举顺序而变化。
 
+内置来源不支持 `Dynamic`。当 `SourcePath` 使用 `builtin://vision/` 前缀时，必须使用 `LoadMode=Preload`；如果配置为 `Dynamic`，`StartSessionAsync` 直接抛出配置错误，不自动切换模式，也不回退到其他图片来源。内置图片在 session 启动时全部构造并缓存，后续 iteration 不重新加载。
+
 `imageDirectory` 始终表示当前 sequence 的容器：
 
 | SourcePath | imagePath | imageDirectory |
@@ -203,11 +205,11 @@ builtin://vision/sample-set
 2. 识别 `builtin://vision/` URI 或本地文件系统路径。
 3. 验证来源类型和图片数量。
 4. 构建 session 内固定的图片路径序列，并设置 `_index = -1`、`_current = null`。
-5. 按 `LoadMode` 执行预加载或保留动态来源。
+5. 内置来源要求 `LoadMode=Preload`；本地来源按 `LoadMode` 执行预加载或保留动态来源。
 
 `InitializeSessionAsync` 在生命周期启动之后执行，返回 `imageDirectory`。这样 session 输出会在 `StartAsync` 成功进入 Running 前写入 session store。
 
-### 6.1 Preload 模式
+### 6.1 Preload 模式（本地和内置来源）
 
 `Preload` 模式在 `StartSessionAsync` 中依次解码整个图片序列，并缓存所有有效的 `FlowImage`。缓存必须同时满足：
 
@@ -216,9 +218,9 @@ builtin://vision/sample-set
 
 超过任一限制时，session 启动失败，不静默截断图片序列。解码失败时，如果 `SkipErrorImages=false`，session 启动失败；如果为 `true`，该图片被排除后继续加载。所有图片都被跳过时，session 启动失败。
 
-### 6.2 Dynamic 模式
+### 6.2 Dynamic 模式（仅本地来源）
 
-`Dynamic` 模式在 `StartSessionAsync` 中只验证来源并建立排序后的路径元数据列表，不解码图片、不建立 `FlowImage` 缓存。路径列表用于维持文件名排序和循环索引；内存中不会累积图片像素数据。
+`Dynamic` 模式只适用于本地单文件或本地文件夹。在 `StartSessionAsync` 中只验证来源并建立排序后的路径元数据列表，不解码图片、不建立 `FlowImage` 缓存。路径列表用于维持文件名排序和循环索引；内存中不会累积图片像素数据。
 
 每次 `PrepareIterationAsync` 只读取并解码当前路径。当前图片替换上一轮的当前图片；执行器不保留 LRU 或其他历史图片缓存。文件在 session 运行期间被修改时，后续 iteration 会读取修改后的内容。
 
@@ -298,6 +300,7 @@ _current = LoadCurrent(entry)
 - 图片文件扩展名不是 `.jpg`、`.png` 或 `.bmp`。
 - 文件夹没有支持的图片文件。
 - 内置 URI 不存在或没有图片。
+- 内置来源配置为 `LoadMode=Dynamic`。
 - 图片无法解码、像素尺寸无效或像素复制失败。
 - iteration 在没有已准备图片时执行。
 - `Preload` 模式超过预加载图片数量或字节上限。
@@ -308,7 +311,7 @@ _current = LoadCurrent(entry)
 
 `VisionPlugin.Register` 注册 Virtual Camera，并保留现有 Vision Camera、Stereo Camera 和 FlowImage Preview 注册。Virtual Camera 的 palette 描述明确说明它从文件或内置图片集合循环输出 `FlowImage`。
 
-新增 `VirtualCameraEditor.xaml` 和对应 content factory。UI 只负责编辑 `SourcePath`，不在 UI 层解析图片或维护 index。运行时验证仍由 executor 完成。
+新增 `VirtualCameraEditor.xaml` 和对应 content factory。UI 负责编辑 `SourcePath`、加载模式和其余加载配置，不在 UI 层解析图片或维护 index。检测到 `builtin://vision/` 来源时，UI 可以禁用 `Dynamic` 选项或将其显示为不可用；运行时验证仍由 executor 完成，不能依赖 UI 绕过 builtin + Dynamic 错误。
 
 ## 9. 测试设计
 
@@ -324,13 +327,14 @@ _current = LoadCurrent(entry)
 8. `Preload` 模式在启动时发现坏图、遵守图片数量限制和 decoded byte 限制。
 9. `Dynamic` 模式每次 iteration 重新读取图片，不保留历史解码缓存；修改文件后后续 iteration 可观察到新内容，同时验证同一项的 `FrameId` 和 `imagePath` 稳定、像素和 `CapturedAtUtc` 可以变化。
 10. `SkipErrorImages=false` 和 `true` 分别覆盖失败和跳过坏图路径的行为；`A / Bad / C` 场景输出为 `A → C → A`，FrameId 为 `0 → 2 → 0`。
-11. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
-12. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
-13. `image` 可以被现有 FlowImage Preview 节点消费。
-14. `imagePath` 可以连接兼容 `FlowDataType.String` 的输入节点。
-15. 不存在路径、非法路径类型、不支持扩展名、损坏图片和未知内置 URI 都抛出明确异常。
-16. session 启动、停止、重复 iteration 和 session 清理不会保留上一轮的图片或 index。
-17. 集成 graph 执行验证 session 级 `imageDirectory` 可被后续节点稳定读取。
+11. 内置来源固定使用 `Preload`；配置为 `Dynamic` 时启动失败且不自动切换。
+12. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
+13. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
+14. `image` 可以被现有 FlowImage Preview 节点消费。
+15. `imagePath` 可以连接兼容 `FlowDataType.String` 的输入节点。
+16. 不存在路径、非法路径类型、不支持扩展名、损坏图片和未知内置 URI 都抛出明确异常。
+17. session 启动、停止、重复 iteration 和 session 清理不会保留上一轮的图片或 index。
+18. 集成 graph 执行验证 session 级 `imageDirectory` 可被后续节点稳定读取。
 
 ## 10. 完成标准
 
