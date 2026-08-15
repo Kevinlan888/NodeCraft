@@ -258,10 +258,11 @@ _current = LoadCurrent(entry)
 9. `SkipErrorImages=false` 和 `true` 分别覆盖失败和跳过坏图路径的行为。
 10. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
 11. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
-12. `FlowImage`、`imagePath` 可以被现有 FlowImage Preview 节点消费。
-13. 不存在路径、非法路径类型、不支持扩展名、损坏图片和未知内置 URI 都抛出明确异常。
-14. session 启动、停止、重复 iteration 和 session 清理不会保留上一轮的图片或 index。
-15. 集成 graph 执行验证 session 级 `imageDirectory` 可被后续节点稳定读取。
+12. `image` 可以被现有 FlowImage Preview 节点消费。
+13. `imagePath` 可以连接兼容 `FlowDataType.String` 的输入节点。
+14. 不存在路径、非法路径类型、不支持扩展名、损坏图片和未知内置 URI 都抛出明确异常。
+15. session 启动、停止、重复 iteration 和 session 清理不会保留上一轮的图片或 index。
+16. 集成 graph 执行验证 session 级 `imageDirectory` 可被后续节点稳定读取。
 
 ## 10. 完成标准
 
