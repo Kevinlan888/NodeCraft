@@ -12,6 +12,7 @@ namespace NodeCraft.Vision.StereoCamera.Nodes
     internal sealed class StereoCameraExecutor :
         IFlowNodeExecutor,
         IFlowNodeSessionLifecycle,
+        IFlowNodeSessionInitializer,
         IFlowIterationSource
     {
         private readonly IStereoCameraDeviceFactory _deviceFactory;
@@ -99,6 +100,27 @@ namespace NodeCraft.Vision.StereoCamera.Nodes
             _currentBundle = item.Value;
         }
 
+        public Task<IReadOnlyDictionary<string, object>> InitializeSessionAsync(
+            FlowNodeSessionContext context,
+            IReadOnlyDictionary<string, object> inputs,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var session = _captureSession
+                ?? throw new InvalidOperationException("StereoCamera session has not started.");
+            if (session.ColorCalibration == null || session.DepthCalibration == null)
+            {
+                throw new InvalidOperationException("StereoCamera calibration was not available.");
+            }
+
+            IReadOnlyDictionary<string, object> outputs = new Dictionary<string, object>
+            {
+                ["colorCalibration"] = session.ColorCalibration,
+                ["depthCalibration"] = session.DepthCalibration,
+            };
+            return Task.FromResult(outputs);
+        }
+
         public Task<IReadOnlyDictionary<string, object>> ExecuteAsync(
             FlowExecutionContext context,
             WorkflowNode node,
@@ -112,8 +134,6 @@ namespace NodeCraft.Vision.StereoCamera.Nodes
             {
                 ["colorImage"] = bundle.ColorImage,
                 ["depthImage"] = bundle.DepthImage,
-                ["colorCalibration"] = bundle.ColorCalibration,
-                ["depthCalibration"] = bundle.DepthCalibration,
             };
             return Task.FromResult(outputs);
         }

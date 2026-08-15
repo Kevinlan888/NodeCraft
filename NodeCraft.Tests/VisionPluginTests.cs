@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -9,6 +10,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using NodeCraft.Flow;
 using NodeCraft.Vision.Nodes;
 using NodeCraft.Vision.Plugin;
+using NodeCraft.Vision.StereoCamera.Camera;
 using NodeCraft.Vision.StereoCamera.Nodes;
 
 internal static partial class Program
@@ -32,6 +34,9 @@ internal static partial class Program
             var outputTypes = camera.Definition.OutputPorts.Select(port => port.DataType).ToArray();
             var stereoOutputIds = stereo.Definition.OutputPorts.Select(port => port.Id).ToArray();
             var stereoOutputTypes = stereo.Definition.OutputPorts.Select(port => port.DataType).ToArray();
+            var stereoOutputAvailability = stereo.Definition.OutputPorts
+                .Select(port => port.Availability)
+                .ToArray();
             var previewInput = preview.Definition.InputPorts.Single(port => port.Id == "image");
             var previewOutput = preview.Definition.OutputPorts.Single(port => port.Id == "image");
             var registry = new FlowNodeRegistry();
@@ -62,12 +67,71 @@ internal static partial class Program
                     FlowDataType.CameraCalibration,
                     FlowDataType.CameraCalibration,
                 })
+                && stereoOutputAvailability.SequenceEqual(new[]
+                {
+                    FlowPortAvailability.Iteration,
+                    FlowPortAvailability.Iteration,
+                    FlowPortAvailability.Session,
+                    FlowPortAvailability.Session,
+                })
                 && camera.Definition.TypeKey != stereo.Definition.TypeKey
                 && previewInput.DataType == FlowDataType.Image
                 && previewOutput.DataType == FlowDataType.Image
                 && previewInput.IsRequired
                 && registry.Contains(VisionCameraNodeModel.FlowNodeTypeKey)
                 && registry.Contains(FlowImagePreviewNodeModel.FlowNodeTypeKey);
+        });
+
+        await RunAsync("Stereo camera initializer exposes stable calibration outputs", async () =>
+        {
+            var colorCalibration = CreateStereoTestCalibration(isLeftReference: false);
+            var depthCalibration = CreateStereoTestCalibration(isLeftReference: true);
+            var device = new ScriptedStereoDevice(colorCalibration, depthCalibration);
+            device.Frames.Enqueue(CreateStereoFrame(8));
+            var executor = new StereoCameraExecutor(
+                new ScriptedStereoDeviceFactory(device),
+                new ScriptedStereoRuntimeScopeFactory(),
+                new ScriptedStereoClock(),
+                new StereoCameraCaptureOptions());
+            var definition = new FlowNodeDefinition
+            {
+                TypeKey = StereoCameraNodeModel.FlowNodeTypeKey,
+            };
+            var node = new WorkflowNode
+            {
+                Id = "stereo",
+                TypeKey = definition.TypeKey,
+                Inputs = { ["ipAddress"] = "192.168.1.20" },
+            };
+            var context = new FlowNodeSessionContext(
+                node,
+                definition,
+                NullLogger.Instance);
+
+            await executor.StartSessionAsync(context, CancellationToken.None);
+            await device.FrameReadEntered.Task;
+            var initialized = await executor.InitializeSessionAsync(
+                context,
+                new Dictionary<string, object>(),
+                CancellationToken.None);
+            var keysBeforeIteration = initialized.Keys.OrderBy(key => key).ToArray();
+            var sameColor = ReferenceEquals(initialized["colorCalibration"], colorCalibration);
+            var sameDepth = ReferenceEquals(initialized["depthCalibration"], depthCalibration);
+
+            device.ReleaseFrame();
+            await executor.PrepareIterationAsync(context, CancellationToken.None);
+            var outputs = await executor.ExecuteAsync(
+                new FlowExecutionContext(),
+                node,
+                definition,
+                new Dictionary<string, object>(),
+                CancellationToken.None);
+            await executor.StopSessionAsync(context, CancellationToken.None);
+
+            return keysBeforeIteration.SequenceEqual(new[] { "colorCalibration", "depthCalibration" })
+                && sameColor
+                && sameDepth
+                && outputs.Keys.OrderBy(key => key).SequenceEqual(new[] { "colorImage", "depthImage" });
         });
 
         await RunAsync("Vision camera model persists only its IP address", async () =>
@@ -222,6 +286,144 @@ internal static partial class Program
                 && ReferenceEquals(node.CurrentImage, image)
                 && preview.ExecutionResultHandler != null;
         });
+    }
+
+    private static CameraCalibration CreateStereoTestCalibration(bool isLeftReference)
+    {
+        return new CameraCalibration(
+            2,
+            1,
+            new double[9],
+            new double[12],
+            new double[16],
+            isLeftReference);
+    }
+
+    private static RawStereoFrame CreateStereoFrame(ulong frameId)
+    {
+        return new RawStereoFrame(
+            frameId,
+            frameId * 10,
+            new RawCameraImage(
+                2,
+                1,
+                2,
+                FlowPixelFormat.Mono8,
+                FlowImageKind.Color,
+                new byte[] { 1, 2 }),
+            new RawCameraImage(
+                2,
+                1,
+                2,
+                FlowPixelFormat.Mono8,
+                FlowImageKind.Depth,
+                new byte[] { 3, 4 }));
+    }
+
+    private sealed class ScriptedStereoDeviceFactory : IStereoCameraDeviceFactory
+    {
+        private readonly ScriptedStereoDevice _device;
+
+        public ScriptedStereoDeviceFactory(ScriptedStereoDevice device)
+        {
+            _device = device;
+        }
+
+        public int Discover() => 1;
+
+        public IStereoCameraDevice OpenByIp(string ipAddress) => _device;
+    }
+
+    private sealed class ScriptedStereoRuntimeScopeFactory : ICameraRuntimeScopeFactory
+    {
+        public IDisposable Acquire() => new Scope();
+
+        private sealed class Scope : IDisposable
+        {
+            public void Dispose()
+            {
+            }
+        }
+    }
+
+    private sealed class ScriptedStereoClock : IMonotonicClock
+    {
+        private readonly DateTime _origin = DateTime.UtcNow;
+
+        public TimeSpan Now => DateTime.UtcNow - _origin;
+    }
+
+    private sealed class ScriptedStereoDevice : IStereoCameraDevice
+    {
+        private readonly CameraCalibration _colorCalibration;
+        private readonly CameraCalibration _depthCalibration;
+        private Action<Exception> _disconnectCallback;
+
+        public ScriptedStereoDevice(
+            CameraCalibration colorCalibration,
+            CameraCalibration depthCalibration)
+        {
+            _colorCalibration = colorCalibration;
+            _depthCalibration = depthCalibration;
+        }
+
+        public ConcurrentQueue<RawStereoFrame> Frames { get; } = new ConcurrentQueue<RawStereoFrame>();
+
+        public TaskCompletionSource<bool> FrameReadEntered { get; }
+            = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private TaskCompletionSource<bool> ReleaseFrameSignal { get; }
+            = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Connect()
+        {
+        }
+
+        public void RegisterDisconnectCallback(Action<Exception> callback)
+        {
+            _disconnectCallback = callback;
+        }
+
+        public void UnregisterDisconnectCallback()
+        {
+            _disconnectCallback = null;
+        }
+
+        public CameraCalibration ReadCalibration(CameraStream stream, bool isLeftReference)
+        {
+            return stream == CameraStream.Color
+                ? _colorCalibration
+                : _depthCalibration;
+        }
+
+        public void StartGrabbing()
+        {
+        }
+
+        public RawStereoFrame TryGetFrame(uint timeoutMilliseconds)
+        {
+            FrameReadEntered.TrySetResult(true);
+            ReleaseFrameSignal.Task.GetAwaiter().GetResult();
+            Frames.TryDequeue(out var frame);
+            return frame;
+        }
+
+        public void StopGrabbing()
+        {
+        }
+
+        public void Disconnect()
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
+        public void ReleaseFrame()
+        {
+            ReleaseFrameSignal.TrySetResult(true);
+        }
     }
 
 }

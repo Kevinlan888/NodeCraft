@@ -296,9 +296,7 @@ namespace NodeCraft.Vision.StereoCamera.Camera
                     var bundle = new FrameBundle(
                         sequence,
                         colorImage,
-                        depthImage,
-                        _colorCalibration,
-                        _depthCalibration);
+                        depthImage);
                     _mailbox.Publish(sequence, bundle);
                     lastCompleteFrameAt = now;
                 }

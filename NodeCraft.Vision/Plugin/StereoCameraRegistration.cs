@@ -24,10 +24,26 @@ namespace NodeCraft.Vision.Plugin
                     Category = "Vision",
                     OutputPorts =
                     {
-                        CreateOutputPort("colorImage", "Color Image", FlowDataType.Image),
-                        CreateOutputPort("depthImage", "Depth Image", FlowDataType.Image),
-                        CreateOutputPort("colorCalibration", "Color Calibration", FlowDataType.CameraCalibration),
-                        CreateOutputPort("depthCalibration", "Depth Calibration", FlowDataType.CameraCalibration),
+                        CreateOutputPort(
+                            "colorImage",
+                            "Color Image",
+                            FlowDataType.Image,
+                            FlowPortAvailability.Iteration),
+                        CreateOutputPort(
+                            "depthImage",
+                            "Depth Image",
+                            FlowDataType.Image,
+                            FlowPortAvailability.Iteration),
+                        CreateOutputPort(
+                            "colorCalibration",
+                            "Color Calibration",
+                            FlowDataType.CameraCalibration,
+                            FlowPortAvailability.Session),
+                        CreateOutputPort(
+                            "depthCalibration",
+                            "Depth Calibration",
+                            FlowDataType.CameraCalibration,
+                            FlowPortAvailability.Session),
                     },
                 },
                 () => new StereoCameraExecutor(
@@ -48,7 +64,8 @@ namespace NodeCraft.Vision.Plugin
         private static FlowPortDefinition CreateOutputPort(
             string id,
             string displayName,
-            FlowDataType dataType)
+            FlowDataType dataType,
+            FlowPortAvailability availability)
         {
             return new FlowPortDefinition
             {
@@ -56,6 +73,7 @@ namespace NodeCraft.Vision.Plugin
                 DisplayName = displayName,
                 IOType = EIOType.Output,
                 DataType = dataType,
+                Availability = availability,
                 PreferredDirection = EPortDirection.Right,
             };
         }
