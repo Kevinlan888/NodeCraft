@@ -115,7 +115,15 @@ builtin://vision/sample-set
 本地来源支持：
 
 - 单个 `.jpg`、`.png` 或 `.bmp` 文件；形成只有一个元素的序列。
-- 文件夹；只枚举该文件夹的直接子文件，扩展名比较不区分大小写，按文件名使用 `OrdinalIgnoreCase` 稳定排序。
+- 文件夹；只枚举该文件夹的直接子文件，扩展名比较不区分大小写，按以下比较器排序：
+
+```csharp
+files
+    .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+    .ThenBy(path => Path.GetFileName(path), StringComparer.Ordinal)
+```
+
+第二个 `Ordinal` tie-break 用于文件名仅大小写不同的情况，不能依赖文件系统枚举顺序。
 
 文件来源先规范化为绝对路径。示例：
 
@@ -214,9 +222,34 @@ builtin://vision/sample-set
 `Preload` 模式在 `StartSessionAsync` 中依次解码整个图片序列，并缓存所有有效的 `FlowImage`。缓存必须同时满足：
 
 - 成功解码的图片数量不超过 `MaxPreloadedImages`。
-- 所有解码缓冲区的总字节数不超过 `MaxPreloadedBytes`。
+- 所有最终存入 `FlowImage` 的托管像素缓冲区的实际字节数总和不超过 `MaxPreloadedBytes`；不计算 JPEG/PNG/BMP 的压缩源文件大小。
 
-超过任一限制时，session 启动失败，不静默截断图片序列。解码失败时，如果 `SkipErrorImages=false`，session 启动失败；如果为 `true`，该图片被排除后继续加载。所有图片都被跳过时，session 启动失败。
+`Preload` 必须满足 `MaxPreloadedImages > 0` 和 `MaxPreloadedBytes > 0`。实现累计像素缓冲区时使用 checked 语义，例如：
+
+```csharp
+checked
+{
+    totalBytes += pixelBuffer.LongLength;
+}
+```
+
+超过任一限制时，session 启动失败，不静默截断图片序列。解码失败时，如果 `SkipErrorImages=false`，session 启动失败；如果为 `true`，该图片被排除后继续加载。所有图片都被跳过时，session 启动失败。`Dynamic` 模式不使用这两个配置值，也不因它们为非正数而失败。
+
+两种模式的坏图过滤都必须使用同一个窄异常边界。图片加载器在明确的文件读取、BitmapDecoder 解码和像素复制调用中，把预期的图片读取/解码失败包装为 `VirtualCameraImageLoadException`，其中包含来源路径和原始异常。`IsSkippableImageLoadError(exception)` 只对该专用异常返回 `true`；它不能按 `_skipErrorImages` 直接吞掉任意 `Exception`。
+
+预加载和动态加载都只能使用以下形式的过滤 catch：
+
+```csharp
+catch (Exception ex) when (
+    _skipErrorImages &&
+    IsSkippableImageLoadError(ex))
+{
+    // Preload: 排除当前 entry，继续构建序列。
+    // Dynamic: 按游标规则删除当前候选项，继续尝试。
+}
+```
+
+文件不存在、文件暂时不可读、图片数据损坏、BitmapDecoder 失败和像素复制失败可以被包装为可跳过的图片加载错误。`OperationCanceledException`、`OutOfMemoryException` 和程序逻辑产生的 `InvalidOperationException` 不得被包装或吞掉，必须继续向上传播。
 
 ### 6.2 Dynamic 模式（仅本地来源）
 
@@ -251,7 +284,9 @@ while (_entries.Count > 0)
         _index = nextIndex
         return
     }
-    catch when (_skipErrorImages)
+    catch (Exception ex) when (
+        _skipErrorImages &&
+        IsSkippableImageLoadError(ex))
     {
         _entries.RemoveAt(nextIndex)
 
@@ -321,12 +356,12 @@ _current = LoadCurrent(entry)
 2. 节点模型的五个配置属性通过 `<Properties>` 保存并可从 `.flow.xml` round-trip 恢复，旧 XML 缺失属性时使用默认值。
 3. `GraphModelWorkflowAdapter` 将五个属性按约定 key 和类型写入 `WorkflowNode.Inputs`。
 4. 单个本地 JPG/PNG/BMP 文件形成单元素序列，并重复输出 index 0。
-5. 本地文件夹按文件名排序，并在最后一张后回到第一张。
+5. 本地文件夹按 `OrdinalIgnoreCase` 后接 `Ordinal` tie-break 排序，并在最后一张后回到第一张。
 6. 文件夹忽略不支持扩展名，空文件夹启动失败。
 7. 第一次 iteration 选择序列项 0，不跳过第一张；停止和重新启动后同样从 0 开始。
-8. `Preload` 模式在启动时发现坏图、遵守图片数量限制和 decoded byte 限制。
+8. `Preload` 模式在启动时发现坏图、校验两个限制大于 0，并按最终托管像素 buffer 的实际字节数和 checked 累计遵守数量/字节限制，而不是按压缩源文件大小计算。
 9. `Dynamic` 模式每次 iteration 重新读取图片，不保留历史解码缓存；修改文件后后续 iteration 可观察到新内容，同时验证同一项的 `FrameId` 和 `imagePath` 稳定、像素和 `CapturedAtUtc` 可以变化。
-10. `SkipErrorImages=false` 和 `true` 分别覆盖失败和跳过坏图路径的行为；`A / Bad / C` 场景输出为 `A → C → A`，FrameId 为 `0 → 2 → 0`。
+10. `SkipErrorImages=false` 和 `true` 分别覆盖失败和跳过坏图路径的行为；`A / Bad / C` 场景输出为 `A → C → A`，FrameId 为 `0 → 2 → 0`；`OperationCanceledException`、`OutOfMemoryException` 和逻辑异常不会被跳过。
 11. 内置来源固定使用 `Preload`；配置为 `Dynamic` 时启动失败且不自动切换。
 12. 内置 sample-set 及单张内置图片输出稳定 URI、稳定目录值和稳定顺序。
 13. `Gray8` 图片输出 `Mono8`，彩色和其他可解码图片输出 `Bgr24`。
