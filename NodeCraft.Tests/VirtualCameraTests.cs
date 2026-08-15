@@ -2,7 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using System.Xml.Linq;
 using NodeCraft.Flow;
 using NodeCraft.Vision.Nodes;
@@ -199,6 +203,94 @@ internal static partial class Program
             }
             return allRejected && emptyFolderRejected && invalidPathWrapped;
         });
+
+        await RunAsync("virtual camera decodes gray8 as mono8 and color as bgr24", () =>
+            Task.FromResult(RunOnSta(() =>
+            {
+                using var fixture = new TemporaryVirtualCameraFiles();
+                var monoPath = fixture.WriteBitmap(
+                    "mono.png", PixelFormats.Gray8, 2, 1, new byte[] { 9, 10 }, 2);
+                var colorPath = fixture.WriteBitmap(
+                    "color.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
+                var mono = new VirtualCameraImageLoader().Load(monoPath, 4);
+                var color = new VirtualCameraImageLoader().Load(colorPath, 5);
+                return mono.PixelFormat == FlowPixelFormat.Mono8
+                    && mono.Stride == 2
+                    && mono.Buffer.Span.SequenceEqual(new byte[] { 9, 10 })
+                    && mono.FrameId == 4
+                    && mono.DeviceTimestamp == 0
+                    && color.PixelFormat == FlowPixelFormat.Bgr24
+                    && color.Stride == 3
+                    && color.Buffer.Span.SequenceEqual(new byte[] { 1, 2, 3 })
+                    && color.FrameId == 5;
+            })));
+
+        await RunAsync("virtual camera wraps only expected image load failures", async () =>
+        {
+            using var fixture = new TemporaryVirtualCameraFiles();
+            var missingPath = Path.Combine(fixture.DirectoryPath, "missing.png");
+            var corruptPath = fixture.WriteImage("corrupt.png", new byte[] { 1, 2, 3 });
+            var loader = new VirtualCameraImageLoader();
+            try
+            {
+                loader.Load(missingPath, 0);
+                return false;
+            }
+            catch (VirtualCameraImageLoadException exception)
+            {
+                if (exception.Path != missingPath
+                    || !exception.Message.Contains("VirtualCamera", StringComparison.Ordinal)
+                    || !VirtualCameraImageLoader.IsSkippableImageLoadError(exception)
+                    || VirtualCameraImageLoader.IsSkippableImageLoadError(new InvalidOperationException()))
+                {
+                    return false;
+                }
+            }
+
+            try
+            {
+                loader.Load(corruptPath, 1);
+                return false;
+            }
+            catch (VirtualCameraImageLoadException exception)
+            {
+                return exception.Path == corruptPath
+                    && exception.Message.Contains(corruptPath, StringComparison.Ordinal);
+            }
+        });
+
+        await RunAsync("virtual camera decodes JPEG and BMP on a worker and releases file handles", async () =>
+        {
+            using var fixture = new TemporaryVirtualCameraFiles();
+            var paths = await RunOnStaValueAsync(() =>
+            {
+                var jpg = fixture.WriteBitmap(
+                    "sample.jpg", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
+                var bmp = fixture.WriteBitmap(
+                    "sample.bmp", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
+                return (jpg, bmp);
+            });
+            var workerApartment = ApartmentState.Unknown;
+            var decoded = await Task.Run(() =>
+            {
+                workerApartment = Thread.CurrentThread.GetApartmentState();
+                var loader = new VirtualCameraImageLoader();
+                return (loader.Load(paths.jpg, 6), loader.Load(paths.bmp, 7));
+            });
+            var movedJpg = paths.jpg + ".moved";
+            var movedBmp = paths.bmp + ".moved";
+            File.Move(paths.jpg, movedJpg);
+            File.Move(paths.bmp, movedBmp);
+            return decoded.Item1.PixelFormat == FlowPixelFormat.Bgr24
+                && decoded.Item2.PixelFormat == FlowPixelFormat.Bgr24
+                && decoded.Item1.Width == 1
+                && decoded.Item2.Width == 1
+                && decoded.Item1.FrameId == 6
+                && decoded.Item2.FrameId == 7
+                && workerApartment == ApartmentState.MTA
+                && File.Exists(movedJpg)
+                && File.Exists(movedBmp);
+        });
     }
 
     private static bool ThrowsVirtualCamera<TException>(string sourcePath, Action action)
@@ -236,6 +328,40 @@ internal static partial class Program
             return path;
         }
 
+        internal string WriteBitmap(
+            string fileName,
+            PixelFormat pixelFormat,
+            int width,
+            int height,
+            byte[] pixels,
+            int stride)
+        {
+            var path = Path.Combine(DirectoryPath, fileName);
+            var bitmap = BitmapSource.Create(
+                width,
+                height,
+                96,
+                96,
+                pixelFormat,
+                null,
+                pixels,
+                stride);
+            BitmapEncoder encoder = Path.GetExtension(path).ToLowerInvariant() switch
+            {
+                ".jpg" => new JpegBitmapEncoder(),
+                ".png" => new PngBitmapEncoder(),
+                ".bmp" => new BmpBitmapEncoder(),
+                _ => throw new InvalidOperationException("Test bitmap extension is unsupported."),
+            };
+            encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using (var stream = File.Open(path, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                encoder.Save(stream);
+            }
+
+            return path;
+        }
+
         public void Dispose()
         {
             if (Directory.Exists(DirectoryPath))
@@ -243,5 +369,44 @@ internal static partial class Program
                 Directory.Delete(DirectoryPath, recursive: true);
             }
         }
+    }
+
+    private static Task<T> RunOnStaValueAsync<T>(Func<T> action)
+    {
+        return RunOnStaAsync(() => Task.FromResult(action()));
+    }
+
+    private static Task<T> RunOnStaAsync<T>(Func<Task<T>> action)
+    {
+        var completion = new TaskCompletionSource<T>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            var dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(dispatcher));
+            dispatcher.BeginInvoke(
+                DispatcherPriority.Normal,
+                new Action(async () =>
+                {
+                    try
+                    {
+                        completion.TrySetResult(await action());
+                    }
+                    catch (Exception exception)
+                    {
+                        completion.TrySetException(exception);
+                    }
+                    finally
+                    {
+                        dispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
+                    }
+                }));
+            Dispatcher.Run();
+        });
+        thread.IsBackground = true;
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return completion.Task;
     }
 }
