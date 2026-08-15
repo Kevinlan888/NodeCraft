@@ -50,6 +50,7 @@ namespace NodeCraft.Vision.Plugin
             context.Nodes.Register(StereoCameraRegistration.Create(
                 typeof(VisionPlugin).Assembly.Location,
                 context.Logger));
+            context.Nodes.Register(CreateVirtualCameraRegistration());
             context.Nodes.Register(CreatePreviewRegistration());
             context.Logger.LogInformation("Registered Vision 2D and technical MVSDK 3D visual nodes.");
         }
@@ -73,7 +74,11 @@ namespace NodeCraft.Vision.Plugin
                     Category = "Vision",
                     OutputPorts =
                     {
-                        CreateOutputPort("image", "Image", FlowDataType.Image),
+                        CreateOutputPort(
+                            "image",
+                            "Image",
+                            FlowDataType.Image,
+                            FlowPortAvailability.Iteration),
                     },
                 },
                 () => new VisionCameraExecutor(
@@ -88,6 +93,43 @@ namespace NodeCraft.Vision.Plugin
                 PaletteDisplayName = "Vision Camera",
                 PaletteDescription = "Streams complete images from an IMV camera.",
                 ContentFactory = VisionCameraEditor.CreateContent,
+            };
+        }
+
+        private static FlowNodeRegistration CreateVirtualCameraRegistration()
+        {
+            return new FlowNodeRegistration(
+                new FlowNodeDefinition
+                {
+                    TypeKey = VirtualCameraNodeModel.FlowNodeTypeKey,
+                    DisplayName = "Virtual Camera",
+                    Category = "Vision",
+                    OutputPorts =
+                    {
+                        CreateOutputPort(
+                            "image",
+                            "Image",
+                            FlowDataType.Image,
+                            FlowPortAvailability.Iteration),
+                        CreateOutputPort(
+                            "imagePath",
+                            "Image Path",
+                            FlowDataType.String,
+                            FlowPortAvailability.Iteration),
+                        CreateOutputPort(
+                            "imageDirectory",
+                            "Image Directory",
+                            FlowDataType.String,
+                            FlowPortAvailability.Session),
+                    },
+                },
+                () => new VirtualCameraExecutor())
+            {
+                NodeModelType = typeof(VirtualCameraNodeModel),
+                NodeFactory = () => new VirtualCameraNodeModel(),
+                PaletteDisplayName = "Virtual Camera",
+                PaletteDescription = "Loops local or builtin images as FlowImage values.",
+                ContentFactory = VirtualCameraEditor.CreateContent,
             };
         }
 
@@ -154,7 +196,8 @@ namespace NodeCraft.Vision.Plugin
         private static FlowPortDefinition CreateOutputPort(
             string id,
             string displayName,
-            FlowDataType dataType)
+            FlowDataType dataType,
+            FlowPortAvailability availability)
         {
             return new FlowPortDefinition
             {
@@ -162,6 +205,7 @@ namespace NodeCraft.Vision.Plugin
                 DisplayName = displayName,
                 IOType = EIOType.Output,
                 DataType = dataType,
+                Availability = availability,
                 PreferredDirection = EPortDirection.Right,
             };
         }

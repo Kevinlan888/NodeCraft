@@ -2,8 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -11,6 +14,8 @@ using System.Xml.Linq;
 using Microsoft.Extensions.Logging.Abstractions;
 using NodeCraft.Flow;
 using NodeCraft.Vision.Nodes;
+using NodeCraft.Vision.Plugin;
+using NodeCraft.Vision.Views;
 
 internal static partial class Program
 {
@@ -1046,6 +1051,69 @@ internal static partial class Program
 
             return allPropagated;
         });
+
+        await RunAsync("virtual camera registration exposes image, path and session directory", async () =>
+        {
+            var plugin = new VisionPlugin();
+            var context = new PluginRegistrationContext(NullLogger.Instance, new Version(1, 0));
+            plugin.Register(context);
+            var registration = context.Registrations.Single(item =>
+                item.Definition.TypeKey == VirtualCameraNodeModel.FlowNodeTypeKey);
+            var ports = registration.Definition.OutputPorts;
+            return ports.Select(port => port.Id).SequenceEqual(
+                    new[] { "image", "imagePath", "imageDirectory" })
+                && ports.Select(port => port.DataType).SequenceEqual(
+                    new[] { FlowDataType.Image, FlowDataType.String, FlowDataType.String })
+                && ports.Select(port => port.Availability).SequenceEqual(
+                    new[]
+                    {
+                        FlowPortAvailability.Iteration,
+                        FlowPortAvailability.Iteration,
+                        FlowPortAvailability.Session,
+                    })
+                && registration.NodeModelType == typeof(VirtualCameraNodeModel)
+                && registration.NodeFactory != null
+                && registration.ExecutorFactory != null
+                && registration.ContentFactory != null
+                && registration.PaletteDescription.Contains("FlowImage", StringComparison.Ordinal);
+        });
+
+        await RunAsync("virtual camera editor mutates all properties and notifies graph changes", () =>
+            Task.FromResult(RunOnSta(() =>
+            {
+                var canvas = new FlowCanvas();
+                var node = new VirtualCameraNodeModel();
+                var graphChanges = 0;
+                canvas.GraphChanged += (_, __) => graphChanges++;
+                var content = VirtualCameraEditor.CreateContent(canvas, node);
+                var initializedWithoutChange = graphChanges == 0;
+
+                var source = GetPrivateField<TextBox>(content, "_sourcePathEditor");
+                var mode = GetPrivateField<ComboBox>(content, "_loadModeEditor");
+                var maxImages = GetPrivateField<TextBox>(content, "_maxPreloadedImagesEditor");
+                var maxBytes = GetPrivateField<TextBox>(content, "_maxPreloadedBytesEditor");
+                var skipErrors = GetPrivateField<CheckBox>(content, "_skipErrorImagesEditor");
+
+                source.Text = "C:\\frames";
+                mode.SelectedItem = VirtualCameraLoadMode.Dynamic;
+                maxImages.Text = "7";
+                maxBytes.Text = "123456";
+                skipErrors.IsChecked = true;
+
+                var changesAfterValidInput = graphChanges;
+                maxImages.Text = "not-an-int";
+                maxBytes.Text = "not-a-long";
+
+                return content is FrameworkElement
+                    && initializedWithoutChange
+                    && node.SourcePath == "C:\\frames"
+                    && node.LoadMode == VirtualCameraLoadMode.Dynamic
+                    && node.MaxPreloadedImages == 7
+                    && node.MaxPreloadedBytes == 123456L
+                    && node.SkipErrorImages
+                    && changesAfterValidInput == 5
+                    && graphChanges == changesAfterValidInput;
+            })));
     }
 
     private static bool ThrowsVirtualCamera<TException>(string sourcePath, Action action)
@@ -1080,6 +1148,16 @@ internal static partial class Program
                 && (string.IsNullOrWhiteSpace(sourcePath)
                     || exception.Message.Contains(sourcePath, StringComparison.Ordinal));
         }
+    }
+
+    private static T GetPrivateField<T>(object instance, string fieldName)
+        where T : class
+    {
+        return instance.GetType()
+            .GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(instance) as T
+            ?? throw new InvalidOperationException(
+                $"Missing editor field '{fieldName}'.");
     }
 
     private static FlowNodeSessionContext CreateVirtualCameraContext(
