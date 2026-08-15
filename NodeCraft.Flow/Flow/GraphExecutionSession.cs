@@ -153,6 +153,8 @@ namespace NodeCraft.Flow
 
         internal IReadOnlyDictionary<string, FlowNodeSessionContext> SessionContexts => _sessionContexts;
 
+        internal IReadOnlySessionValueStore SessionValues => _readOnlySessionValues;
+
         internal CancellationToken StopToken => _stopCancellation.Token;
 
         private async Task StartCoreAsync(
@@ -165,52 +167,46 @@ namespace NodeCraft.Flow
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var executor = _executors[node.Id];
-                    if (!(executor is IFlowNodeSessionLifecycle lifecycle))
-                    {
-                        continue;
-                    }
-
                     var context = _sessionContexts[node.Id];
-                    await lifecycle.StartSessionAsync(context, cancellationToken)
-                        .ConfigureAwait(false);
 
-                    var cleanupStartedLifecycle = false;
-                    lock (_stateGate)
+                    if (executor is IFlowNodeSessionLifecycle lifecycle)
                     {
-                        if (_state == GraphExecutionSessionState.Starting
-                            && !cancellationToken.IsCancellationRequested)
-                        {
-                            _startedLifecycles.Add(new StartedLifecycle(lifecycle, context));
-                        }
-                        else
-                        {
-                            cleanupStartedLifecycle = true;
-                        }
+                        await lifecycle.StartSessionAsync(context, cancellationToken)
+                            .ConfigureAwait(false);
+                        await AddStartedLifecycleOrCleanupIfStoppingAsync(
+                                lifecycle,
+                                context,
+                                cancellationToken)
+                            .ConfigureAwait(false);
                     }
 
-                    if (cleanupStartedLifecycle)
+                    var inputs = ResolveSessionInputs(
+                        node,
+                        context.Definition,
+                        _readOnlySessionValues);
+                    EnsureRequiredSessionInputs(node, context.Definition, inputs);
+
+                    if (executor is IFlowNodeSessionInitializer initializer)
                     {
-                        try
-                        {
-                            await lifecycle.StopSessionAsync(context, CancellationToken.None)
-                                .ConfigureAwait(false);
-                        }
-                        catch (Exception exception)
-                        {
-                            lock (_stateGate)
-                            {
-                                _startupCleanupErrors.Add(exception);
-                            }
+                        var outputs = await initializer.InitializeSessionAsync(
+                                context,
+                                inputs,
+                                cancellationToken)
+                            .ConfigureAwait(false);
 
-                            _logger.LogError(
-                                exception,
-                                "Graph session cleanup failed for node '{NodeId}'.",
-                                context.Node.Id);
-                            throw;
+                        FlowRuntimeValueValidator.ValidateSessionOutputs(
+                            node,
+                            context.Definition,
+                            outputs);
+                        foreach (var pair in outputs)
+                        {
+                            _sessionValueStore.SetPortValue(
+                                node.Id,
+                                FlowRuntimeValueValidator.FindOutputSlot(
+                                    context.Definition,
+                                    pair.Key),
+                                pair.Value);
                         }
-
-                        cancellationToken.ThrowIfCancellationRequested();
-                        throw new OperationCanceledException(cancellationToken);
                     }
                 }
 
@@ -222,6 +218,7 @@ namespace NodeCraft.Flow
                         throw new OperationCanceledException(cancellationToken);
                     }
 
+                    _sessionValueStore.Seal();
                     _state = GraphExecutionSessionState.Running;
                 }
             }
@@ -283,6 +280,53 @@ namespace NodeCraft.Flow
             await StopStartedLifecyclesCoreAsync().ConfigureAwait(false);
         }
 
+        private async Task AddStartedLifecycleOrCleanupIfStoppingAsync(
+            IFlowNodeSessionLifecycle lifecycle,
+            FlowNodeSessionContext context,
+            CancellationToken cancellationToken)
+        {
+            var cleanupStartedLifecycle = false;
+            lock (_stateGate)
+            {
+                if (_state == GraphExecutionSessionState.Starting
+                    && !cancellationToken.IsCancellationRequested)
+                {
+                    _startedLifecycles.Add(new StartedLifecycle(lifecycle, context));
+                }
+                else
+                {
+                    cleanupStartedLifecycle = true;
+                }
+            }
+
+            if (!cleanupStartedLifecycle)
+            {
+                return;
+            }
+
+            try
+            {
+                await lifecycle.StopSessionAsync(context, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                lock (_stateGate)
+                {
+                    _startupCleanupErrors.Add(exception);
+                }
+
+                _logger.LogError(
+                    exception,
+                    "Graph session cleanup failed for node '{NodeId}'.",
+                    context.Node.Id);
+                throw;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new OperationCanceledException(cancellationToken);
+        }
+
         private async Task StopStartedLifecyclesCoreAsync()
         {
             await _iterationGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
@@ -315,6 +359,8 @@ namespace NodeCraft.Flow
                     }
                 }
 
+                _sessionValueStore.Clear();
+
                 lock (_stateGate)
                 {
                     _state = GraphExecutionSessionState.Stopped;
@@ -328,6 +374,74 @@ namespace NodeCraft.Flow
             finally
             {
                 _iterationGate.Release();
+            }
+        }
+
+        private static Dictionary<string, object> ResolveSessionInputs(
+            WorkflowNode node,
+            FlowNodeDefinition definition,
+            IReadOnlySessionValueStore sessionValues)
+        {
+            var inputs = new Dictionary<string, object>();
+
+            foreach (var inputPort in definition.InputPorts)
+            {
+                if (inputPort.IsControlPort
+                    || inputPort.Availability != FlowPortAvailability.Session)
+                {
+                    continue;
+                }
+
+                if (!node.Inputs.TryGetValue(inputPort.Id, out var configured))
+                {
+                    if (inputPort.DefaultValue != null)
+                    {
+                        inputs[inputPort.Id] = inputPort.DefaultValue;
+                    }
+
+                    continue;
+                }
+
+                if (configured is LinkRef linkRef)
+                {
+                    if (sessionValues.TryGetPortValue(
+                            linkRef.SourceNodeId,
+                            linkRef.SourceSlot,
+                            out var sessionValue))
+                    {
+                        inputs[inputPort.Id] = sessionValue;
+                    }
+
+                    // A configured LinkRef with a missing source value does not fall back to DefaultValue.
+                    continue;
+                }
+
+                inputs[inputPort.Id] = configured;
+            }
+
+            return inputs;
+        }
+
+        private static void EnsureRequiredSessionInputs(
+            WorkflowNode node,
+            FlowNodeDefinition definition,
+            IReadOnlyDictionary<string, object> inputs)
+        {
+            foreach (var inputPort in definition.InputPorts)
+            {
+                if (inputPort.IsControlPort
+                    || !inputPort.IsRequired
+                    || inputPort.Availability != FlowPortAvailability.Session)
+                {
+                    continue;
+                }
+
+                if (!inputs.ContainsKey(inputPort.Id))
+                {
+                    throw new InvalidOperationException(
+                        $"SessionInputUnavailable: Node '{node.Id}' input '{inputPort.Id}' "
+                        + "was not available during session initialization.");
+                }
             }
         }
 

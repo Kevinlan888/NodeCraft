@@ -199,9 +199,9 @@ namespace NodeCraft.Flow
                         continue;
                     }
 
-                    indegree[node.Id]++;
                     if (!dependents[linkRef.SourceNodeId].Contains(node.Id))
                     {
+                        indegree[node.Id]++;
                         dependents[linkRef.SourceNodeId].Add(node.Id);
                     }
                 }
