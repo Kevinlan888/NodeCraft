@@ -280,8 +280,10 @@ internal static partial class Program
     {
         var registry = new FlowNodeRegistry();
         var executor = new IterationTestExecutor(blockExecution, failExecution);
+        var definition = CreateDefinition("test.iteration.source");
+        definition.OutputPorts[0].DataType = FlowDataType.Number;
         registry.Register(new FlowNodeRegistration(
-            CreateDefinition("test.iteration.source"),
+            definition,
             () => executor));
 
         var workflow = new WorkflowDocument();
@@ -299,8 +301,10 @@ internal static partial class Program
     {
         var registry = new FlowNodeRegistry();
         var executor = new BlockedSourceExecutor();
+        var definition = CreateDefinition("test.iteration.blocked");
+        definition.OutputPorts[0].DataType = FlowDataType.Number;
         registry.Register(new FlowNodeRegistration(
-            CreateDefinition("test.iteration.blocked"),
+            definition,
             () => executor));
 
         var workflow = new WorkflowDocument();

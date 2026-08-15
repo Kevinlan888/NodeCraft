@@ -95,6 +95,20 @@ namespace NodeCraft.Flow
                             PortId = pair.Key,
                         });
                     }
+
+                    if (!targetPort.IsControlPort
+                        && targetPort.Availability == FlowPortAvailability.Session
+                        && sourcePort.Availability != FlowPortAvailability.Session)
+                    {
+                        result.Errors.Add(new FlowValidationError
+                        {
+                            Code = "SessionInputUnavailable",
+                            Message = $"Node '{node.DisplayName ?? node.Id}' input '{pair.Key}' "
+                                + "requires a Session-capable source port.",
+                            NodeId = node.Id,
+                            PortId = pair.Key,
+                        });
+                    }
                 }
             }
 

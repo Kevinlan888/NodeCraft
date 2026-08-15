@@ -13,8 +13,9 @@ namespace NodeCraft.Flow
         public static async Task ExecuteAsync(
             IReadOnlyList<WorkflowNode> sortedNodes,
             IReadOnlyDictionary<string, IFlowNodeExecutor> executors,
-            FlowNodeRegistry registry,
+            IReadOnlyDictionary<string, FlowNodeDefinition> definitionsByNodeId,
             FlowExecutionContext context,
+            IReadOnlySessionValueStore sessionValues,
             ILogger logger,
             CancellationToken cancellationToken)
         {
@@ -24,11 +25,16 @@ namespace NodeCraft.Flow
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var registration = registry.Resolve(node.TypeKey);
-                var inputs = ResolveInputs(node, registration.Definition, context);
+                var definition = definitionsByNodeId[node.Id];
+                var inputs = ResolveInputs(
+                    node,
+                    definition,
+                    definitionsByNodeId,
+                    context,
+                    sessionValues);
                 var executor = executors[node.Id];
 
-                if (ShouldSkipNode(node, registration.Definition, inputs))
+                if (ShouldSkipNode(node, definition, inputs))
                 {
                     context.MarkSkipped(node.Id);
                     logger.LogTrace("Skipping node '{NodeId}'.", node.Id);
@@ -44,15 +50,12 @@ namespace NodeCraft.Flow
                     outputs = await executor.ExecuteAsync(
                             context,
                             node,
-                            registration.Definition,
+                            definition,
                             inputs,
                             cancellationToken)
                         .ConfigureAwait(false);
-                    if (outputs == null)
-                    {
-                        throw new InvalidOperationException(
-                            $"Node '{node.Id}' returned null outputs.");
-                    }
+
+                    FlowRuntimeValueValidator.ValidateIterationOutputs(node, definition, outputs);
 
                     context.MarkSucceeded(node.Id);
                 }
@@ -65,11 +68,8 @@ namespace NodeCraft.Flow
 
                 foreach (var pair in outputs)
                 {
-                    var slot = FindOutputSlot(registration.Definition, pair.Key);
-                    if (slot >= 0)
-                    {
-                        context.SetPortValue(node.Id, slot, pair.Value);
-                    }
+                    var slot = FlowRuntimeValueValidator.FindOutputSlot(definition, pair.Key);
+                    context.SetPortValue(node.Id, slot, pair.Value);
                 }
             }
 
@@ -80,7 +80,9 @@ namespace NodeCraft.Flow
         private static Dictionary<string, object> ResolveInputs(
             WorkflowNode node,
             FlowNodeDefinition definition,
-            FlowExecutionContext context)
+            IReadOnlyDictionary<string, FlowNodeDefinition> definitionsByNodeId,
+            FlowExecutionContext context,
+            IReadOnlySessionValueStore sessionValues)
         {
             var inputs = new Dictionary<string, object>();
 
@@ -88,15 +90,43 @@ namespace NodeCraft.Flow
             {
                 if (!node.Inputs.TryGetValue(inputPort.Id, out var configured))
                 {
+                    if (inputPort.DefaultValue != null)
+                    {
+                        inputs[inputPort.Id] = inputPort.DefaultValue;
+                    }
+
                     continue;
                 }
 
                 if (configured is LinkRef linkRef)
                 {
-                    if (context.TryGetPortValue(linkRef.SourceNodeId, linkRef.SourceSlot, out var portValue))
+                    if (!definitionsByNodeId.TryGetValue(
+                            linkRef.SourceNodeId,
+                            out var sourceDefinition))
                     {
-                        inputs[inputPort.Id] = portValue;
+                        throw new InvalidOperationException(
+                            $"Link source node '{linkRef.SourceNodeId}' was not found.");
                     }
+
+                    var sourcePort = sourceDefinition.OutputPorts[linkRef.SourceSlot];
+                    if (sourcePort.Availability == FlowPortAvailability.Iteration
+                        && context.TryGetPortValue(
+                            linkRef.SourceNodeId,
+                            linkRef.SourceSlot,
+                            out var currentValue))
+                    {
+                        inputs[inputPort.Id] = currentValue;
+                    }
+                    else if (sourcePort.Availability == FlowPortAvailability.Session
+                        && sessionValues.TryGetPortValue(
+                            linkRef.SourceNodeId,
+                            linkRef.SourceSlot,
+                            out var sessionValue))
+                    {
+                        inputs[inputPort.Id] = sessionValue;
+                    }
+
+                    // A configured link with a missing source value does not fall back to DefaultValue.
                 }
                 else
                 {
@@ -191,17 +221,5 @@ namespace NodeCraft.Flow
             return false;
         }
 
-        private static int FindOutputSlot(FlowNodeDefinition definition, string portId)
-        {
-            for (var index = 0; index < definition.OutputPorts.Count; index++)
-            {
-                if (string.Equals(definition.OutputPorts[index].Id, portId, StringComparison.Ordinal))
-                {
-                    return index;
-                }
-            }
-
-            return -1;
-        }
     }
 }

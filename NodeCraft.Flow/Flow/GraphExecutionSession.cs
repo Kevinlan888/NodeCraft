@@ -14,6 +14,9 @@ namespace NodeCraft.Flow
         private readonly IReadOnlyList<WorkflowNode> _orderedNodes;
         private readonly Dictionary<string, IFlowNodeExecutor> _executors;
         private readonly Dictionary<string, FlowNodeSessionContext> _sessionContexts;
+        private readonly IReadOnlyDictionary<string, FlowNodeDefinition> _definitionsByNodeId;
+        private readonly SessionValueStore _sessionValueStore = new SessionValueStore();
+        private readonly IReadOnlySessionValueStore _readOnlySessionValues;
         private readonly ILogger _logger;
         private readonly CancellationTokenSource _stopCancellation = new CancellationTokenSource();
         private readonly SemaphoreSlim _iterationGate = new SemaphoreSlim(1, 1);
@@ -63,6 +66,12 @@ namespace NodeCraft.Flow
                     node.Id,
                     new FlowNodeSessionContext(node, registration.Definition, _logger));
             }
+
+            _definitionsByNodeId = _sessionContexts.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value.Definition,
+                StringComparer.Ordinal);
+            _readOnlySessionValues = _sessionValueStore.CreateReadOnlyView();
         }
 
         public WorkflowDocument Workflow { get; }
@@ -364,8 +373,9 @@ namespace NodeCraft.Flow
                 await FlowGraphIterationRunner.ExecuteAsync(
                         _orderedNodes,
                         _executors,
-                        Registry,
+                        _definitionsByNodeId,
                         context,
+                        _readOnlySessionValues,
                         _logger,
                         linkedCancellation.Token)
                     .ConfigureAwait(false);
