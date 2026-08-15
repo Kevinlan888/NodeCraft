@@ -17,6 +17,9 @@
 - 默认配置为 `SourcePath="builtin://vision/sample-set"`、`LoadMode=Preload`、`MaxPreloadedImages=100`、`MaxPreloadedBytes=536870912`、`SkipErrorImages=false`。
 - runtime `loadMode` 不仅必须是 `VirtualCameraLoadMode` 类型，还必须通过 `Enum.IsDefined(typeof(VirtualCameraLoadMode), value)`；只允许 `Preload` 和 `Dynamic`，数值 cast 得到的未定义 enum 值属于配置错误。
 - `Preload` 要求两个上限都大于 0；字节上限按最终存入 `FlowImage` 的托管像素 buffer 实际字节数累计，并使用 `checked`；`OverflowException` 必须转换成带 source 上下文的启动异常；Dynamic 忽略两个上限。
+- `SkipErrorImages=true` 时 Preload 的数量/字节上限只统计成功解码并加入缓存的图片；只捕获 `VirtualCameraImageLoadException`，全坏来源必须抛带 source 上下文的启动异常。
+- builtin 标识大小写不敏感但输出 URI canonical 为小写；固定 `checkerboard`/`color-bars` 的尺寸和像素内容不可由实现自行改变；Dynamic 在 builtin materialize 前拒绝。
+- WPF loader 必须在 `OnLoad` 后返回与线程无关的独立 `FlowImage`；生产路径必须可从 MTA worker 调用，测试同时覆盖 STA bitmap 生成和 MTA 实际解码。
 - 第一次 iteration 必须选择 ordinal 0；`FrameId` 使用 entry ordinal，不使用可变列表 index 或 iteration 序号。
 - 外部环境或配置导致的预期失败（非法/无法规范化/无法访问 source、目录枚举 I/O、无效扩展名或空目录、无效 preload 上限、decoded byte 超限以及 checked overflow）必须包装成 `InvalidOperationException`（必要时保留原异常为 `InnerException`），消息同时包含 `VirtualCamera` 和相关 source path/URI；图片读取/解码失败使用 `VirtualCameraImageLoadException`，消息还必须包含图片绝对路径。
 - 坏图只允许通过 `VirtualCameraImageLoadException` 被 Skip；`OperationCanceledException`、`OutOfMemoryException` 和底层/程序自身的 `InvalidOperationException` 不得被包装或吞掉。上一条只约束 Virtual Camera 自己创建的预期失败；取消、OOM 和程序 bug 即使原始消息没有 `VirtualCamera` 也必须原样传播。
@@ -210,7 +213,7 @@ git commit -m "feat: add virtual camera node model"
 
 **Interfaces:**
 - Consumes `VirtualCameraLoadMode` only for tests/validation context; source resolution itself receives a non-empty `string sourcePath`。
-- Produces `VirtualCameraEntry`、`VirtualCameraSource` 和 `VirtualCameraSourceResolver.Resolve(string sourcePath)`；executor 使用 `ImageDirectory`, `IsBuiltin` 和 `Entries`。
+- Produces `VirtualCameraEntry`、`VirtualCameraSource`、`VirtualCameraSourceResolver.IsBuiltinUri(string sourcePath)` 和 `VirtualCameraSourceResolver.Resolve(string sourcePath)`；executor 使用 `ImageDirectory`, `IsBuiltin` 和 `Entries`。
 
 - [ ] **Step 1: 写来源解析失败测试**
 
@@ -237,10 +240,16 @@ await RunAsync("virtual camera sorts supported folder images with ordinal tie br
     fixture.WriteImage("A.jpg", new byte[] { 1, 2, 3 });
     fixture.WriteImage("a.PNG", new byte[] { 4, 5, 6 });
     fixture.WriteImage("b.bmp", new byte[] { 7, 8, 9 });
+    var nestedDirectory = Directory.CreateDirectory(
+        Path.Combine(fixture.DirectoryPath, "nested"));
+    File.WriteAllBytes(
+        Path.Combine(nestedDirectory.FullName, "nested.png"),
+        new byte[] { 8, 8, 8 });
     File.WriteAllText(Path.Combine(fixture.DirectoryPath, "ignored.txt"), "ignored");
     var source = VirtualCameraSourceResolver.Resolve(fixture.DirectoryPath);
     var names = source.Entries.Select(entry => Path.GetFileName(entry.Path)).ToArray();
     return names.SequenceEqual(new[] { "A.jpg", "a.PNG", "b.bmp" })
+        && !names.Contains("nested.png", StringComparer.Ordinal)
         && source.Entries.Select(entry => entry.Ordinal).SequenceEqual(new[] { 0, 1, 2 });
 });
 
@@ -248,14 +257,38 @@ await RunAsync("virtual camera resolves builtin collection and single asset", ()
 {
     var collection = VirtualCameraSourceResolver.Resolve("builtin://vision/sample-set");
     var single = VirtualCameraSourceResolver.Resolve("builtin://vision/sample-set/checkerboard");
+    var uppercase = VirtualCameraSourceResolver.Resolve(
+        "BUILTIN://VISION/SAMPLE-SET/CHECKERBOARD");
+    var checkerboard = collection.Entries[0].PreloadedImage;
+    var colorBars = collection.Entries[1].PreloadedImage;
     return collection.IsBuiltin
         && collection.ImageDirectory == "builtin://vision/sample-set"
-        && collection.Entries.Count >= 2
-        && collection.Entries[0].PreloadedImage != null
-        && collection.Entries[0].Path.StartsWith("builtin://vision/sample-set/", StringComparison.Ordinal)
+        && collection.Entries.Count == 2
+        && collection.Entries[0].Path == "builtin://vision/sample-set/checkerboard"
+        && collection.Entries[1].Path == "builtin://vision/sample-set/color-bars"
+        && checkerboard.Width == 2
+        && checkerboard.Height == 2
+        && checkerboard.Stride == 6
+        && checkerboard.PixelFormat == FlowPixelFormat.Bgr24
+        && checkerboard.Buffer.Span.SequenceEqual(new byte[]
+        {
+            255, 255, 255, 0, 0, 0,
+            0, 0, 0, 255, 255, 255,
+        })
+        && colorBars.Width == 3
+        && colorBars.Height == 1
+        && colorBars.Stride == 9
+        && colorBars.PixelFormat == FlowPixelFormat.Bgr24
+        && colorBars.Buffer.Span.SequenceEqual(new byte[]
+        {
+            255, 0, 0, 0, 255, 0, 0, 0, 255,
+        })
         && single.Entries.Count == 1
         && single.ImageDirectory == "builtin://vision/sample-set"
-        && single.Entries[0].Path == "builtin://vision/sample-set/checkerboard";
+        && single.Entries[0].Path == "builtin://vision/sample-set/checkerboard"
+        && single.Entries[0].PreloadedImage.Width == 2
+        && uppercase.ImageDirectory == "builtin://vision/sample-set"
+        && uppercase.Entries[0].Path == "builtin://vision/sample-set/checkerboard";
 });
 
 await RunAsync("virtual camera rejects invalid source kinds and empty folders", () =>
@@ -267,6 +300,8 @@ await RunAsync("virtual camera rejects invalid source kinds and empty folders", 
         Path.Combine(fixture.DirectoryPath, "missing.png"),
         Path.Combine(fixture.DirectoryPath, "unsupported.gif"),
         "builtin://vision/unknown",
+        "builtin://vision/sample-set?query=1",
+        "builtin://vision/sample-set/checkerboard/extra",
     };
     File.WriteAllBytes(cases[2], new byte[] { 1, 2, 3 });
     var allRejected = cases.All(path => ThrowsVirtualCamera<InvalidOperationException>(
@@ -339,7 +374,7 @@ internal sealed class VirtualCameraSource
 `VirtualCameraSourceResolver.Resolve` 的实现顺序固定为：
 
 1. 空白 source 直接抛带 `VirtualCamera` 和 `<empty>` 上下文的 `InvalidOperationException`；非 builtin 的非法本地 source 先进入受控路径规范化流程。
-2. `StartsWith("builtin://vision/", StringComparison.OrdinalIgnoreCase)` 时只接受 `sample-set` 或其 `checkerboard`/`color-bars` 资产；集合固定按 `checkerboard`, `color-bars` 顺序生成。每个 builtin entry 立即带独立托管 buffer 的 `FlowImage`，目录固定为 `builtin://vision/sample-set`。
+2. `IsBuiltinUri` 只按 `StartsWith("builtin://vision/", StringComparison.OrdinalIgnoreCase)` 识别 builtin 前缀。`Resolve` 对 builtin 标识符按 `OrdinalIgnoreCase` 匹配，只接受 `sample-set` 或其 `checkerboard`/`color-bars` 资产；集合固定按 `checkerboard`, `color-bars` 顺序生成。每个 builtin entry 立即带独立托管 buffer 的 `FlowImage`，目录固定为 canonical 小写 URI `builtin://vision/sample-set`。
 3. 本地来源使用 `Path.GetFullPath`。`Path.GetFullPath` 以及后续目录枚举/排序只捕获预期的外部环境异常：`ArgumentException`、`NotSupportedException`、`PathTooLongException`、`UnauthorizedAccessException`、`SecurityException` 和 `IOException`；统一包装为包含 `VirtualCamera` 与 source path 的 `InvalidOperationException`，并保留原异常。不得捕获 `OperationCanceledException`、`OutOfMemoryException` 或底层/程序自身的 `InvalidOperationException`。
 4. 既不是现有文件也不是现有目录时抛包含 `VirtualCamera` 和规范化绝对路径的明确异常。单文件仅允许 `.jpg`/`.png`/`.bmp`；目录使用 `Directory.EnumerateFiles(directory)` 只取直接子文件，且必须在同一个 `try` 内完成 materialize、过滤和排序，以便迭代器实际抛出的 I/O 异常也被包装：
 
@@ -372,7 +407,9 @@ private static InvalidOperationException WrapSourceFailure(
 
 `Path.GetFullPath(sourcePath)` 放在 `try/catch when (IsExpectedSourceResolutionFailure(exception))` 中；`Directory.EnumerateFiles(...).Where(...).OrderBy(...).ThenBy(...).ToArray()` 的整个 materialize 过程也放在同样的受控边界中。source 为空时使用 `<empty>` 作为消息上下文；已规范化的本地路径和 builtin URI分别使用其绝对路径/URI，保证每个 resolver 自己产生的异常都带来源上下文。
 
-builtin 的固定 pixel buffer 直接用 `FlowImage.FromOwnedBuffer` 构造，`DeviceTimestamp=0`、`CapturedAtUtc` 使用构造时 UTC、`FrameId` 使用其 ordinal；不要使用字典枚举顺序。
+`IsBuiltinUri` 只能做无副作用的 prefix 判断，不得调用 builtin asset factory；null/空白输入返回 false，由 `Resolve` 负责生成 source 配置错误；executor 使用它做 Dynamic 快速拒绝后，只有允许的 Preload 路径才调用 `Resolve` 并 materialize 固定 builtin pixels。
+
+builtin 的固定 pixel buffer 直接用 `FlowImage.FromOwnedBuffer` 构造，`DeviceTimestamp=0`、`CapturedAtUtc` 使用构造时 UTC、`FrameId` 使用其 ordinal；不要使用字典枚举顺序。资产契约固定为：`checkerboard` 是 2x2 Bgr24、stride 6，按行像素为白/黑、黑/白，buffer 为 `{255,255,255, 0,0,0, 0,0,0, 255,255,255}`；`color-bars` 是 3x1 Bgr24、stride 9，按 BGR 像素顺序为蓝/绿/红，buffer 为 `{255,0,0, 0,255,0, 0,0,255}`。输入 URI 的 scheme、authority、asset 标识大小写不敏感，输出 `ImageDirectory` 和 `Entry.Path` 始终使用上述 canonical 小写 URI；不接受额外 path segment、query 或 fragment。
 
 - [ ] **Step 4: 完成临时文件 helper 并运行来源测试**
 
@@ -506,9 +543,71 @@ await RunAsync("virtual camera wraps only expected image load failures", () =>
             && !VirtualCameraImageLoader.IsSkippableImageLoadError(new InvalidOperationException());
     }
 });
+
+await RunAsync("virtual camera decodes JPEG and BMP on a worker and releases file handles", async () =>
+{
+    using var fixture = new TemporaryVirtualCameraFiles();
+    var paths = await RunOnStaValueAsync(() =>
+    {
+        var jpg = fixture.WriteBitmap(
+            "sample.jpg", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
+        var bmp = fixture.WriteBitmap(
+            "sample.bmp", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
+        return (jpg, bmp);
+    });
+    var workerApartment = ApartmentState.Unknown;
+    var decoded = await Task.Run(() =>
+    {
+        workerApartment = Thread.CurrentThread.GetApartmentState();
+        var loader = new VirtualCameraImageLoader();
+        return (loader.Load(paths.jpg, 6), loader.Load(paths.bmp, 7));
+    });
+    var movedJpg = paths.jpg + ".moved";
+    var movedBmp = paths.bmp + ".moved";
+    File.Move(paths.jpg, movedJpg);
+    File.Move(paths.bmp, movedBmp);
+    return decoded.Item1.PixelFormat == FlowPixelFormat.Bgr24
+        && decoded.Item2.PixelFormat == FlowPixelFormat.Bgr24
+        && decoded.Item1.Width == 1
+        && decoded.Item2.Width == 1
+        && decoded.Item1.FrameId == 6
+        && decoded.Item2.FrameId == 7
+        && workerApartment == ApartmentState.MTA
+        && File.Exists(movedJpg)
+        && File.Exists(movedBmp);
+});
 ```
 
-`TemporaryVirtualCameraFiles.WriteBitmap` 使用 `BitmapSource.Create` 和根据扩展名选择的 `PngBitmapEncoder`/`JpegBitmapEncoder`/`BmpBitmapEncoder`，写入后关闭文件流。另加损坏文件测试：写入任意非图片 bytes，要求得到包含绝对路径的 `VirtualCameraImageLoadException`。
+`TemporaryVirtualCameraFiles.WriteBitmap` 使用 `BitmapSource.Create` 和根据扩展名选择的 `PngBitmapEncoder`/`JpegBitmapEncoder`/`BmpBitmapEncoder`，写入后关闭文件流。写入 bitmap 的动作必须运行在 STA；真实 loader 还必须通过上面的 `Task.Run` MTA worker 测试，证明生产路径不依赖 UI dispatcher。移动 JPEG/BMP 文件的断言验证 `BitmapDecoder` 使用 `OnLoad` 并释放文件句柄。另加损坏文件测试：写入任意非图片 bytes，要求得到包含绝对路径的 `VirtualCameraImageLoadException`。
+
+在 `VirtualCameraTests.cs` 增加 `RunOnStaAsync` 异步 helper 和不产生 overload ambiguity 的 `RunOnStaValueAsync` 同步值 helper。它们创建独立 STA thread，以 `TaskCompletionSource` 转发返回值和原始异常；所有 Task 4/5 中调用 `WriteBitmap` 或真实 `VirtualCameraImageLoader` 的测试都必须把整个测试体包在 `RunOnStaAsync(async () => ...)` 内，fake-loader-only 测试也必须在 STA 创建测试 bitmap 后才能调用真实 loader。不要把 WPF encoder 留在普通 async/thread-pool 测试体中。
+
+helper 的行为契约为：
+
+```csharp
+private static Task<T> RunOnStaValueAsync<T>(Func<T> action)
+    => RunOnStaAsync(() => Task.FromResult(action()));
+
+private static Task<T> RunOnStaAsync<T>(Func<Task<T>> action)
+{
+    var completion = new TaskCompletionSource<T>(
+        TaskCreationOptions.RunContinuationsAsynchronously);
+    var thread = new Thread(() =>
+    {
+        try
+        {
+            completion.SetResult(action().GetAwaiter().GetResult());
+        }
+        catch (Exception exception)
+        {
+            completion.SetException(exception);
+        }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    return completion.Task;
+}
+```
 
 - [ ] **Step 2: 运行解码测试确认缺少 loader**
 
@@ -553,7 +652,7 @@ internal sealed class VirtualCameraImageLoadException : Exception
 
 Run: `dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj --no-restore`
 
-Expected: Gray8 -> Mono8、彩色 -> Bgr24、metadata、文件流关闭和损坏/缺失图片异常测试 PASS。
+Expected: Gray8 -> Mono8、彩色 -> Bgr24、JPEG/BMP 实际解码、metadata、MTA worker 解码、文件流关闭和损坏/缺失图片异常测试 PASS。
 
 - [ ] **Step 5: 提交图片 loader**
 
@@ -577,8 +676,9 @@ git commit -m "feat: add virtual camera image loader"
 建立 `CreateVirtualCameraContext` helper，使用 `WorkflowNode.Inputs` 写入五个 runtime 配置和只包含三个 output ports 的 definition。增加以下断言：
 
 ```csharp
-await RunAsync("virtual camera preload starts at ordinal zero and exposes session directory", async () =>
-{
+await RunAsync("virtual camera preload starts at ordinal zero and exposes session directory", () =>
+    RunOnStaAsync(async () =>
+    {
     using var fixture = new TemporaryVirtualCameraFiles();
     fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
     fixture.WriteBitmap("b.png", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
@@ -592,6 +692,7 @@ await RunAsync("virtual camera preload starts at ordinal zero and exposes sessio
         out var node,
         out var definition);
 
+    await executor.StartSessionAsync(context, CancellationToken.None);
     await executor.StartSessionAsync(context, CancellationToken.None);
     var sessionOutputs = await executor.InitializeSessionAsync(
         context,
@@ -618,10 +719,11 @@ await RunAsync("virtual camera preload starts at ordinal zero and exposes sessio
         && ((FlowImage)second["image"]).FrameId == 1
         && ((FlowImage)wrapped["image"]).FrameId == 0
         && ReferenceEquals(first["image"], wrapped["image"]);
-});
+    }));
 
-await RunAsync("virtual camera preload enforces positive count and checked decoded bytes", async () =>
-{
+await RunAsync("virtual camera preload enforces positive count and checked decoded bytes", () =>
+    RunOnStaAsync(async () =>
+    {
     using var fixture = new TemporaryVirtualCameraFiles();
     fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
     fixture.WriteBitmap("b.png", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
@@ -645,11 +747,102 @@ await RunAsync("virtual camera preload enforces positive count and checked decod
         fixture.DirectoryPath,
         () => StartVirtualCameraAsync(
             fixture.DirectoryPath, (VirtualCameraLoadMode)123, 10, 100, false));
-    return invalidCount && invalidBytes && tooSmall && tooMany && invalidMode;
+        return invalidCount && invalidBytes && tooSmall && tooMany && invalidMode;
+    }));
+
+await RunAsync("virtual camera rejects missing and wrongly typed runtime inputs", async () =>
+{
+    using var fixture = new TemporaryVirtualCameraFiles();
+    var mutations = new (string Key, Action<WorkflowNode> Mutate)[]
+    {
+        ("sourcePath", node => node.Inputs.Remove("sourcePath")),
+        ("sourcePath", node => node.Inputs["sourcePath"] = 123),
+        ("loadMode", node => node.Inputs["loadMode"] = "Preload"),
+        ("maxPreloadedImages", node => node.Inputs["maxPreloadedImages"] = 10L),
+        ("maxPreloadedBytes", node => node.Inputs["maxPreloadedBytes"] = 10),
+        ("skipErrorImages", node => node.Inputs["skipErrorImages"] = "false"),
+    };
+    var allRejected = true;
+    foreach (var mutation in mutations)
+    {
+        var context = CreateVirtualCameraContext(
+            fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 10, 100, false,
+            out var node, out _);
+        mutation.Mutate(node);
+        var executor = new VirtualCameraExecutor();
+        try
+        {
+            await executor.StartSessionAsync(context, CancellationToken.None);
+            allRejected = false;
+        }
+        catch (InvalidOperationException exception)
+        {
+            allRejected = allRejected
+                && exception.Message.Contains("VirtualCamera", StringComparison.Ordinal)
+                && exception.Message.Contains(mutation.Key, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await executor.StopSessionAsync(context, CancellationToken.None);
+        }
+    }
+    return allRejected;
 });
 
-await RunAsync("virtual camera failed start can be stopped and restarted cleanly", async () =>
+await RunAsync("virtual camera wraps decoded byte accounting overflow", () =>
 {
+    try
+    {
+        VirtualCameraExecutor.AddPreloadedBytesChecked(
+            long.MaxValue, 1, "C:\\frames", "C:\\frames\\overflow.png");
+        return false;
+    }
+    catch (InvalidOperationException exception)
+    {
+        return exception.Message.Contains("VirtualCamera", StringComparison.Ordinal)
+            && exception.Message.Contains("C:\\frames", StringComparison.Ordinal)
+            && exception.InnerException is OverflowException;
+    }
+});
+
+await RunAsync("virtual camera reports distinct prepare and execute errors after stop", async () =>
+{
+    var executor = new VirtualCameraExecutor();
+    var context = CreateVirtualCameraContext(
+        "builtin://vision/sample-set", VirtualCameraLoadMode.Preload, 10, 100, false,
+        out var node, out var definition);
+    await executor.StopSessionAsync(context, CancellationToken.None);
+    var prepareMessage = string.Empty;
+    var executeMessage = string.Empty;
+    try
+    {
+        await executor.PrepareIterationAsync(context, CancellationToken.None);
+    }
+    catch (InvalidOperationException exception)
+    {
+        prepareMessage = exception.Message;
+    }
+    try
+    {
+        await executor.ExecuteAsync(
+            new FlowExecutionContext(), node, definition,
+            new Dictionary<string, object>(), CancellationToken.None);
+    }
+    catch (InvalidOperationException exception)
+    {
+        executeMessage = exception.Message;
+    }
+    return prepareMessage.Contains("session is not started", StringComparison.Ordinal)
+        && executeMessage.Contains("no prepared image", StringComparison.Ordinal)
+        && prepareMessage.Contains("VirtualCamera", StringComparison.Ordinal)
+        && executeMessage.Contains("VirtualCamera", StringComparison.Ordinal)
+        && prepareMessage.Contains("builtin://vision/sample-set", StringComparison.Ordinal)
+        && executeMessage.Contains("builtin://vision/sample-set", StringComparison.Ordinal);
+});
+
+await RunAsync("virtual camera failed start can be stopped and restarted cleanly", () =>
+    RunOnStaAsync(async () =>
+    {
     using var fixture = new TemporaryVirtualCameraFiles();
     fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
     var executor = new VirtualCameraExecutor();
@@ -683,12 +876,110 @@ await RunAsync("virtual camera failed start can be stopped and restarted cleanly
         new Dictionary<string, object>(), CancellationToken.None);
     await executor.StopSessionAsync(validContext, CancellationToken.None);
 
-    return primaryFailurePreserved
+        return primaryFailurePreserved
         && ((FlowImage)output["image"]).FrameId == 0;
-});
+    }));
+
+await RunAsync("virtual camera propagates cancellation and leaves the executor stopped", () =>
+    RunOnStaAsync(async () =>
+    {
+        using var fixture = new TemporaryVirtualCameraFiles();
+        fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
+        var executor = new VirtualCameraExecutor();
+        var context = CreateVirtualCameraContext(
+            fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 10, 100, false,
+            out var node, out var definition);
+
+        using var startCancellation = new CancellationTokenSource();
+        startCancellation.Cancel();
+        var startCanceled = false;
+        try
+        {
+            await executor.StartSessionAsync(context, startCancellation.Token);
+        }
+        catch (OperationCanceledException exception)
+        {
+            startCanceled = exception.CancellationToken == startCancellation.Token;
+        }
+        await executor.StopSessionAsync(context, CancellationToken.None);
+
+        await executor.StartSessionAsync(context, CancellationToken.None);
+        using var prepareCancellation = new CancellationTokenSource();
+        prepareCancellation.Cancel();
+        var prepareCanceled = false;
+        try
+        {
+            await executor.PrepareIterationAsync(context, prepareCancellation.Token);
+        }
+        catch (OperationCanceledException exception)
+        {
+            prepareCanceled = exception.CancellationToken == prepareCancellation.Token;
+        }
+
+        using var executeCancellation = new CancellationTokenSource();
+        executeCancellation.Cancel();
+        var executeCanceled = false;
+        try
+        {
+            await executor.ExecuteAsync(
+                new FlowExecutionContext(), node, definition,
+                new Dictionary<string, object>(), executeCancellation.Token);
+        }
+        catch (OperationCanceledException exception)
+        {
+            executeCanceled = exception.CancellationToken == executeCancellation.Token;
+        }
+        await executor.StopSessionAsync(context, CancellationToken.None);
+
+        return startCanceled && prepareCanceled && executeCanceled;
+    }));
+
+await RunAsync("virtual camera preload limits count and bytes only after successful decode", () =>
+    RunOnStaAsync(async () =>
+    {
+    using var fixture = new TemporaryVirtualCameraFiles();
+    fixture.WriteBitmap("A.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
+    fixture.WriteImage("Bad.png", new byte[] { 0, 1, 2, 3 });
+    fixture.WriteBitmap("C.png", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
+    var executor = new VirtualCameraExecutor();
+    var context = CreateVirtualCameraContext(
+        fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 2, 6, true,
+        out var node, out var definition);
+
+    await executor.StartSessionAsync(context, CancellationToken.None);
+    await executor.PrepareIterationAsync(context, CancellationToken.None);
+    var first = await executor.ExecuteAsync(
+        new FlowExecutionContext(), node, definition,
+        new Dictionary<string, object>(), CancellationToken.None);
+    await executor.PrepareIterationAsync(context, CancellationToken.None);
+    var second = await executor.ExecuteAsync(
+        new FlowExecutionContext(), node, definition,
+        new Dictionary<string, object>(), CancellationToken.None);
+    await executor.StopSessionAsync(context, CancellationToken.None);
+
+        return (string)first["imagePath"] == Path.Combine(fixture.DirectoryPath, "A.png")
+            && (string)second["imagePath"] == Path.Combine(fixture.DirectoryPath, "C.png");
+    }));
+
+await RunAsync("virtual camera preload rejects a sequence with no readable images", () =>
+    RunOnStaAsync(async () =>
+    {
+    using var fixture = new TemporaryVirtualCameraFiles();
+    fixture.WriteImage("A.png", new byte[] { 0, 1, 2, 3 });
+    fixture.WriteImage("B.png", new byte[] { 4, 5, 6, 7 });
+    var withoutSkip = await ThrowsVirtualCameraAsync<VirtualCameraImageLoadException>(
+        fixture.DirectoryPath,
+        () => StartVirtualCameraAsync(
+            fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 10, 100, false));
+    var withSkip = await ThrowsVirtualCameraAsync<InvalidOperationException>(
+        fixture.DirectoryPath,
+        () => StartVirtualCameraAsync(
+            fixture.DirectoryPath, VirtualCameraLoadMode.Preload, 10, 100, true));
+        return withoutSkip && withSkip;
+    }));
 ```
 
-另加 builtin 行为断言：`StartVirtualCameraAsync("builtin://vision/sample-set", VirtualCameraLoadMode.Preload, 100, 536870912L, false)` 成功；同一 source 配置为 `Dynamic` 必须在启动阶段抛包含 `VirtualCamera` 的配置异常，且不发生自动模式切换。
+另加 builtin 行为断言：`StartVirtualCameraAsync("builtin://vision/sample-set", VirtualCameraLoadMode.Preload, 100, 536870912L, false)` 成功；同一 source 配置为 `Dynamic` 必须在启动阶段抛包含 `VirtualCamera` 的配置异常，且不发生自动模式切换。使用注入的 `RecordingVirtualCameraImageLoader` 再验证该 Dynamic 失败发生在任何 `Load` 调用之前；实现代码同时必须保持 resolver 前的 `IsBuiltinUri` 快速拒绝，不能只依赖 loader 未被调用来推断未 materialize builtin pixels。
 
 再用 `A.jpg`、损坏的 `Bad.jpg`、`C.jpg` 建立 Preload folder：`SkipErrorImages=false` 的 Start 必须传播 `VirtualCameraImageLoadException`；`true` 必须成功启动，并在三次 Prepare/Execute 中输出 A、C、A，且 C 的 ordinal 仍为 2。这样 Preload 和 Dynamic 共用的异常边界都有直接测试。
 
@@ -702,7 +993,7 @@ Expected: 编译失败，提示 `VirtualCameraExecutor` 和测试 helper 尚不�
 
 - [ ] **Step 3: 实现 executor 的配置读取和启动**
 
-`StartSessionAsync` 从 `context.Node.Inputs` 读取且只接受以下类型：`sourcePath:string`、`loadMode:VirtualCameraLoadMode`、`maxPreloadedImages:int`、`maxPreloadedBytes:long`、`skipErrorImages:bool`。缺失或错误类型直接抛带 `VirtualCamera` 的 `InvalidOperationException`；source 尚不可用时使用输入值或 `<empty>` 作为上下文，source 已解析后统一使用 `_imageDirectory`。`loadMode` 在类型检查之后必须再执行 `Enum.IsDefined(typeof(VirtualCameraLoadMode), loadMode)`，拒绝 `(VirtualCameraLoadMode)123` 这类底层整数未定义值，不得按默认值或任意分支继续执行。
+`StartSessionAsync` 从 `context.Node.Inputs` 读取且只接受以下类型：`sourcePath:string`、`loadMode:VirtualCameraLoadMode`、`maxPreloadedImages:int`、`maxPreloadedBytes:long`、`skipErrorImages:bool`。缺失或错误类型直接抛带 `VirtualCamera` 的 `InvalidOperationException`，消息必须包含出错 runtime key；source 尚不可用时使用输入值或 `<empty>` 作为上下文，source 已解析后统一使用 `_imageDirectory`。`loadMode` 在类型检查之后必须再执行 `Enum.IsDefined(typeof(VirtualCameraLoadMode), loadMode)`，拒绝 `(VirtualCameraLoadMode)123` 这类底层整数未定义值，不得按默认值或任意分支继续执行。
 
 值域校验必须在 builtin/Dynamic 分支和 Preload 上限校验之前完成，具体边界为：
 
@@ -715,37 +1006,111 @@ if (!Enum.IsDefined(typeof(VirtualCameraLoadMode), loadMode))
 }
 ```
 
-调用 `VirtualCameraSourceResolver.Resolve(sourcePath)` 后：
+调用 resolver 前先执行 builtin + Dynamic 快速拒绝，确保不会 materialize builtin 的 `FlowImage`：
 
-- builtin + Dynamic 直接失败；不自动变成 Preload。
+```csharp
+if (loadMode == VirtualCameraLoadMode.Dynamic
+    && VirtualCameraSourceResolver.IsBuiltinUri(sourcePath))
+{
+    throw new InvalidOperationException(
+        $"VirtualCamera source '{sourceLabel}' cannot use Dynamic load mode.");
+}
+```
+
+通过上述检查后才调用 `VirtualCameraSourceResolver.Resolve(sourcePath)`：
+
+- builtin + Dynamic 已在 resolver 前直接失败；不自动变成 Preload，也不创建 builtin entry/pixel buffer。
 - Dynamic 不验证两个 preload 上限。
 - Preload 验证两个上限大于 0，并按 entry 顺序加载；所有配置/容量失败都包装成包含 `VirtualCamera` 和 `_imageDirectory` 的启动 `InvalidOperationException`。
 - 启动失败时清空所有字段，不能让半成品 sequence 留到下一次启动；清理路径必须重新使用幂等的 `StopSessionAsync` 或等价的无条件字段清空，然后原样重新抛出 primary exception，不能让 cleanup exception 覆盖启动错误。
 
-executor 的字段至少包含 `_entries`, `_imageDirectory`, `_index`, `_current`, `_skipErrorImages`, `_loadMode`；`_index` 初始为 `-1`，`_current` 初始为 null。
+executor 的字段至少包含 `_entries`, `_imageDirectory`, `_index`, `_current`, `_currentEntry`, `_skipErrorImages`, `_loadMode` 和生命周期 state；`_index` 初始为 `-1`，`_current`/`_currentEntry` 初始为 null。生命周期调用按 Flow runtime 的 session 顺序串行处理，state 只允许 `Stopped -> Starting -> Started -> Stopped`。
+
+生命周期状态表：
+
+| 当前状态/调用 | `StartSessionAsync` | `StopSessionAsync` | `PrepareIterationAsync` | `ExecuteAsync` |
+| --- | --- | --- | --- | --- |
+| `Stopped`（未启动或已停止） | 开始新的 `Starting` 流程；启动失败回到 `Stopped` | 清空字段并返回，不抛“未启动” | 抛 `InvalidOperationException`：`VirtualCamera source '<source>' session is not started.` | 抛 `InvalidOperationException`：`VirtualCamera source '<source>' has no prepared image for this iteration.` |
+| `Starting` | 抛带 source 上下文的 `InvalidOperationException`：已有启动流程 | 清空当前半成品并安全返回；正常 Flow 生命周期由启动取消/完成后串行进入此路径 | 不允许执行，抛 session 未启动 | 不允许执行，抛无 prepared image |
+| `Started` | 幂等 no-op，不重新解析、解码或重置 index | 清空字段并转换到 `Stopped` | 清 `_current` 和 `_currentEntry` 后按模式准备下一项 | 仅消费当前已准备项；没有 prepared 项时抛无 prepared image |
+
+`source` 文本取自当前 context（启动后优先使用规范化 `_imageDirectory`），所以 Stop 后的状态错误也必须带 `VirtualCamera` 和相关 source path/URI。启动期间 cancellation 必须在 resolver 前、Preload 每项前、Dynamic 每轮加载前及成功加载后检查；取消时清空半成品、state 回到 `Stopped`，并原样传播 `OperationCanceledException`，不得包装成图片错误或启动配置错误。
 
 - [ ] **Step 4: 实现 Preload 加载、limit 和 session/iteration 输出**
 
-Preload 循环使用 `validEntries`，对本地 entry 调 `_imageLoader.Load(entry.Path, (ulong)entry.Ordinal)`；builtin entry 复用 `entry.PreloadedImage`。成功后检查数量和实际 `image.Buffer.Length`，累计必须使用：
+Preload 循环使用 `validEntries`，对本地 entry 调 `_imageLoader.Load(entry.Path, (ulong)entry.Ordinal)`；builtin entry 复用 `entry.PreloadedImage`。`SkipErrorImages=true` 时只捕获精确的 `VirtualCameraImageLoadException`，记录最后一个被跳过的异常后继续；不得捕获其它 `Exception`。只有成功取得 `FlowImage` 后才检查数量、累计字节和加入 `validEntries`，因此坏图不消耗 `MaxPreloadedImages` 或 `MaxPreloadedBytes`：
 
 ```csharp
 long totalBytes = 0;
-try
+VirtualCameraImageLoadException lastSkippedError = null;
+foreach (var entry in source.Entries)
 {
-    checked
+    cancellationToken.ThrowIfCancellationRequested();
+    FlowImage image;
+    try
     {
-        totalBytes += image.Buffer.Length;
+        image = entry.PreloadedImage
+            ?? _imageLoader.Load(entry.Path, (ulong)entry.Ordinal);
     }
+    catch (VirtualCameraImageLoadException exception) when (_skipErrorImages)
+    {
+        lastSkippedError = exception;
+        continue;
+    }
+
+    if (validEntries.Count >= maxPreloadedImages)
+    {
+        throw new InvalidOperationException(
+            $"VirtualCamera source '{_imageDirectory}' exceeds MaxPreloadedImages "
+                + $"at '{entry.Path}'.");
+    }
+
+    var nextTotalBytes = AddPreloadedBytesChecked(
+        totalBytes, image.Buffer.Length, _imageDirectory, entry.Path);
+    if (nextTotalBytes > maxPreloadedBytes)
+    {
+        throw new InvalidOperationException(
+            $"VirtualCamera source '{_imageDirectory}' exceeds MaxPreloadedBytes "
+                + $"at '{entry.Path}'.");
+    }
+
+    totalBytes = nextTotalBytes;
+    validEntries.Add(new VirtualCameraEntry(entry.Ordinal, entry.Path, image));
 }
-catch (OverflowException exception)
+
+if (validEntries.Count == 0)
 {
     throw new InvalidOperationException(
-        $"VirtualCamera source '{_imageDirectory}' overflowed decoded byte accounting near '{entry.Path}'.",
-        exception);
+        $"VirtualCamera source '{_imageDirectory}' has no readable images after "
+            + "skipping image load errors.",
+        lastSkippedError);
 }
 ```
 
-超过 `MaxPreloadedBytes` 或 `MaxPreloadedImages` 时也抛包含 `VirtualCamera`、`_imageDirectory` 和相关 entry path 的启动异常，不能静默截断；不要捕获其它异常。成功的 entry 用同一 ordinal/path 和 decoded image 创建新的 cached entry。
+`AddPreloadedBytesChecked` 是实际计数路径使用的 internal seam，既保证生产代码保留 `checked`，又能直接测试 overflow 包装：
+
+```csharp
+internal static long AddPreloadedBytesChecked(
+    long totalBytes,
+    int bufferLength,
+    string sourcePath,
+    string imagePath)
+{
+    try
+    {
+        return checked(totalBytes + bufferLength);
+    }
+    catch (OverflowException exception)
+    {
+        throw new InvalidOperationException(
+            $"VirtualCamera source '{sourcePath}' overflowed decoded byte accounting "
+                + $"near '{imagePath}'.",
+            exception);
+    }
+}
+```
+
+所有图片都坏且 `SkipErrorImages=true` 时，循环结束后抛包含 source directory 的 `InvalidOperationException`，并把最后一个 `VirtualCameraImageLoadException` 作为 inner exception；`SkipErrorImages=false` 则立即传播第一张坏图的专用 wrapper。成功的 entry 用同一 ordinal/path 和 decoded image 创建新的 cached entry。
 
 `InitializeSessionAsync` 做 cancellation check，要求 session 已启动，然后返回只有 `imageDirectory` 的 dictionary。`PrepareIterationAsync` 先清 `_current` 和 `_currentEntry`，执行 `_index = (_index + 1) % _entries.Count` 并取 entry，设置 `_currentEntry = entry`，Preload 下 `_current = entry.PreloadedImage`。`ExecuteAsync` 做 cancellation check，要求 `_current != null` 且 `_currentEntry != null`，返回：
 
@@ -763,7 +1128,7 @@ new Dictionary<string, object>
 
 Run: `dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj --no-restore`
 
-Expected: 首图 ordinal 0、循环复用同一 cached FlowImage、session directory、positive limit、actual decoded bytes、正常 Stop、重复 Stop、失败启动后的清理和成功重启测试 PASS。
+Expected: 首图 ordinal 0、重复 Start no-op、循环复用同一 cached FlowImage、session directory、positive limit、actual decoded bytes、缺失/错误 runtime input、坏图不计入数量/字节上限、全坏来源、overflow seam、取消传播、正常 Stop、重复 Stop、失败启动后的清理和成功重启测试 PASS。
 
 - [ ] **Step 6: 提交 Preload executor**
 
@@ -787,8 +1152,9 @@ git commit -m "feat: implement virtual camera preload execution"
 增加一个记录 path/frameId 的 fake loader，并覆盖：
 
 ```csharp
-await RunAsync("virtual camera dynamic loads only during prepare and observes file changes", async () =>
-{
+await RunAsync("virtual camera dynamic loads only during prepare and observes file changes", () =>
+    RunOnStaAsync(async () =>
+    {
     using var fixture = new TemporaryVirtualCameraFiles();
     var path = fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
     var loader = new RecordingVirtualCameraImageLoader();
@@ -819,10 +1185,11 @@ await RunAsync("virtual camera dynamic loads only during prepare and observes fi
         && !((FlowImage)first["image"]).Buffer.Span.SequenceEqual(
             ((FlowImage)second["image"]).Buffer.Span)
         && !ReferenceEquals(first["image"], second["image"]);
-});
+    }));
 
-await RunAsync("virtual camera dynamic skip removes bad entry without skipping next", async () =>
-{
+await RunAsync("virtual camera dynamic skip removes bad entry without skipping next", () =>
+    RunOnStaAsync(async () =>
+    {
     using var fixture = new TemporaryVirtualCameraFiles();
     var a = fixture.WriteBitmap("A.jpg", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 1, 1 }, 3);
     var bad = fixture.WriteBitmap("Bad.jpg", PixelFormats.Bgr24, 1, 1, new byte[] { 2, 2, 2 }, 3);
@@ -844,9 +1211,9 @@ await RunAsync("virtual camera dynamic skip removes bad entry without skipping n
         paths.Add((string)output["imagePath"]);
         frames.Add(((FlowImage)output["image"]).FrameId);
     }
-    return paths.SequenceEqual(new[] { Path.GetFullPath(a), Path.GetFullPath(c), Path.GetFullPath(a) })
-        && frames.SequenceEqual(new[] { 0UL, 2UL, 0UL });
-});
+        return paths.SequenceEqual(new[] { Path.GetFullPath(a), Path.GetFullPath(c), Path.GetFullPath(a) })
+            && frames.SequenceEqual(new[] { 0UL, 2UL, 0UL });
+    }));
 ```
 
 `SelectiveVirtualCameraImageLoader` 对 bad path 抛 `new VirtualCameraImageLoadException(path, new InvalidDataException("bad image"))`，对其他路径返回新的 1x1 FlowImage；它必须记录每次 load，测试据此验证 Dynamic 没有启动解码或历史缓存。
@@ -1064,6 +1431,7 @@ Dynamic `StartSessionAsync` 只保留 resolver 返回的本地路径 entry，不
 
 ```csharp
 _current = null;
+_currentEntry = null;
 while (_entries.Count > 0)
 {
     cancellationToken.ThrowIfCancellationRequested();
@@ -1099,7 +1467,7 @@ while (_entries.Count > 0)
 
 Run: `dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj --no-restore`
 
-Expected: dynamic 首次加载、文件变化、A/Bad/C -> A/C/A、FrameId 0/2/0、专用错误可 Skip 以及三类非可 Skip 异常传播测试 PASS。
+Expected: dynamic 首次加载、文件变化、A/Bad/C -> A/C/A、FrameId 0/2/0、Prepare 前清理 `_currentEntry`、专用错误可 Skip、取消传播以及三类非可 Skip 异常传播测试 PASS。
 
 - [ ] **Step 5: 提交 Dynamic executor**
 
@@ -1302,7 +1670,7 @@ Expected: 输出末尾为 `ALL PASS`，且新增 Virtual Camera 测试全部出�
 
 - [ ] **Step 4: 对照规格逐项审查**
 
-确认以下事实均有测试或实现证据：五个属性 XML round-trip、runtime key/type 和 `LoadMode` enum 值域校验、三个 output availability、默认 builtin、local absolute path、folder direct-child deterministic sort、source resolver 的路径/目录环境异常包装、首次 ordinal 0、Preload decoded-byte checked limit 与 overflow context wrapping、Dynamic 每轮加载、builtin Dynamic fail、Gray8/Bgr24、窄 Skip filter、异常消息、幂等 stop/失败启动清理、Preview 消费和 session directory 链接。
+确认以下事实均有测试或实现证据：五个属性 XML round-trip、runtime key/type/缺失输入和 `LoadMode` enum 值域校验、三个 output availability、默认 builtin、canonical builtin URI 大小写规则和固定资产尺寸/像素、local absolute path、folder direct-child deterministic sort（含嵌套目录排除）、source resolver 的路径/目录环境异常包装、首次 ordinal 0、Preload decoded-byte checked limit 与 overflow seam、坏图不计入 limit 和全坏来源、Dynamic 每轮加载与 `_currentEntry` 清理、builtin Dynamic 预 materialize 拒绝、Gray8/Bgr24/JPEG/BMP、STA/MTA 线程模型、文件句柄释放、取消传播、窄 Skip filter、异常消息、幂等 stop/失败启动清理、Preview 消费和 session directory 链接。
 
 - [ ] **Step 5: 提交最终验证修正并报告**
 
@@ -1324,15 +1692,18 @@ git commit -m "test: verify virtual camera implementation"
 | 三个输出及 availability | Tasks 1, 6 |
 | `LoadMode` enum 定义和值域校验 | Tasks 1, 4 |
 | 本地单文件/文件夹、绝对路径、扩展名和 deterministic tie-break | Task 2 |
+| 嵌套目录排除、builtin canonical URI 和固定资产像素契约 | Task 2 |
 | source path normalization/目录枚举的外部异常包装和来源上下文 | Task 2 |
 | builtin sample-set、单图 URI、目录语义、builtin 禁止 Dynamic | Tasks 2, 4 |
 | WPF OnLoad 解码、Gray8/Mono8、Bgr24、FlowImage metadata | Task 3 |
-| Preload 全量缓存、数量/decoded bytes/checked/overflow context wrapping/正数校验 | Task 4 |
+| WPF STA/MTA 线程模型、JPEG/BMP 解码和文件句柄释放 | Task 3 |
+| Preload 全量缓存、数量/decoded bytes/checked/overflow context wrapping/坏图跳过/全坏来源/正数校验 | Task 4 |
 | Dynamic 每轮解码、文件修改可见、无历史缓存 | Task 5 |
 | ordinal、首图不跳过、坏图删除游标 | Tasks 4, 5 |
 | 专用可 Skip 异常和取消/OOM/逻辑异常传播 | Tasks 3, 5 |
 | session initializer、停止清理、未准备状态错误 | Task 4 |
 | StopSessionAsync 幂等、失败启动后可清理并重启 | Task 4 |
+| 生命周期状态、取消传播、Prepare/Execute 停止后错误 | Task 4 |
 | palette、editor、embedded resource | Task 6 |
 | FlowImage Preview、string input、session directory integration | Task 7 |
 | 全量测试和完成标准 | Task 8 |
