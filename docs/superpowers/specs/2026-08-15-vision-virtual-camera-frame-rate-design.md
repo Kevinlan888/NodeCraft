@@ -1,100 +1,183 @@
 # NodeCraft.Vision Virtual Camera 帧率配置设计
 
-状态：已确认方向，待实现评审
+状态：设计已确认，待书面复核
 
 日期：2026-08-15
 
+修订日期：2026-08-16
+
+本设计是 `2026-08-15-vision-virtual-camera-design.md` 的后续补充。涉及采集节拍、
+`FrameId`、`DeviceTimestamp` 和 `CapturedAtUtc` 的内容以本设计为准；原设计中的图片来源、
+排序、Preload/Dynamic、坏图处理、输出端口和生命周期错误边界继续有效。
+
 ## 1. 背景和目标
 
-Virtual Camera 在连续执行时实现了 `IFlowIterationSource`，原先会在没有其他 iteration source 时被执行控制器高速反复调用。对于大图或多图文件夹，图片解码和预览渲染速度远低于迭代生产速度，最新预览结果会持续被后续结果淘汰，表现为 `imagePath` 快速变化而图片预览停滞，停止执行后最后一帧才显示出来。
+Virtual Camera 当前实现 `IFlowIterationSource`，但 `PrepareIterationAsync` 不等待新帧，连续执行时会以 Flow graph 能达到的最高速度循环。对于大图或多图文件夹，结果产生速度远高于预览渲染速度，最新预览任务会被后续结果持续替换，表现为 `imagePath` 快速变化、图片预览不变，停止后才显示最后一帧。
 
-本变更为 Virtual Camera 增加可持久化的目标帧率配置，默认值为 18 FPS，用于限制该节点连续输出的帧率上限，给图片解码和预览渲染留下稳定的处理窗口。
+本变更为 Virtual Camera 增加相机主导的帧率配置，默认 18 FPS。Virtual Camera 在每次 graph iteration 前决定下一帧何时可用；图片严格按来源顺序循环，不跳帧、不积压历史帧。下游处理较慢时形成背压，实际帧率可以低于配置值。
 
-## 2. 非目标
+## 2. 范围和非目标
 
-- 不修改全局 `FlowExecutionController` 的连续迭代节奏；其他 iteration source 不受 Virtual Camera 配置影响。
-- 不改变 Virtual Camera 的图片来源解析、排序、预加载、动态加载、输出端口或 `FrameId` 语义。
-- 不把帧率实现为预览队列的丢帧策略；预览队列仍然只负责合并待渲染结果。
-- 不承诺硬实时调度或精确的墙钟帧率；帧率是连续帧的最大启动频率，图片解码和图执行耗时可能使实际频率更低。
-- 不为单次 `RunOnce` 增加人为首帧等待。
+本变更只修改 Virtual Camera 自身：
+
+- `NodeCraft.Vision` 内的 Virtual Camera 模型、执行器、编辑器和私有图片数据。
+- `NodeCraft.Tests` 中现有 Virtual Camera 测试。
+- Virtual Camera 设计文档。
+
+明确不做以下改动：
+
+- 不修改 `NodeCraft.Flow`、`FlowImage`、`FlowExecutionController` 或 `GraphExecutionSession`。
+- 不修改真实 Vision Camera、Stereo Camera、`LatestFrameMailbox` 或它们的采集会话。
+- 不增加通用 Camera 基类、公共帧率框架、后台采集线程或图片队列。
+- 不使用自由运行相机的“最新帧覆盖”语义；本节点采用有背压的软件触发语义，以保证文件序列不跳图。
+- 不承诺硬实时调度。操作系统定时器、图片解码和 graph 执行都可能使实际帧率低于配置值。
 
 ## 3. 配置契约
 
 `VirtualCameraNodeModel` 新增公开可读写属性：
 
 ```csharp
-public int FrameRate { get; set; } = 18;
+public double FrameRate { get; set; } = 18.0;
 ```
 
-配置约束：
+配置规则：
 
-- `FrameRate` 必须是正整数。
-- 默认值为 `18`。
-- `GraphModelXmlSerializer` 通过现有公开属性机制自动将其持久化到 `<Properties>`，不修改 graph format version。
-- 缺少 `FrameRate` property 的旧 graph 加载后使用默认值 18。
-- 编辑器增加帧率输入控件；非整数、空值或非正数不更新 NodeModel，也不触发 graph-changed 通知。
+- 默认值为 `18.0` FPS。
+- 有效范围为 `0.1 <= FrameRate <= 1000.0`。
+- `NaN`、正负无穷大和范围外数值均无效。
+- `GraphModelXmlSerializer` 通过现有公开属性机制将其保存到 `<Properties>`，不修改 graph format version。
+- 旧 graph 缺少 `FrameRate` property 时，由 NodeModel 构造默认值恢复为 18。
 
 `WriteWorkflowInputs` 增加固定运行时 key：
 
 | NodeModel property | WorkflowNode input key | 类型 |
 | --- | --- | --- |
-| `FrameRate` | `frameRate` | `int` |
+| `FrameRate` | `frameRate` | `double` |
 
-Virtual Camera 的输出和其他五个既有配置 key 保持不变。
+`VirtualCameraExecutor.StartSessionAsync` 的兼容规则为：
 
-## 4. 运行时节拍
+- `frameRate` key 缺失时使用 18，兼容已有直接构造的 `WorkflowDocument`。
+- key 存在但不是 `double`、不是有限数值或超出范围时，启动失败。
+- 错误消息包含 `VirtualCamera`、source path/URI 和无效帧率。
 
-`VirtualCameraExecutor.StartSessionAsync` 从 `frameRate` 读取并验证正整数。缺失、类型错误或小于等于 0 的值都作为配置错误失败；不能静默回退到 18，也不能让 Dynamic/Preload 分支出现不同的校验规则。
+编辑器增加 `Frame rate (FPS)` 文本框，使用 invariant culture 解析 `double`。初始化不触发 graph-changed；合法修改更新 NodeModel 并触发一次通知；空值、非数字、`NaN`、无穷大和越界值不修改模型，也不触发通知。
 
-节拍由 `VirtualCameraExecutor.PrepareIterationAsync` 在节点内部实现，而不是由全局执行控制器实现：
+## 4. 相机主导的背压节拍
 
-1. session 启动后第一次 `PrepareIterationAsync` 立即选择并准备第一张图片，不等待一个帧间隔。
-2. 每次后续 Prepare 在选择下一张图片前等待，确保相邻帧的启动时间间隔至少为 `TimeSpan.FromSeconds(1.0 / FrameRate)`。
-3. 等待使用传入的 `CancellationToken`，停止或取消执行时应立即结束等待并传播 `OperationCanceledException`。
-4. 图像加载或 Flow graph 执行耗时超过目标间隔时，不额外压缩下一帧时间；实际频率可以低于配置值。
-5. session 停止、启动失败或取消后清理节拍状态；重新启动从“首帧立即输出”开始。
+节拍是 `VirtualCameraExecutor` 的私有职责，不进入 Flow framework。执行器使用单调时钟和可取消 delay；测试可通过内部构造参数注入时钟、delay 和 UTC clock，生产路径使用现有 Vision 插件内的系统单调时钟、`Task.Delay` 和 `DateTimeOffset.UtcNow`。
 
-实现可以使用基于单调时钟的下一帧 deadline，避免简单累加 `Task.Delay` 导致执行耗时造成不必要的漂移。等待前后必须保留 cancellation 检查，不能因为节拍等待吞掉取消。
+session 成功完成来源解析和 Preload 后初始化：
 
-## 5. 依赖边界和可测试性
+```text
+period = TimeSpan.FromSeconds(1.0 / FrameRate)
+nextDue = monotonicNow + period
+nextFrameId = 0
+index = -1
+current = null
+```
 
-默认延迟实现使用 `Task.Delay`，但执行器允许测试注入一个等价的 delay delegate。生产代码不暴露新的 Flow 端口或 UI 依赖；测试可以记录请求的 delay 时长和 cancellation token，而不需要真实等待 55.56ms。
+第一次 Prepare 等待完整的一个帧周期。之后每次 `PrepareIterationAsync`：
 
-节拍状态只属于 executor 的当前 session，不写入 graph、不跨 session 复用，也不影响 `_index`、entry ordinal、缓存图片或图片元数据。首帧仍必须使用初始 entry ordinal 0。
+1. 验证 session 已启动，并检查 cancellation token。
+2. 读取单调时钟；若早于 `nextDue`，使用原始 cancellation token 等待剩余时间。
+3. 等待结束后再次检查取消，并记录本帧实际开始准备的 `frameStart`。
+4. 严格选择来源序列中的下一张图片；Preload 读取缓存模板，Dynamic 重新加载文件。
+5. Dynamic 的坏图跳过继续沿用现有删除游标规则，在同一次 Prepare 内寻找下一张可读图片。
+6. 图片成功后创建本帧 `FlowImage` 和 `imagePath`，再次检查取消。
+7. 原子提交 current、entry、index、FrameId 和下一 deadline。
 
-## 6. 备选方案和取舍
+成功提交后：
 
-### 方案 A：Virtual Camera executor 内部节流（采用）
+```text
+nextFrameId = checked(nextFrameId + 1)
+nextDue = frameStart + period
+```
 
-帧率配置和产生图片的节点位于同一边界，只有 Virtual Camera 的连续 Prepare 受影响；现有 Flow runtime 和其他节点无需理解视觉设备帧率。测试可以在执行器边界注入虚拟延迟，验证首帧、间隔、取消和重启语义。
+若 graph 处理完成时 `nextDue` 已经过期，下一帧立即开始；该帧成功后以新的 `frameStart` 重新建立节拍。实现不得通过连续立即执行来追赶错过的历史时刻，也不得跳过来源图片或预先积压图片。
 
-### 方案 B：在 `FlowExecutionController` 对所有 iteration source 统一延迟
+因此：
 
-能够快速限制循环速度，但会把 Virtual Camera 的配置传播到通用执行层，也会改变真实相机或未来 iteration source 的运行行为；当前需求只针对 Virtual Camera，不采用。
+- 下游快于配置帧率时，Virtual Camera 控制 graph 不超过配置值。
+- 下游慢于配置帧率时，每张图片仍严格执行一次，实际 FPS 降低。
+- 同一 graph 中的其他 iteration source 仍按现有 `GraphExecutionSession` 顺序等待；本变更不声称它们的 graph cadence 完全独立。
+- 单次 Run Once 同样等待首个帧周期。
 
-### 方案 C：只调整 `LatestPreviewRenderQueue`
+## 5. 图片数据和逐帧元数据
 
-可以减少预览线程被高速结果饿死的概率，但不能限制图片解码、Flow graph 执行和 `imagePath` 输出的生产速度，也没有真正的 Virtual Camera 帧率语义；不采用。
+不修改公共 `FlowImage` API。`NodeCraft.Vision` 内部增加仅供 Virtual Camera 使用的不可变图片模板，保存宽、高、stride、像素格式、图片类型和私有 `byte[]`。模板通过现有 `FlowImage.FromOwnedBuffer` 创建每帧轻量包装；像素数组始终由插件内部持有且从不修改。
 
-## 7. 测试设计
+模式语义：
 
-新增或扩展现有 Virtual Camera 控制台测试，至少覆盖：
+- Preload 和 builtin 在 session 启动时创建模板，后续帧共享其不可变像素数组，不进行逐帧像素复制。
+- Dynamic 每次 Prepare 重新解码当前文件，使用该次解码得到的像素数组创建当前帧。
+- `MaxPreloadedBytes` 只统计唯一模板的像素数组，不统计每帧轻量 `FlowImage` 包装。
 
-1. 默认 `FrameRate == 18`，自定义值通过 XML round-trip 保存和恢复。
-2. `WriteWorkflowInputs` 写入 `frameRate` 且类型为 `int`；旧 XML 缺少该属性时仍恢复为 18。
-3. `StartSessionAsync` 拒绝缺失、错误类型、0 和负数配置。
-4. 首次 Prepare 不调用 delay；后续 Prepare 请求约 `1000 / 18` ms 的间隔，并按自定义 FPS 计算间隔。
-5. 注入的 delay 收到原始 cancellation token；等待期间取消会传播，且不会推进图片 index/current 状态。
-6. 停止后重新启动首帧仍立即输出 ordinal 0，节拍状态不跨 session 泄漏。
-7. 使用真实 graph integration/执行器测试确认已有输出契约和 `imagePath` 行为未改变；帧率只降低连续迭代速度，不改变图片顺序。
-8. 编辑器初始化不产生 graph change；有效帧率修改触发一次通知，无效输入不修改模型。
+每个成功提交的帧使用：
 
-测试不通过真实睡眠验证墙钟时间；延迟注入 seam 只验证请求的 deadline/间隔计算和取消传递。全量测试仍以 `NodeCraft.Tests` 控制台跑棒的 `ALL PASS` 为完成标准。
+| 字段 | 语义 |
+| --- | --- |
+| `FrameId` | 当前 session 内从 0 连续递增的成功帧序号 |
+| `DeviceTimestamp` | `frameStart` 距 session 节拍起点的整数微秒数 |
+| `CapturedAtUtc` | 图片成功加载并即将提交时的 UTC 时间 |
+| `imagePath` | 本帧实际使用的本地绝对路径或 canonical builtin URI |
 
-## 8. 完成标准
+entry 的稳定 ordinal 只用于来源排序和 Dynamic 删除游标，不再作为公开 `FrameId`。取消、加载失败或其他异常发生在提交前时，不更新 current、index、FrameId 或下一 deadline；之后使用未取消 token 重试时仍从同一图片和帧号开始。
 
-- Virtual Camera 模型、XML/workflow mapping、编辑器和 executor 都支持 `FrameRate`。
-- 新节点默认 18 FPS，首帧立即输出，连续帧不超过配置上限。
-- 取消/停止可以中断帧率等待，且不会污染下一次 session。
-- 既有 Virtual Camera 图片来源和输出契约保持兼容。
-- 新增测试和现有全量测试通过。
+## 6. 生命周期和错误处理
+
+- Start 在提交 session 状态前完成帧率校验、来源解析和 Preload；失败或取消后恢复未启动状态。
+- Stop 不创建额外并发协议；继续遵守现有 runtime 串行调用生命周期的边界。
+- Stop 清空节拍、模板、current、entry、index 和帧号；未启动、失败启动后、已启动或重复 Stop 都保持幂等。
+- Prepare 的 delay 使用传入 token，因此 Flow 停止可以中断首帧或后续帧等待。
+- `nextFrameId` 使用 checked 递增；耗尽 `ulong` 时抛出明确的 VirtualCamera 异常，不回绕。
+- Dynamic/Preload 现有的窄图片异常包装、`SkipErrorImages`、数量/字节限制和取消优先级保持不变。
+
+## 7. 方案取舍
+
+### 方案 A：Executor 内部背压节拍（采用）
+
+Virtual Camera 在 Prepare 边界决定下一帧何时可用，文件严格顺序输出；没有后台线程、队列或框架改动。下游较慢时实际 FPS 降低，符合已确认的软件触发/背压语义。
+
+### 方案 B：后台自由运行 + 最新帧 mailbox
+
+最接近现有真实相机的自由运行模式，但下游慢时会覆盖中间帧，违反“不跳帧”要求，不采用。
+
+### 方案 C：后台自由运行 + 无损队列
+
+可以同时保持相机时钟和不丢帧，但下游慢时队列持续增长，Dynamic 大图会造成不可控内存和延迟，不采用。
+
+## 8. 测试设计
+
+扩展现有 `VirtualCameraTests`，不增加测试框架：
+
+1. 默认 `FrameRate == 18.0`；自定义小数值通过 XML round-trip 和 workflow mapping 保持 `double` 类型。
+2. 旧 XML 缺少属性、runtime key 缺失时使用 18。
+3. runtime 拒绝错误类型、`NaN`、正负无穷大、小于 0.1 和大于 1000 的值。
+4. 编辑器初始化不通知；合法小数触发一次通知；空值、非法数值和越界值不修改模型。
+5. 使用 fake monotonic clock 和 fake delay 验证首帧等待完整周期、后续快路径只等待剩余时间。
+6. 模拟 graph 处理超过 deadline，验证下一帧立即开始但后续重新建立正常周期，不发生追赶突发。
+7. 多次 Prepare 始终按来源顺序循环，不因慢处理跳图。
+8. FrameId 为 `0, 1, 2...`；DeviceTimestamp 单调且使用微秒；CapturedAtUtc 来自注入 UTC clock；imagePath 对应本帧图片。
+9. 等待和 Dynamic load 期间取消都不提交 index、current、FrameId 或 deadline，随后重试同一帧。
+10. Stop/restart 后首帧重新等待一个周期，并从首图、FrameId 0 和新时间戳起点开始。
+11. Preload 重复帧共享同一像素数组，证明 6400×3000 图片不会逐帧复制；预加载字节限制仍只计算唯一模板。
+12. Dynamic 文件修改、坏图删除、全坏来源和异常传播的现有测试继续通过，并适配连续 FrameId 语义。
+13. graph integration 使用可控节拍执行多轮，验证 Preview、imagePath 和 imageDirectory 契约不变。
+
+最终验证：
+
+```text
+dotnet build NodeCraft.sln --no-restore
+dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj --no-build --no-restore
+```
+
+全量测试必须输出 `ALL PASS`。另外使用 `D:\test\barcode-pics`、Preload 和默认 18 FPS 做实际预览回归，确认连续运行时图片和 `imagePath` 按相同顺序稳定变化，停止后没有额外补帧。
+
+## 9. 完成标准
+
+- Virtual Camera 模型、XML/workflow mapping、编辑器和 executor 支持 `double FrameRate`，默认 18 FPS。
+- 首帧等待一个周期，后续帧由相机节拍门控；严格顺序、不跳帧、不积压、不追赶。
+- 每个成功帧具有连续 FrameId、虚拟设备微秒时间戳和当前 UTC 采集时间。
+- Preload 不逐帧复制像素；Dynamic、坏图、取消和重启保持既有正确性。
+- 不修改 NodeCraft.Flow、执行控制器、真实相机或通用相机框架。
+- 新增测试、现有全量测试和 `D:\test\barcode-pics` 实际预览回归通过。

@@ -6,6 +6,9 @@
 
 目标平台：Windows x64、.NET 8、WPF
 
+> 后续补充：采集节拍以及 `FrameId`、`DeviceTimestamp`、`CapturedAtUtc` 的逐帧语义由
+> `2026-08-15-vision-virtual-camera-frame-rate-design.md` 取代；本设计的其他契约继续有效。
+
 ## 1. 目标
 
 在 `NodeCraft.Vision` 插件中增加一个不依赖物理设备的 `Virtual Camera` 节点。节点从一张图片、一个图片文件夹或插件内置图片集合中读取图片，并在每次 workflow iteration 输出当前图片，供图片预览和后续视觉节点使用。
@@ -20,7 +23,7 @@
 
 ## 2. 非目标
 
-- 不模拟相机采集延迟、帧率或设备连接状态。
+- 不模拟设备连接状态；采集延迟和帧率由后续帧率补充设计定义。
 - 不监视文件夹变化；图片序列在 session 启动时确定。
 - 不递归扫描子目录。
 - 第一版不支持 GIF、TIFF、WebP 或其他格式。
