@@ -1,5 +1,6 @@
 using System;
 using NodeCraft.Communication.Nodes;
+using NodeCraft.Communication.Transport;
 using NodeCraft.Flow;
 
 namespace NodeCraft.Communication.Plugin
@@ -39,7 +40,9 @@ namespace NodeCraft.Communication.Plugin
                         MaxCount = null,
                     },
                 },
-                () => null)
+                () => new TcpClientSendExecutor(
+                    new TcpClientConnectionFactory(),
+                    context.Logger))
             {
                 NodeModelType = typeof(TcpClientSendNodeModel),
                 NodeFactory = () => new TcpClientSendNodeModel(),
