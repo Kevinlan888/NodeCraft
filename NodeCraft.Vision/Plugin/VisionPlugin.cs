@@ -169,7 +169,7 @@ namespace NodeCraft.Vision.Plugin
             {
                 NodeModelType = typeof(FlowImagePreviewNodeModel),
                 NodeFactory = () => new FlowImagePreviewNodeModel(),
-                PaletteDisplayName = "Image Preview (FlowImage)",
+                PaletteDisplayName = "Image Preview",
                 PaletteDescription = "Displays a FlowImage without copying or changing the value.",
                 ContentFactory = FlowImagePreviewView.CreateContent,
                 RefreshContentAfterExecution = false,

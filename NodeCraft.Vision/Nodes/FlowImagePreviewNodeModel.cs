@@ -18,7 +18,7 @@ namespace NodeCraft.Vision.Nodes
         public FlowImagePreviewNodeModel()
         {
             ExecutorType = FlowNodeTypeKey;
-            Name = "Image Preview (FlowImage)";
+            Name = "Image Preview";
             InputParameters = new List<PortParameter>
             {
                 new PortParameter

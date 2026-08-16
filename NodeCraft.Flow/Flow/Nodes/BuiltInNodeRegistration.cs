@@ -68,38 +68,6 @@ namespace NodeCraft.Flow.Nodes
             NodeExecutorFactory.Registry.Register(new FlowNodeRegistration(
                 new FlowNodeDefinition
                 {
-                    TypeKey = HelloworldNodeModel.FlowNodeTypeKey,
-                    DisplayName = "Hello World",
-                    Category = "Preview",
-                    InputPorts =
-                    {
-                        new FlowPortDefinition
-                        {
-                            Id = BuiltInNodePorts.Input,
-                            DisplayName = "Input",
-                            IOType = EIOType.Input,
-                            DataType = FlowDataType.String,
-                            PreferredDirection = EPortDirection.Left,
-                            IsRequired = false,
-                        }
-                    },
-                    OutputPorts =
-                    {
-                        new FlowPortDefinition
-                        {
-                            Id = BuiltInNodePorts.Output,
-                            DisplayName = "Output",
-                            IOType = EIOType.Output,
-                            DataType = FlowDataType.String,
-                            PreferredDirection = EPortDirection.Right,
-                        }
-                    }
-                },
-                () => new HelloWorldExecutor()));
-
-            NodeExecutorFactory.Registry.Register(new FlowNodeRegistration(
-                new FlowNodeDefinition
-                {
                     TypeKey = TextPreviewExecutor.FlowNodeTypeKey,
                     DisplayName = "Text Preview",
                     Category = "Preview",
@@ -128,38 +96,6 @@ namespace NodeCraft.Flow.Nodes
                     }
                 },
                 () => new TextPreviewExecutor()));
-
-            NodeExecutorFactory.Registry.Register(new FlowNodeRegistration(
-                new FlowNodeDefinition
-                {
-                    TypeKey = ImagePreviewExecutor.FlowNodeTypeKey,
-                    DisplayName = "Image Preview",
-                    Category = "Preview",
-                    InputPorts =
-                    {
-                        new FlowPortDefinition
-                        {
-                            Id = BuiltInNodePorts.Input,
-                            DisplayName = "Image Path",
-                            IOType = EIOType.Input,
-                            DataType = FlowDataType.String,
-                            PreferredDirection = EPortDirection.Left,
-                            IsRequired = true,
-                        }
-                    },
-                    OutputPorts =
-                    {
-                        new FlowPortDefinition
-                        {
-                            Id = BuiltInNodePorts.Output,
-                            DisplayName = "Output",
-                            IOType = EIOType.Output,
-                            DataType = FlowDataType.String,
-                            PreferredDirection = EPortDirection.Right,
-                        }
-                    }
-                },
-                () => new ImagePreviewExecutor()));
 
             NodeExecutorFactory.Registry.Register(new FlowNodeRegistration(
                 new FlowNodeDefinition
@@ -685,7 +621,6 @@ namespace NodeCraft.Flow.Nodes
             ConfigureBuiltInNode(BooleanNotExecutor.FlowNodeTypeKey, typeof(BooleanNotNodeModel), () => new BooleanNotNodeModel(), "!A", true);
             ConfigureBuiltInNode(IfExecutor.FlowNodeTypeKey, typeof(IfNodeModel), () => new IfNodeModel(), "condition ? true : false", true);
             ConfigureBuiltInNode(AppendTextExecutor.FlowNodeTypeKey, typeof(AppendTextNodeModel), () => new AppendTextNodeModel(), "给字符串追加后缀", false);
-            ConfigureBuiltInNode(HelloworldNodeModel.FlowNodeTypeKey, typeof(HelloworldNodeModel), () => new HelloworldNodeModel(), "调试输出节点", false);
             ConfigureBuiltInNode(
                 TextPreviewExecutor.FlowNodeTypeKey,
                 typeof(TextPreviewNodeModel),
@@ -697,20 +632,6 @@ namespace NodeCraft.Flow.Nodes
                     if (node is TextPreviewNodeModel previewNode)
                     {
                         previewNode.LastPreviewText = TryReadNodeOutput(context, node, BuiltInNodePorts.Output);
-                    }
-                });
-            ConfigureBuiltInNode(
-                ImagePreviewExecutor.FlowNodeTypeKey,
-                typeof(ImagePreviewNodeModel),
-                () => new ImagePreviewNodeModel(),
-                "显示图片路径对应的图片",
-                true,
-                executionResultHandler: (node, context) =>
-                {
-                    if (node is ImagePreviewNodeModel previewNode)
-                    {
-                        previewNode.LastImagePath = TryReadNodeOutput(context, node, BuiltInNodePorts.Output);
-                        previewNode.LastImageError = DefaultFlowNodeContentFactory.ResolveImagePreviewError(previewNode.LastImagePath);
                     }
                 });
         }

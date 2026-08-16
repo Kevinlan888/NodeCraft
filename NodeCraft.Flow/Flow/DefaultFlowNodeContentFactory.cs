@@ -22,11 +22,6 @@ namespace NodeCraft.Flow
 
         public FrameworkElement Build(NodeModel node)
         {
-            if (node is ImagePreviewNodeModel imagePreviewNode)
-            {
-                return BuildImagePreview(imagePreviewNode);
-            }
-
             var container = new StackPanel
             {
                 Orientation = Orientation.Vertical,
@@ -634,118 +629,6 @@ namespace NodeCraft.Flow
             return panel;
         }
 
-        private FrameworkElement BuildImagePreview(ImagePreviewNodeModel node)
-        {
-            var panel = new Grid
-            {
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch,
-                IsHitTestVisible = false,
-            };
-
-            panel.RowDefinitions.Add(new RowDefinition
-            {
-                Height = new GridLength(1, GridUnitType.Star),
-            });
-            if (!string.IsNullOrWhiteSpace(node.LastImagePath))
-            {
-                panel.RowDefinitions.Add(new RowDefinition
-                {
-                    Height = GridLength.Auto,
-                });
-            }
-
-            var border = new Border
-            {
-                MinWidth = 180,
-                MinHeight = 120,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch,
-                CornerRadius = new CornerRadius(6),
-                Background = new SolidColorBrush(Color.FromArgb(90, 255, 255, 255)),
-                ClipToBounds = true,
-            };
-
-            if (!string.IsNullOrWhiteSpace(node.LastImageError))
-            {
-                border.Child = new TextBlock
-                {
-                    Text = node.LastImageError,
-                    TextWrapping = TextWrapping.Wrap,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    TextAlignment = TextAlignment.Center,
-                    Opacity = 0.7,
-                    Margin = new Thickness(10),
-                };
-            }
-            else if (!string.IsNullOrWhiteSpace(node.LastImagePath))
-            {
-                try
-                {
-                    var bitmap = new BitmapImage();
-                    bitmap.BeginInit();
-                    bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                    bitmap.UriSource = CreateImageUri(node.LastImagePath);
-                    bitmap.EndInit();
-                    bitmap.Freeze();
-
-                    border.Child = new Image
-                    {
-                        Source = bitmap,
-                        Stretch = Stretch.UniformToFill,
-                        HorizontalAlignment = HorizontalAlignment.Stretch,
-                        VerticalAlignment = VerticalAlignment.Stretch,
-                    };
-                }
-                catch
-                {
-                    border.Child = new TextBlock
-                    {
-                        Text = "图片加载失败",
-                        TextWrapping = TextWrapping.Wrap,
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        TextAlignment = TextAlignment.Center,
-                        Opacity = 0.7,
-                        Margin = new Thickness(10),
-                    };
-                }
-            }
-            else
-            {
-                border.Child = new TextBlock
-                {
-                    Text = "等待执行后显示图片",
-                    TextWrapping = TextWrapping.Wrap,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    TextAlignment = TextAlignment.Center,
-                    Opacity = 0.65,
-                    Margin = new Thickness(10),
-                };
-            }
-
-            Grid.SetRow(border, 0);
-            panel.Children.Add(border);
-
-            if (!string.IsNullOrWhiteSpace(node.LastImagePath))
-            {
-                var path = new TextBlock
-                {
-                    Margin = new Thickness(0, 6, 0, 0),
-                    Text = node.LastImagePath,
-                    TextWrapping = TextWrapping.Wrap,
-                    Opacity = 0.65,
-                    FontSize = 10,
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                };
-                Grid.SetRow(path, 1);
-                panel.Children.Add(path);
-            }
-
-            return panel;
-        }
 
         private static Uri CreateImageUri(string imagePath)
         {
