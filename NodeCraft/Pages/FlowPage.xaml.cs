@@ -330,14 +330,6 @@ namespace NodeCraft.Pages
                 Links = new List<GraphLink>()
             });
 
-            AddNodeFromRegistry(StringValueExecutor.FlowNodeTypeKey);
-            AddNodeFromRegistry(IntegerValueExecutor.FlowNodeTypeKey);
-            AddNodeFromRegistry(FloatValueExecutor.FlowNodeTypeKey);
-            AddNodeFromRegistry(BooleanValueExecutor.FlowNodeTypeKey);
-            AddNodeFromRegistry(IfExecutor.FlowNodeTypeKey);
-            AddNodeFromRegistry(AppendTextExecutor.FlowNodeTypeKey);
-            AddNodeFromRegistry(TextPreviewExecutor.FlowNodeTypeKey);
-            AddNodeFromRegistry(HelloworldNodeModel.FlowNodeTypeKey);
         }
 
         private void SaveGraphAsCore()
