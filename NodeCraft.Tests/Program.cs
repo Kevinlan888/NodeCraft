@@ -20,6 +20,7 @@ using NodeCraft.Flow.Nodes;
 using NodeCraft;
 using NodeCraft.Pages;
 using NodeCraft.Plugins;
+using NodeCraft.Theming;
 
 internal static partial class Program
 {
@@ -898,11 +899,21 @@ internal static partial class Program
             RunOnSta(() =>
             {
                 var app = new System.Windows.Application();
+                app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
                 var theme = new CommonControls.WPF.CommonControlTheme
                 {
                     Theme = CommonControls.WPF.CommonControlTheme.BaseTheme.Light,
                 };
                 app.Resources.MergedDictionaries.Add(theme);
+                var themeDirectory = CreateThemeTestDirectory();
+                var settingsPath = Path.Combine(themeDirectory, "settings.json");
+                var storeLogger = new RecordingLogger<ThemePreferenceStore>();
+                var managerLogger = new RecordingLogger<ApplicationThemeManager>();
+                var themePreferenceStore = new ThemePreferenceStore(settingsPath, storeLogger);
+                var themeManager = new ApplicationThemeManager(app.Resources, managerLogger);
+                var preferenceSeeded = themePreferenceStore.Save(
+                    CommonControls.WPF.CommonControlTheme.BaseTheme.Dark);
+                var restored = themeManager.Apply(themePreferenceStore.Load());
                 var operationPath = Path.Combine(
                     Path.GetTempPath(),
                     "nodecraft-menu-" + Guid.NewGuid().ToString("N") + ".flow.xml");
@@ -910,7 +921,23 @@ internal static partial class Program
 
                 try
                 {
-                    var window = new MainWindow(new FlowPage(NullLoggerFactory.Instance));
+                    var warningCountBeforeStartup = storeLogger.Entries.Count(entry =>
+                        entry.Level == Microsoft.Extensions.Logging.LogLevel.Warning);
+                    MainWindow window;
+                    using (new FileStream(
+                        settingsPath,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.Read))
+                    {
+                        window = new MainWindow(
+                            new FlowPage(NullLoggerFactory.Instance),
+                            themeManager,
+                            themePreferenceStore);
+                    }
+                    var startupDidNotRewrite = storeLogger.Entries.Count(entry =>
+                        entry.Level == Microsoft.Extensions.Logging.LogLevel.Warning)
+                        == warningCountBeforeStartup;
                     var menu = FindLogicalDescendant<System.Windows.Controls.Menu>(window);
                     var topLevelHeaders = menu?.Items
                         .OfType<System.Windows.Controls.MenuItem>()
@@ -930,7 +957,11 @@ internal static partial class Program
                             .All(header => operationHeaders.Contains(header))
                         || darkThemeMenuItem == null
                         || !darkThemeMenuItem.IsCheckable
-                        || darkThemeMenuItem.IsChecked)
+                        || !darkThemeMenuItem.IsChecked
+                        || !preferenceSeeded
+                        || !restored
+                        || !startupDidNotRewrite
+                        || theme.Theme != CommonControls.WPF.CommonControlTheme.BaseTheme.Dark)
                     {
                         return false;
                     }
@@ -968,15 +999,64 @@ internal static partial class Program
                         return false;
                     }
 
-                    darkThemeMenuItem.IsChecked = true;
-                    var darkApplied = theme.Theme == CommonControls.WPF.CommonControlTheme.BaseTheme.Dark;
                     darkThemeMenuItem.IsChecked = false;
+                    var lightApplied = theme.Theme
+                        == CommonControls.WPF.CommonControlTheme.BaseTheme.Light;
+                    var lightPersisted = new ThemePreferenceStore(
+                        settingsPath,
+                        NullLogger<ThemePreferenceStore>.Instance)
+                        .Load() == CommonControls.WPF.CommonControlTheme.BaseTheme.Light;
+
+                    darkThemeMenuItem.IsChecked = true;
+                    var darkApplied = theme.Theme
+                        == CommonControls.WPF.CommonControlTheme.BaseTheme.Dark;
+                    var darkPersisted = new ThemePreferenceStore(
+                        settingsPath,
+                        NullLogger<ThemePreferenceStore>.Instance)
+                        .Load() == CommonControls.WPF.CommonControlTheme.BaseTheme.Dark;
+
                     window.Close();
-                    return darkApplied && theme.Theme == CommonControls.WPF.CommonControlTheme.BaseTheme.Light;
+
+                    var failingSettingsPath = Path.Combine(themeDirectory, "unwritable-settings");
+                    Directory.CreateDirectory(failingSettingsPath);
+                    var failingStoreLogger = new RecordingLogger<ThemePreferenceStore>();
+                    var failingStore = new ThemePreferenceStore(
+                        failingSettingsPath,
+                        failingStoreLogger);
+                    var failureWindow = new MainWindow(
+                        new FlowPage(NullLoggerFactory.Instance),
+                        themeManager,
+                        failingStore);
+                    var failureMenuItem = GetFieldValue<System.Windows.Controls.MenuItem>(
+                        failureWindow,
+                        "DarkThemeMenuItem");
+                    if (failureMenuItem == null)
+                    {
+                        failureWindow.Close();
+                        return false;
+                    }
+
+                    failureMenuItem.IsChecked = false;
+                    var failedSaveDidNotUndoTheme = theme.Theme
+                            == CommonControls.WPF.CommonControlTheme.BaseTheme.Light
+                        && failingStoreLogger.Entries.Any(entry =>
+                            entry.Level == Microsoft.Extensions.Logging.LogLevel.Warning
+                            && entry.Message.Contains(
+                                "Failed to save theme settings",
+                                StringComparison.Ordinal));
+                    failureWindow.Close();
+
+                    return lightApplied
+                        && lightPersisted
+                        && darkApplied
+                        && darkPersisted
+                        && failedSaveDidNotUndoTheme;
                 }
                 finally
                 {
                     File.Delete(operationPath);
+                    if (Directory.Exists(themeDirectory))
+                        Directory.Delete(themeDirectory, recursive: true);
                     app.Shutdown();
                 }
             }));

@@ -5,21 +5,43 @@ using System.Windows;
 using System.Windows.Controls;
 using NodeCraft.Pages;
 using NodeCraft.Plugins;
+using NodeCraft.Theming;
 
 namespace NodeCraft
 {
     public partial class MainWindow : FramelessWindowEx
     {
         private readonly FlowPage FlowEditor;
+        private readonly ApplicationThemeManager _themeManager;
+        private readonly ThemePreferenceStore _themePreferenceStore;
         private bool _notificationServiceRegistered;
         private bool _pluginFailureNotificationShown;
         private bool _startupGraphLoaded;
         private bool _allowClose;
+        private bool _synchronizingTheme;
 
-        public MainWindow(FlowPage flowPage)
+        public MainWindow(
+            FlowPage flowPage,
+            ApplicationThemeManager themeManager,
+            ThemePreferenceStore themePreferenceStore)
         {
+            FlowEditor = flowPage ?? throw new ArgumentNullException(nameof(flowPage));
+            _themeManager = themeManager ?? throw new ArgumentNullException(nameof(themeManager));
+            _themePreferenceStore = themePreferenceStore
+                ?? throw new ArgumentNullException(nameof(themePreferenceStore));
+
             InitializeComponent();
-            FlowEditor = flowPage;
+            _synchronizingTheme = true;
+            try
+            {
+                DarkThemeMenuItem.IsChecked = _themeManager.CurrentTheme
+                    == CommonControlTheme.BaseTheme.Dark;
+            }
+            finally
+            {
+                _synchronizingTheme = false;
+            }
+
             FlowEditor.ExecutionStateChanged += FlowEditor_ExecutionStateChanged;
             RootGrid.Children.Add(FlowEditor);
             Grid.SetRow(FlowEditor, 1);
@@ -127,28 +149,20 @@ namespace NodeCraft
 
         private void DarkThemeMenuItem_Checked(object sender, RoutedEventArgs e)
         {
-            ChangeTheme(CommonControlTheme.BaseTheme.Dark);
+            if (!_synchronizingTheme)
+                ChangeTheme(CommonControlTheme.BaseTheme.Dark);
         }
 
         private void DarkThemeMenuItem_Unchecked(object sender, RoutedEventArgs e)
         {
-            ChangeTheme(CommonControlTheme.BaseTheme.Light);
+            if (!_synchronizingTheme)
+                ChangeTheme(CommonControlTheme.BaseTheme.Light);
         }
 
-        private static void ChangeTheme(CommonControlTheme.BaseTheme theme)
+        private void ChangeTheme(CommonControlTheme.BaseTheme theme)
         {
-            var mergedDictionaries = Application.Current?.Resources?.MergedDictionaries;
-            if (mergedDictionaries == null)
-                return;
-
-            foreach (var dictionary in mergedDictionaries)
-            {
-                if (dictionary is CommonControlTheme controlTheme)
-                {
-                    controlTheme.Theme = theme;
-                    return;
-                }
-            }
+            _themeManager.Apply(theme);
+            _themePreferenceStore.Save(theme);
         }
 
         private void UpdateExecutionCommandState()
