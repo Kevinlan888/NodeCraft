@@ -686,6 +686,113 @@ internal static partial class Program
                     });
         });
 
+        await RunAsync("virtual camera cancellation during frame wait retries the same frame", async () =>
+        {
+            var clock = new VirtualCameraTestClock();
+            var requested = new TaskCompletionSource<TimeSpan>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var delayCalls = 0;
+            async Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken)
+            {
+                delayCalls++;
+                if (delayCalls == 1)
+                {
+                    requested.TrySetResult(duration);
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    return;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                clock.Advance(duration);
+            }
+
+            var executor = new VirtualCameraExecutor(
+                null,
+                clock,
+                DelayAsync,
+                () => DateTimeOffset.UnixEpoch);
+            var context = CreateVirtualCameraContext(
+                "builtin://vision/sample-set",
+                VirtualCameraLoadMode.Preload,
+                10,
+                100,
+                false,
+                out var node,
+                out var definition,
+                frameRate: 20.0);
+            await executor.StartSessionAsync(context, CancellationToken.None);
+
+            using var cancellation = new CancellationTokenSource();
+            var pending = executor.PrepareIterationAsync(context, cancellation.Token);
+            var requestedDelay = await requested.Task;
+            cancellation.Cancel();
+            var canceled = false;
+            try
+            {
+                await pending;
+            }
+            catch (OperationCanceledException exception)
+            {
+                canceled = exception.CancellationToken == cancellation.Token;
+            }
+
+            var first = await ReadVirtualCameraFrameAsync(
+                executor,
+                context,
+                node,
+                definition,
+                CancellationToken.None);
+            await executor.StopSessionAsync(context, CancellationToken.None);
+
+            return canceled
+                && requestedDelay == TimeSpan.FromMilliseconds(50)
+                && delayCalls == 2
+                && first.Image.FrameId == 0
+                && first.Path.EndsWith("/checkerboard", StringComparison.Ordinal);
+        });
+
+        await RunAsync("virtual camera restart resets first-frame delay path and metadata", async () =>
+        {
+            var timing = new VirtualCameraTestTiming();
+            var executor = new VirtualCameraExecutor(
+                null,
+                timing.Clock,
+                timing.DelayAsync,
+                () => DateTimeOffset.UnixEpoch);
+            var context = CreateVirtualCameraContext(
+                "builtin://vision/sample-set",
+                VirtualCameraLoadMode.Preload,
+                10,
+                100,
+                false,
+                out var node,
+                out var definition,
+                frameRate: 20.0);
+
+            await executor.StartSessionAsync(context, CancellationToken.None);
+            var firstSession = await ReadVirtualCameraFrameAsync(
+                executor, context, node, definition, CancellationToken.None);
+            await executor.StopSessionAsync(context, CancellationToken.None);
+            timing.Clock.Advance(TimeSpan.FromMilliseconds(10));
+
+            await executor.StartSessionAsync(context, CancellationToken.None);
+            var secondSession = await ReadVirtualCameraFrameAsync(
+                executor, context, node, definition, CancellationToken.None);
+            await executor.StopSessionAsync(context, CancellationToken.None);
+
+            return timing.Delays.SequenceEqual(new[]
+                {
+                    TimeSpan.FromMilliseconds(50),
+                    TimeSpan.FromMilliseconds(50),
+                })
+                && firstSession.Image.FrameId == 0
+                && secondSession.Image.FrameId == 0
+                && firstSession.Image.DeviceTimestamp == 50000
+                && secondSession.Image.DeviceTimestamp == 50000
+                && firstSession.Path.EndsWith("/checkerboard", StringComparison.Ordinal)
+                && secondSession.Path.EndsWith("/checkerboard", StringComparison.Ordinal);
+        });
+
         await RunAsync("virtual camera wraps decoded byte accounting overflow", async () =>
         {
             try
@@ -1403,6 +1510,7 @@ internal static partial class Program
                     {
                         ["sourcePath"] = fixture.DirectoryPath,
                         ["loadMode"] = VirtualCameraLoadMode.Preload,
+                        ["frameRate"] = 1000.0,
                         ["maxPreloadedImages"] = 10,
                         ["maxPreloadedBytes"] = 100L,
                         ["skipErrorImages"] = false,
