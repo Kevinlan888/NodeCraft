@@ -19,7 +19,8 @@
 - Do not add OS theme detection or automatic system-theme synchronization.
 - Keep themed colors in XAML dynamic resources; do not add hard-coded production colors.
 - Host and flow projects remain C# 9 with nullable disabled; `NodeCraft.Tests` remains nullable-enabled.
-- Run implementation tests with `--no-restore` first because this workspace already has assets and restricted network access may block NuGet.
+- Before the first TDD cycle, verify that the required restore/build assets are usable. If restore is needed, run `dotnet restore NodeCraft.sln` in an environment with package access, then confirm `dotnet build NodeCraft.sln --no-restore` succeeds. A `NU*` restore/assets failure is an environment blocker, not the expected RED state; only proceed to RED/GREEN checks after the project can compile.
+- Once the assets are verified, run implementation tests with `--no-restore` to avoid repeated NuGet access.
 
 ---
 
@@ -691,7 +692,7 @@ git commit -m "feat: restore the theme before creating UI"
 
 Add `using NodeCraft.Theming;` to `Program.cs`.
 
-Inside `NodeCraft main window exposes the formal menu and theme control`, after adding `theme` to application resources, create the store and manager:
+Inside `NodeCraft main window exposes the formal menu and theme control`, after creating the `Application`, set `ShutdownMode = ShutdownMode.OnExplicitShutdown` so closing the first shown window does not asynchronously tear down the second failure-path window. Then, after adding `theme` to application resources, create the store and manager:
 
 ```csharp
 var themeDirectory = CreateThemeTestDirectory();
