@@ -585,4 +585,3 @@ If Task 6 only added tests that were already committed in earlier slices, do not
 - [ ] Host, port, timeout, failure policy, dynamic IDs, values, and links round-trip through existing paths.
 - [ ] A loopback server receives ordered bytes from the production socket implementation.
 - [ ] \`git diff --check\` passes and the worktree is clean apart from any intentionally retained branch state.
-
