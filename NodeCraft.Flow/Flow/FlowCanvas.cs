@@ -112,7 +112,20 @@ namespace NodeCraft.Flow
 
         public double CellSize { get; set; } = 16;
 
-        public Brush GridBrush { get; set; } = Brushes.Gray;
+        public static readonly DependencyProperty GridBrushProperty
+            = DependencyProperty.Register(
+                nameof(GridBrush),
+                typeof(Brush),
+                typeof(FlowCanvas),
+                new FrameworkPropertyMetadata(
+                    Brushes.Gray,
+                    FrameworkPropertyMetadataOptions.AffectsRender));
+
+        public Brush GridBrush
+        {
+            get => (Brush)GetValue(GridBrushProperty);
+            set => SetValue(GridBrushProperty, value);
+        }
 
         public double GridThickness { get; set; } = 0.5;
 
@@ -197,7 +210,6 @@ namespace NodeCraft.Flow
             _lineContextMenu = new ContextMenu();
             _lineContextMenu.Items.Add(deleteMenu);
 
-            GridBrush = (Brush)FindResource("colorNeutralStroke1");
             ApplyViewportTransform();
         }
 

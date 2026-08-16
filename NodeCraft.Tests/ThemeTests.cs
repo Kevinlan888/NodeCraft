@@ -1,11 +1,16 @@
 using CommonControls.WPF;
 using Microsoft.Extensions.Logging;
+using NodeCraft.Flow;
 using NodeCraft.Theming;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Threading;
+using System.Xml.Linq;
 
 internal static partial class Program
 {
@@ -201,6 +206,108 @@ internal static partial class Program
                 && pluginIndex > restoreIndex
                 && windowIndex > restoreIndex;
         });
+
+        Run("FlowCanvas grid brush follows the dynamic subtle stroke resource", () =>
+            RunOnSta(() =>
+            {
+                var metadata = FlowCanvas.GridBrushProperty.GetMetadata(typeof(FlowCanvas))
+                    as FrameworkPropertyMetadata;
+                var root = XDocument.Load(
+                    FindRepositoryFile("NodeCraft.Flow", "Themes", "Flow.xaml"));
+                XNamespace presentation
+                    = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+                var style = root.Root?
+                    .Elements(presentation + "Style")
+                    .Single(element =>
+                        (string?)element.Attribute("TargetType")
+                            == "{x:Type flow:FlowCanvas}");
+                var gridBrushSetter = style?
+                    .Elements(presentation + "Setter")
+                    .SingleOrDefault(element =>
+                        (string?)element.Attribute("Property") == "GridBrush");
+                if (metadata?.AffectsRender != true
+                    || (string?)gridBrushSetter?.Attribute("Value")
+                        != "{DynamicResource colorNeutralStrokeSubtle}")
+                {
+                    return false;
+                }
+
+                var unstyledCanvas = new FlowCanvas();
+                if (!ReferenceEquals(unstyledCanvas.GridBrush, Brushes.Gray))
+                    return false;
+
+                var window = new Window
+                {
+                    Width = 640,
+                    Height = 480,
+                    ShowActivated = false,
+                    ShowInTaskbar = false,
+                    WindowStyle = WindowStyle.None,
+                };
+                var theme = new CommonControlTheme
+                {
+                    Theme = CommonControlTheme.BaseTheme.Light,
+                };
+                window.Resources.MergedDictionaries.Add(theme);
+                window.Resources.MergedDictionaries.Add(new ResourceDictionary
+                {
+                    Source = new Uri(
+                        "pack://application:,,,/CommonControls.WPF;component/Themes/FluentDesign.Defaults.xaml",
+                        UriKind.Absolute),
+                });
+                window.Resources.MergedDictionaries.Add(new ResourceDictionary
+                {
+                    Source = new Uri(
+                        "pack://application:,,,/NodeCraft.Flow;component/Themes/Flow.xaml",
+                        UriKind.Absolute),
+                });
+                var canvas = new FlowCanvas
+                {
+                    Width = 400,
+                    Height = 300,
+                };
+                window.Content = canvas;
+
+                try
+                {
+                    window.Show();
+                    canvas.ApplyTemplate();
+                    window.UpdateLayout();
+
+                    var lightColor = ((SolidColorBrush)canvas.GridBrush).Color;
+                    var expectedLight = ((SolidColorBrush)canvas.FindResource(
+                        "colorNeutralStrokeSubtle")).Color;
+
+                    theme.Theme = CommonControlTheme.BaseTheme.Dark;
+                    canvas.Dispatcher.Invoke(
+                        DispatcherPriority.ApplicationIdle,
+                        new Action(() => { }));
+                    window.UpdateLayout();
+
+                    var darkColor = ((SolidColorBrush)canvas.GridBrush).Color;
+                    var expectedDark = ((SolidColorBrush)canvas.FindResource(
+                        "colorNeutralStrokeSubtle")).Color;
+                    var oldDarkStroke = ((SolidColorBrush)canvas.FindResource(
+                        "colorNeutralStroke1")).Color;
+
+                    var customBrush = new SolidColorBrush(Colors.Magenta);
+                    canvas.GridBrush = customBrush;
+                    theme.Theme = CommonControlTheme.BaseTheme.Light;
+                    canvas.Dispatcher.Invoke(
+                        DispatcherPriority.ApplicationIdle,
+                        new Action(() => { }));
+
+                    return lightColor == expectedLight
+                        && darkColor == expectedDark
+                        && darkColor != lightColor
+                        && darkColor != oldDarkStroke
+                        && ReferenceEquals(canvas.GridBrush, customBrush);
+                }
+                finally
+                {
+                    window.Close();
+                }
+            }));
     }
 
     private static string CreateThemeTestDirectory()

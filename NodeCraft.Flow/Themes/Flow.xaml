@@ -12,6 +12,8 @@
 
     <Style TargetType="{x:Type flow:FlowCanvas}">
         <Setter Property="Background" Value="Transparent" />
+        <Setter Property="GridBrush"
+                Value="{DynamicResource colorNeutralStrokeSubtle}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type flow:FlowCanvas}">
