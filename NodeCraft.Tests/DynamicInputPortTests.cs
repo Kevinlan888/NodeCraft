@@ -310,9 +310,163 @@ internal static partial class Program
                 && !validation.Errors.Any(error => error.Code == "UnknownPort"
                     && error.NodeId == "dynamic");
         });
+
+        Run("socket resolver exposes effective dynamic input slots", () =>
+        {
+            EnsureDynamicTestRegistration();
+            var node = CreateDynamicNode("socket-target", "input_1", "input_2");
+            var definition = NodeExecutorFactory.Registry.Resolve(DynamicTestTypeKey).Definition;
+            var sockets = FlowSocketResolver.Resolve(node, definition, isInput: true);
+
+            return sockets.Count == 3
+                && sockets[1].Slot == 1
+                && sockets[1].Definition.IsDynamic
+                && sockets[1].Definition.Id == "input_1"
+                && sockets[2].Definition.Id == "input_2"
+                && sockets[2].RuntimePort?.IsDynamic == true;
+        });
+
+        Run("canvas adds and removes dynamic inputs without a realized view", () =>
+            RunOnSta(() =>
+            {
+            EnsureDynamicTestRegistration();
+            var canvas = CreateHeadlessCanvas();
+            var node = CreateDynamicNode("headless-target", "input_1", "input_2");
+            canvas.GraphModel.Nodes.Add(node);
+            var changedCount = 0;
+            canvas.GraphChanged += (_, _) => changedCount++;
+
+            var added = canvas.TryAddDynamicInput(node, out var addError);
+            var removed = canvas.TryRemoveDynamicInput(node, "input_1", out var removeError);
+
+            return added
+                && removed
+                && string.IsNullOrEmpty(addError)
+                && string.IsNullOrEmpty(removeError)
+                && FlowDynamicInputResolver.GetDynamicPortIds(node)
+                    .SequenceEqual(new[] { "input_2", "input_3" })
+                && changedCount == 2;
+            }));
+
+        Run("canvas enforces dynamic input bounds and fixed-port protection", () =>
+            RunOnSta(() =>
+            {
+            EnsureBoundedDynamicTestRegistration();
+            var canvas = CreateHeadlessCanvas();
+            var bounded = CreateDynamicNodeForType(
+                BoundedDynamicTestTypeKey,
+                "bounded-target",
+                "input_1",
+                "input_2");
+            var minNode = CreateDynamicNode("minimum-target", "input_1");
+            canvas.GraphModel.Nodes.Add(bounded);
+            canvas.GraphModel.Nodes.Add(minNode);
+
+            var addedAtMaximum = canvas.TryAddDynamicInput(bounded, out var maximumError);
+            var removedAtMinimum = canvas.TryRemoveDynamicInput(minNode, "input_1", out var minimumError);
+            var removedFixed = canvas.TryRemoveDynamicInput(minNode, FlowPorts.FlowIn, out var fixedError);
+
+            return !addedAtMaximum
+                && maximumError.Contains("maximum", StringComparison.OrdinalIgnoreCase)
+                && !removedAtMinimum
+                && minimumError.Contains("at least", StringComparison.OrdinalIgnoreCase)
+                && !removedFixed
+                && fixedError.Contains("fixed", StringComparison.OrdinalIgnoreCase);
+            }));
+
+        Run("canvas removes a connected dynamic input and reindexes later links", () =>
+            RunOnSta(() =>
+            {
+            EnsureDynamicTestRegistration();
+            var canvas = CreateHeadlessCanvas();
+            var target = CreateDynamicNode("reindex-target", "input_1", "input_2", "input_3");
+            var sourceA = CreateStringSourceNode("reindex-source-a");
+            var sourceB = CreateStringSourceNode("reindex-source-b");
+            canvas.GraphModel.Nodes.Add(sourceA);
+            canvas.GraphModel.Nodes.Add(sourceB);
+            canvas.GraphModel.Nodes.Add(target);
+            canvas.GraphModel.Links.Add(new GraphLink
+            {
+                Id = "reindex-a",
+                OriginNodeId = sourceA.Id,
+                OriginSlot = 0,
+                TargetNodeId = target.Id,
+                TargetSlot = 1,
+            });
+            canvas.GraphModel.Links.Add(new GraphLink
+            {
+                Id = "reindex-b",
+                OriginNodeId = sourceB.Id,
+                OriginSlot = 0,
+                TargetNodeId = target.Id,
+                TargetSlot = 3,
+            });
+            GraphModelLinkReconciler.Reconcile(canvas.GraphModel);
+
+            var removed = canvas.TryRemoveDynamicInput(target, "input_1", out var error);
+            var remaining = canvas.GraphModel.Links.SingleOrDefault(link => link.Id == "reindex-b");
+
+            return removed
+                && string.IsNullOrEmpty(error)
+                && canvas.GraphModel.Links.All(link => link.Id != "reindex-a")
+                && remaining?.TargetSlot == 2
+                && FlowDynamicInputResolver.GetDynamicPortIds(target)
+                    .SequenceEqual(new[] { "input_2", "input_3" })
+                && target.InputParameters.Single(port => port.PortId == "input_2").LinkId == null
+                && target.InputParameters.Single(port => port.PortId == "input_3").LinkId == "reindex-b";
+            }));
+
+        Run("canvas grows a too-small explicit node height for dynamic rows", () =>
+            RunOnSta(() =>
+            {
+            EnsureDynamicTestRegistration();
+            var canvas = CreateHeadlessCanvas();
+            var node = CreateDynamicNode("height-target", "input_1", "input_2");
+            node.Height = 40;
+            canvas.GraphModel.Nodes.Add(node);
+
+            var added = canvas.TryAddDynamicInput(node, out _);
+            return added && node.Height > 40;
+            }));
+
+        Run("dynamic nodes render add/remove controls while static nodes do not", () =>
+            RunOnSta(() => RunWithTemplatedFlowCanvas((canvas, _, worldCanvas) =>
+            {
+                EnsureDynamicTestRegistration();
+                var dynamicNode = CreateDynamicNode("visual-dynamic", "input_1", "input_2");
+                var staticNode = new AppendTextNodeModel { Id = "visual-static" };
+                canvas.LoadGraph(new GraphModel
+                {
+                    Nodes = new List<NodeModel> { dynamicNode, staticNode },
+                    Links = new List<GraphLink>(),
+                });
+                canvas.UpdateLayout();
+
+                var dynamicView = worldCanvas.Children.OfType<NodeView>()
+                    .Single(view => view.NodeModel.Id == dynamicNode.Id);
+                var staticView = worldCanvas.Children.OfType<NodeView>()
+                    .Single(view => view.NodeModel.Id == staticNode.Id);
+                var dynamicButtons = FindVisualDescendants<System.Windows.Controls.Button>(dynamicView).ToList();
+                var staticButtons = FindVisualDescendants<System.Windows.Controls.Button>(staticView).ToList();
+
+                return dynamicButtons.Count(button =>
+                        string.Equals(
+                            System.Windows.Automation.AutomationProperties.GetName(button),
+                            "Add input",
+                            StringComparison.Ordinal)) == 1
+                    && dynamicButtons.Count(button =>
+                        string.Equals(
+                            System.Windows.Automation.AutomationProperties.GetName(button),
+                            "Remove input",
+                            StringComparison.Ordinal)) == 2
+                    && !staticButtons.Any(button =>
+                        !string.IsNullOrWhiteSpace(
+                            System.Windows.Automation.AutomationProperties.GetName(button)));
+            })));
     }
 
     private const string DynamicTestTypeKey = "test.dynamic-input-ports";
+    private const string BoundedDynamicTestTypeKey = "test.dynamic-input-bounded";
 
     private static void EnsureDynamicTestRegistration()
     {
@@ -345,10 +499,19 @@ internal static partial class Program
 
     private static NodeModel CreateDynamicNode(string nodeId, params string[] dynamicPortIds)
     {
-        var node = new DynamicTestNodeModel
+        return CreateDynamicNodeForType(DynamicTestTypeKey, nodeId, dynamicPortIds);
+    }
+
+    private static NodeModel CreateDynamicNodeForType(
+        string typeKey,
+        string nodeId,
+        params string[] dynamicPortIds)
+    {
+        var node = new NodeModel
         {
             Id = nodeId,
             Name = nodeId,
+            ExecutorType = typeKey,
             InputParameters = new List<PortParameter>
             {
                 new PortParameter { PortId = FlowPorts.FlowIn },
@@ -357,8 +520,33 @@ internal static partial class Program
         node.InputParameters.AddRange(dynamicPortIds.Select(CreateDynamicPort));
         FlowDynamicInputResolver.MaterializeNodePorts(
             node,
-            NodeExecutorFactory.Registry.Resolve(DynamicTestTypeKey).Definition);
+            NodeExecutorFactory.Registry.Resolve(typeKey).Definition);
         return node;
+    }
+
+    private static FlowCanvas CreateHeadlessCanvas()
+    {
+        return new FlowCanvas
+        {
+            GraphModel = new GraphModel
+            {
+                Nodes = new List<NodeModel>(),
+                Links = new List<GraphLink>(),
+            },
+        };
+    }
+
+    private static void EnsureBoundedDynamicTestRegistration()
+    {
+        if (NodeExecutorFactory.Registry.Contains(BoundedDynamicTestTypeKey))
+        {
+            return;
+        }
+
+        var definition = CreateDynamicDefinition(initialCount: 2, maxCount: 2, isRequired: true);
+        definition.TypeKey = BoundedDynamicTestTypeKey;
+        NodeExecutorFactory.Registry.Register(
+            new FlowNodeRegistration(definition, () => new DynamicTestExecutor()));
     }
 
     private sealed class DynamicTestNodeModel : NodeModel
@@ -477,6 +665,29 @@ internal static partial class Program
         catch (InvalidOperationException exception)
         {
             return exception.Message.Contains(expectedMessage, StringComparison.Ordinal);
+        }
+    }
+
+    private static IEnumerable<T> FindVisualDescendants<T>(System.Windows.DependencyObject root)
+        where T : System.Windows.DependencyObject
+    {
+        if (root == null)
+        {
+            yield break;
+        }
+
+        for (var index = 0; index < System.Windows.Media.VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, index);
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            foreach (var descendant in FindVisualDescendants<T>(child))
+            {
+                yield return descendant;
+            }
         }
     }
 

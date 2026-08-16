@@ -120,6 +120,21 @@
         </Setter>
     </Style>
 
+    <Style x:Key="FlowDynamicInputActionButtonStyle" TargetType="Button">
+        <Setter Property="Width" Value="18" />
+        <Setter Property="Height" Value="18" />
+        <Setter Property="MinWidth" Value="18" />
+        <Setter Property="MinHeight" Value="18" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource colorNeutralForeground1}" />
+        <Setter Property="Background" Value="{DynamicResource colorSubtleBackground}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource colorNeutralStroke1}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
     <!-- ════════════════════════════════════════════════════════════
          Connector (Flow namespace)
          ════════════════════════════════════════════════════════════ -->

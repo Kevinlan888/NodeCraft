@@ -51,6 +51,22 @@ namespace NodeCraft.Flow
         public static IReadOnlyList<FlowSocketDescriptor> Resolve(NodeModel node, FlowNodeDefinition definition, bool isInput)
         {
             var result = new List<FlowSocketDescriptor>();
+
+            if (isInput)
+            {
+                foreach (var inputPort in FlowDynamicInputResolver.ResolveNodeInputPorts(node, definition))
+                {
+                    result.Add(new FlowSocketDescriptor
+                    {
+                        Slot = inputPort.Slot,
+                        Definition = inputPort.Definition,
+                        RuntimePort = inputPort.RuntimePort,
+                    });
+                }
+
+                return result;
+            }
+
             var definitions = isInput ? definition?.InputPorts : definition?.OutputPorts;
             var runtimePorts = isInput ? node?.InputParameters : node?.OutputParameters;
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using NodeCraft.Localization;
@@ -120,6 +121,8 @@ namespace NodeCraft.Flow
                 // 未注册的节点类型：回退为运行时端口顺序 + 运行时下标（保持原行为）。
                 BuildSocketsFromRuntime();
             }
+
+            EnsureDynamicInputHeight();
         }
 
         private void BuildSocketsFromDefinitions(FlowNodeRegistration registration)
@@ -134,6 +137,11 @@ namespace NodeCraft.Flow
                     isInput: true,
                     socket.RuntimePort,
                     socket.Definition));
+            }
+
+            if (definition?.DynamicInputTemplate != null)
+            {
+                InputSocketsPanel.Children.Add(CreateDynamicActionButton("Add input", null, "+"));
             }
 
             foreach (var socket in FlowSocketResolver.Resolve(NodeModel, definition, isInput: false))
@@ -204,6 +212,10 @@ namespace NodeCraft.Flow
             {
                 row.Children.Add(connector);
                 row.Children.Add(label);
+                if (definition?.IsDynamic == true && !string.IsNullOrWhiteSpace(port?.PortId))
+                {
+                    row.Children.Add(CreateDynamicActionButton("Remove input", port.PortId, "−"));
+                }
             }
             else
             {
@@ -213,6 +225,89 @@ namespace NodeCraft.Flow
 
             _connectors.Add(connector);
             return row;
+        }
+
+        private Button CreateDynamicActionButton(string automationName, string portId, string content)
+        {
+            var button = new Button
+            {
+                Content = content,
+                Tag = portId,
+                ToolTip = automationName,
+                Style = TryFindResource("FlowDynamicInputActionButtonStyle") as Style,
+                Margin = new Thickness(3, 1, 0, 1),
+                Padding = new Thickness(0),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            AutomationProperties.SetName(button, automationName);
+            button.Click += DynamicInputActionButton_Click;
+            return button;
+        }
+
+        private void DynamicInputActionButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button button && _parentCanvas != null)
+            {
+                var automationName = AutomationProperties.GetName(button);
+                if (string.Equals(automationName, "Add input", StringComparison.Ordinal))
+                {
+                    _parentCanvas.TryAddDynamicInput(NodeModel, out _);
+                }
+                else if (string.Equals(automationName, "Remove input", StringComparison.Ordinal))
+                {
+                    _parentCanvas.TryRemoveDynamicInput(NodeModel, button.Tag as string, out _);
+                }
+            }
+
+            e.Handled = true;
+        }
+
+        internal void RefreshDynamicInputs()
+        {
+            RebuildSockets();
+            InvalidateMeasure();
+            InvalidateArrange();
+            UpdateLayout();
+            EnsureDynamicInputHeight();
+        }
+
+        internal void EnsureDynamicInputHeight()
+        {
+            if (NodeModel == null)
+            {
+                return;
+            }
+
+            var desiredHeight = GetDesiredDynamicInputHeight(NodeModel);
+            if (desiredHeight <= 0)
+            {
+                return;
+            }
+
+            var explicitHeight = NodeModel.Height > 0 ? NodeModel.Height : Height;
+            if (explicitHeight > 0 && desiredHeight > explicitHeight)
+            {
+                Height = desiredHeight;
+                NodeModel.Height = desiredHeight;
+            }
+        }
+
+        internal static double GetDesiredDynamicInputHeight(NodeModel node)
+        {
+            if (node == null
+                || string.IsNullOrWhiteSpace(node.ExecutorType)
+                || !NodeExecutorFactory.Registry.TryResolve(node.ExecutorType, out var registration)
+                || registration.Definition.DynamicInputTemplate == null)
+            {
+                return 0;
+            }
+
+            var inputRows = FlowDynamicInputResolver.ResolveNodeInputPorts(node, registration.Definition).Count;
+            const double headerAndContentHeight = 52;
+            const double inputRowHeight = 22;
+            const double addButtonHeight = 22;
+            return headerAndContentHeight + (inputRows * inputRowHeight) + addButtonHeight;
         }
 
         private string ResolvePortLabel(PortParameter port, FlowPortDefinition definition = null)

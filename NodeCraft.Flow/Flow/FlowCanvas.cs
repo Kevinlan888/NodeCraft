@@ -372,6 +372,102 @@ namespace NodeCraft.Flow
             nodeView.Content = content ?? nodeInfo.Name;
         }
 
+        internal bool TryAddDynamicInput(NodeModel node, out string error)
+        {
+            error = null;
+            if (node == null
+                || string.IsNullOrWhiteSpace(node.ExecutorType)
+                || !NodeExecutorFactory.Registry.TryResolve(node.ExecutorType, out var registration))
+            {
+                error = $"Node '{node?.Id ?? string.Empty}' uses an unregistered executor type.";
+                return false;
+            }
+
+            if (!FlowDynamicInputResolver.TryAddDynamicPort(
+                    node,
+                    registration.Definition,
+                    out _,
+                    out error))
+            {
+                return false;
+            }
+
+            EnsureDynamicInputHeight(node);
+            GetNodeViewByNodeID(node.Id)?.RefreshDynamicInputs();
+            ReconcileGraphIfAvailable();
+            UpdateCanvas();
+            RaiseGraphChanged();
+            return true;
+        }
+
+        internal bool TryRemoveDynamicInput(NodeModel node, string portId, out string error)
+        {
+            error = null;
+            if (node == null
+                || string.IsNullOrWhiteSpace(node.ExecutorType)
+                || !NodeExecutorFactory.Registry.TryResolve(node.ExecutorType, out var registration))
+            {
+                error = $"Node '{node?.Id ?? string.Empty}' uses an unregistered executor type.";
+                return false;
+            }
+
+            if (!FlowDynamicInputResolver.TryRemoveDynamicPort(
+                    node,
+                    registration.Definition,
+                    portId,
+                    out var removedSlot,
+                    out error))
+            {
+                return false;
+            }
+
+            GraphModel ??= new GraphModel();
+            GraphModel.Nodes ??= new List<NodeModel>();
+            GraphModel.Links ??= new List<GraphLink>();
+            GraphModel.Links.RemoveAll(link =>
+                string.Equals(link.TargetNodeId, node.Id, StringComparison.Ordinal)
+                && link.TargetSlot == removedSlot);
+            foreach (var link in GraphModel.Links.Where(link =>
+                string.Equals(link.TargetNodeId, node.Id, StringComparison.Ordinal)
+                && link.TargetSlot > removedSlot))
+            {
+                link.TargetSlot--;
+            }
+
+            if (GraphModel.Nodes.All(item => !ReferenceEquals(item, node)))
+            {
+                GraphModel.Nodes.Add(node);
+            }
+
+            ReconcileGraphIfAvailable();
+            EnsureDynamicInputHeight(node);
+            GetNodeViewByNodeID(node.Id)?.RefreshDynamicInputs();
+            UpdateCanvas();
+            RaiseGraphChanged();
+            return true;
+        }
+
+        private void ReconcileGraphIfAvailable()
+        {
+            if (GraphModel == null)
+            {
+                return;
+            }
+
+            GraphModel.Nodes ??= new List<NodeModel>();
+            GraphModel.Links ??= new List<GraphLink>();
+            GraphModelLinkReconciler.Reconcile(GraphModel);
+        }
+
+        private static void EnsureDynamicInputHeight(NodeModel node)
+        {
+            var desiredHeight = NodeView.GetDesiredDynamicInputHeight(node);
+            if (desiredHeight > 0 && node.Height > 0 && desiredHeight > node.Height)
+            {
+                node.Height = desiredHeight;
+            }
+        }
+
         private NodeView CreateNodeView(NodeModel nodeInfo, object content)
         {
             var node = new NodeView();
@@ -1302,13 +1398,15 @@ namespace NodeCraft.Flow
             {
                 var endPoint = GetMouseWorldPosition();
                 var hitNode = GetNodeUnderPosition(endPoint);
-                if (hitNode == null || hitNode == _originalElement || hitNode.NodeModel.InputParameters.Count == 0)
+                if (hitNode == null
+                    || hitNode == _originalElement
+                    || ResolveInputPortDescriptors(hitNode.NodeModel).Count == 0)
                 {
                     if (hitNode == _originalElement)
                     {
                         RaiseConnectionCreateFailed("不能连接到自身节点。");
                     }
-                    else if (hitNode != null && hitNode.NodeModel.InputParameters.Count == 0)
+                    else if (hitNode != null && ResolveInputPortDescriptors(hitNode.NodeModel).Count == 0)
                     {
                         RaiseConnectionCreateFailed("目标节点没有可用输入端口。");
                     }
@@ -1613,14 +1711,16 @@ namespace NodeCraft.Flow
                 return false;
             }
 
-            if (sourceSlot < 0 || sourceSlot >= srcReg.Definition.OutputPorts.Count
-                || targetSlot < 0 || targetSlot >= tgtReg.Definition.InputPorts.Count)
+            if (sourceSlot < 0 || sourceSlot >= srcReg.Definition.OutputPorts.Count)
             {
                 return false;
             }
 
             sourceType = srcReg.Definition.OutputPorts[sourceSlot].DataType;
-            targetType = tgtReg.Definition.InputPorts[targetSlot].DataType;
+            targetType = ResolveInputPortDescriptors(targetNode, tgtReg.Definition)
+                .FirstOrDefault(descriptor => descriptor.Slot == targetSlot)
+                ?.Definition
+                ?.DataType;
             return sourceType != null && targetType != null;
         }
 
@@ -1632,9 +1732,10 @@ namespace NodeCraft.Flow
                 return null;
             }
 
-            return slot >= 0 && slot < registration.Definition.InputPorts.Count
-                ? registration.Definition.InputPorts[slot].Id
-                : null;
+            return ResolveInputPortDescriptors(node, registration.Definition)
+                .FirstOrDefault(descriptor => descriptor.Slot == slot)
+                ?.Definition
+                ?.Id;
         }
 
         private static bool IsSlotAllowingMultipleConnections(NodeModel node, int slot)
@@ -1646,9 +1747,33 @@ namespace NodeCraft.Flow
                 return false;
             }
 
-            var port = registration.Definition.InputPorts?
-                .ElementAtOrDefault(slot);
-            return port?.AllowMultipleConnections == true;
+            return ResolveInputPortDescriptors(node, registration.Definition)
+                .FirstOrDefault(descriptor => descriptor.Slot == slot)
+                ?.Definition
+                ?.AllowMultipleConnections == true;
+        }
+
+        private static IReadOnlyList<FlowInputPortDescriptor> ResolveInputPortDescriptors(
+            NodeModel node,
+            FlowNodeDefinition definition = null)
+        {
+            if (node == null)
+            {
+                return Array.Empty<FlowInputPortDescriptor>();
+            }
+
+            if (definition == null)
+            {
+                if (string.IsNullOrWhiteSpace(node.ExecutorType)
+                    || !NodeExecutorFactory.Registry.TryResolve(node.ExecutorType, out var registration))
+                {
+                    return Array.Empty<FlowInputPortDescriptor>();
+                }
+
+                definition = registration.Definition;
+            }
+
+            return FlowDynamicInputResolver.ResolveNodeInputPorts(node, definition);
         }
 
         private void ClearTargetPortLinkId(GraphLink link)
@@ -1744,6 +1869,11 @@ namespace NodeCraft.Flow
 
         private NodeView GetNodeViewByNodeID(string nodeId)
         {
+            if (_canvas == null)
+            {
+                return null;
+            }
+
             foreach (var nodeView in _canvas.Children.OfType<NodeView>())
             {
                 if (nodeView.NodeModel.Id == nodeId)
