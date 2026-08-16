@@ -99,7 +99,7 @@ builtin://vision/sample-set
 
 这个默认值只是节点初始配置；用户填写无效路径时，运行时不得回退到内置图片。
 
-节点编辑器显示 `SourcePath`、加载模式、预加载数量上限、预加载字节上限和“跳过错误图片”选项。编辑器修改属性时沿用现有 Vision 节点的 graph-changed 通知模式。
+节点编辑器显示 `SourcePath`、加载模式、预加载数量上限、预加载内存上限（MB）和“跳过错误图片”选项。预加载内存上限在 UI 中使用二进制 MB（`1 MB = 1,048,576 bytes`）展示和输入，但模型属性 `MaxPreloadedBytes`、XML 属性、runtime key `maxPreloadedBytes` 及 executor 校验仍使用字节数。编辑器修改属性时沿用现有 Vision 节点的 graph-changed 通知模式。
 
 ## 4. 输出契约
 

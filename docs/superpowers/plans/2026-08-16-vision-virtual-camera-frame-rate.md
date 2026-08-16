@@ -19,6 +19,7 @@
 - `FrameId` 在每个 session 内按成功帧 `0, 1, 2...` 连续递增；`DeviceTimestamp` 是 session 节拍起点后的整数微秒；`CapturedAtUtc` 是图片成功准备后、提交前的 UTC 时间。
 - 等待、加载或包装期间取消时不得提交 current、成功图片 index、FrameId 或下一 deadline；Dynamic 坏图删除继续遵守现有窄异常和游标规则。
 - Preload/builtin 只保留一份像素数组，逐帧不得复制大图像素；`MaxPreloadedBytes` 仍只累计唯一模板 buffer。
+- `MaxPreloadedBytes` 的模型、XML 和 workflow runtime 契约仍使用 `long` 字节数；编辑器和文档以二进制 MB 展示/输入（`1 MB = 1,048,576 bytes`），正整数 MB 在 UI 层 checked 转回字节，默认值显示为 `512 MB`。
 - 所有 Virtual Camera 自己创建的配置、时钟和溢出异常必须包含 `VirtualCamera` 和 source path/URI。
 - 每个实现任务必须执行红灯、绿灯和小提交；最终全量测试必须输出 `ALL PASS`。
 
@@ -243,6 +244,13 @@ private void FrameRateEditor_TextChanged(object sender, TextChangedEventArgs e)
 ```
 
 确保 `_initializing = false` 仍在所有控件赋初值之后。
+
+同时把现有预加载字节上限控件改为 MB 展示和输入：标签使用
+`Maximum preloaded memory (MB)`，初始化显示
+`_node.MaxPreloadedBytes / 1048576`，输入使用 invariant culture 解析正整数 MB，
+通过 checked 乘法转换为 bytes 后写入 `_node.MaxPreloadedBytes`。默认值
+`536870912` 显示为 `512`；空值、非数字、非正数和转换溢出均不修改模型或触发通知。
+XML 属性、workflow key 和 executor 仍保持 `MaxPreloadedBytes`/`maxPreloadedBytes` 的字节契约。
 
 - [ ] **Step 6: 运行模型和 UI 测试确认绿灯**
 

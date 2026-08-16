@@ -62,6 +62,8 @@ public double FrameRate { get; set; } = 18.0;
 
 编辑器增加 `Frame rate (FPS)` 文本框，使用 invariant culture 解析 `double`。初始化不触发 graph-changed；合法修改更新 NodeModel 并触发一次通知；空值、非数字、`NaN`、无穷大和越界值不修改模型，也不触发通知。
 
+预加载内存上限的内部契约保持不变：`MaxPreloadedBytes` 仍是 `long` 字节数，`maxPreloadedBytes` runtime key 仍传递字节数，executor 仍按解码后像素 buffer 的实际字节数校验。编辑器仅将该字段以 MB 展示和输入：标签为 `Maximum preloaded memory (MB)`，使用二进制换算 `1 MB = 1,048,576 bytes`；默认的 `536,870,912` bytes 显示为 `512 MB`。编辑器输入正整数 MB 后以 checked 乘法转换回字节，非数字、非正数或转换溢出时不修改模型，也不触发 graph-changed。XML 属性名、runtime key 和已有 graph 中的数值保持向后兼容。
+
 ## 4. 相机主导的背压节拍
 
 节拍是 `VirtualCameraExecutor` 的私有职责，不进入 Flow framework。执行器使用单调时钟和可取消 delay；测试可通过内部构造参数注入时钟、delay 和 UTC clock，生产路径使用现有 Vision 插件内的系统单调时钟、`Task.Delay` 和 `DateTimeOffset.UtcNow`。
