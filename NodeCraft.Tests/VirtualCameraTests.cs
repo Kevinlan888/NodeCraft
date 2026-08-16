@@ -27,6 +27,7 @@ internal static partial class Program
             {
                 SourcePath = Path.Combine(Path.GetTempPath(), "frames"),
                 LoadMode = VirtualCameraLoadMode.Dynamic,
+                FrameRate = 29.97,
                 MaxPreloadedImages = 7,
                 MaxPreloadedBytes = 123456L,
                 SkipErrorImages = true,
@@ -55,6 +56,8 @@ internal static partial class Program
                     && node.SourcePath == (string)workflowNode.Inputs["sourcePath"]
                     && workflowNode.Inputs["loadMode"] is VirtualCameraLoadMode mode
                     && mode == VirtualCameraLoadMode.Dynamic
+                    && workflowNode.Inputs["frameRate"] is double frameRate
+                    && frameRate == 29.97
                     && workflowNode.Inputs["maxPreloadedImages"] is int imageLimit
                     && imageLimit == 7
                     && workflowNode.Inputs["maxPreloadedBytes"] is long byteLimit
@@ -67,6 +70,7 @@ internal static partial class Program
                         new[] { FlowDataType.Image.Key, FlowDataType.String.Key, FlowDataType.String.Key })
                     && xml.Contains("Name=\"SourcePath\"", StringComparison.Ordinal)
                     && xml.Contains("Name=\"LoadMode\"", StringComparison.Ordinal)
+                    && xml.Contains("Name=\"FrameRate\"", StringComparison.Ordinal)
                     && xml.Contains("Name=\"MaxPreloadedImages\"", StringComparison.Ordinal)
                     && xml.Contains("Name=\"MaxPreloadedBytes\"", StringComparison.Ordinal)
                     && xml.Contains("Name=\"SkipErrorImages\"", StringComparison.Ordinal);
@@ -80,11 +84,13 @@ internal static partial class Program
                 return modelAssertions
                     && restored.SourcePath == node.SourcePath
                     && restored.LoadMode == node.LoadMode
+                    && restored.FrameRate == 29.97
                     && restored.MaxPreloadedImages == node.MaxPreloadedImages
                     && restored.MaxPreloadedBytes == node.MaxPreloadedBytes
                     && restored.SkipErrorImages == node.SkipErrorImages
                     && legacyDefaults.SourcePath == "builtin://vision/sample-set"
                     && legacyDefaults.LoadMode == VirtualCameraLoadMode.Preload
+                    && legacyDefaults.FrameRate == 18.0
                     && legacyDefaults.MaxPreloadedImages == 100
                     && legacyDefaults.MaxPreloadedBytes == 536870912L
                     && !legacyDefaults.SkipErrorImages;
@@ -100,9 +106,16 @@ internal static partial class Program
             var node = new VirtualCameraNodeModel();
             return node.SourcePath == "builtin://vision/sample-set"
                 && node.LoadMode == VirtualCameraLoadMode.Preload
+                && node.FrameRate == 18.0
                 && node.MaxPreloadedImages == 100
                 && node.MaxPreloadedBytes == 536870912L
-                && !node.SkipErrorImages;
+                && !node.SkipErrorImages
+                && VirtualCameraNodeModel.IsValidFrameRate(0.1)
+                && VirtualCameraNodeModel.IsValidFrameRate(1000.0)
+                && !VirtualCameraNodeModel.IsValidFrameRate(double.NaN)
+                && !VirtualCameraNodeModel.IsValidFrameRate(double.PositiveInfinity)
+                && !VirtualCameraNodeModel.IsValidFrameRate(0.099)
+                && !VirtualCameraNodeModel.IsValidFrameRate(1000.001);
         });
 
         await RunAsync("virtual camera resolves a single absolute image and its directory", async () =>
@@ -1090,17 +1103,31 @@ internal static partial class Program
 
                 var source = GetPrivateField<TextBox>(content, "_sourcePathEditor");
                 var mode = GetPrivateField<ComboBox>(content, "_loadModeEditor");
+                var frameRate = GetPrivateField<TextBox>(content, "_frameRateEditor");
                 var maxImages = GetPrivateField<TextBox>(content, "_maxPreloadedImagesEditor");
                 var maxBytes = GetPrivateField<TextBox>(content, "_maxPreloadedBytesEditor");
                 var skipErrors = GetPrivateField<CheckBox>(content, "_skipErrorImagesEditor");
 
                 source.Text = "C:\\frames";
                 mode.SelectedItem = VirtualCameraLoadMode.Dynamic;
+                frameRate.Text = "29.97";
                 maxImages.Text = "7";
                 maxBytes.Text = "123456";
                 skipErrors.IsChecked = true;
 
                 var changesAfterValidInput = graphChanges;
+                foreach (var invalid in new[]
+                {
+                    string.Empty,
+                    "not-a-double",
+                    "NaN",
+                    "Infinity",
+                    "0.09",
+                    "1000.01",
+                })
+                {
+                    frameRate.Text = invalid;
+                }
                 maxImages.Text = "not-an-int";
                 maxBytes.Text = "not-a-long";
 
@@ -1108,10 +1135,11 @@ internal static partial class Program
                     && initializedWithoutChange
                     && node.SourcePath == "C:\\frames"
                     && node.LoadMode == VirtualCameraLoadMode.Dynamic
+                    && node.FrameRate == 29.97
                     && node.MaxPreloadedImages == 7
                     && node.MaxPreloadedBytes == 123456L
                     && node.SkipErrorImages
-                    && changesAfterValidInput == 5
+                    && changesAfterValidInput == 6
                     && graphChanges == changesAfterValidInput;
             })));
 

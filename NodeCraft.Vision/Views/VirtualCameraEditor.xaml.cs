@@ -15,6 +15,7 @@ namespace NodeCraft.Vision.Views
         private readonly VirtualCameraNodeModel _node;
         private readonly TextBox _sourcePathEditor;
         private readonly ComboBox _loadModeEditor;
+        private readonly TextBox _frameRateEditor;
         private readonly TextBox _maxPreloadedImagesEditor;
         private readonly TextBox _maxPreloadedBytesEditor;
         private readonly CheckBox _skipErrorImagesEditor;
@@ -31,6 +32,7 @@ namespace NodeCraft.Vision.Views
             Content = parsedContent;
             _sourcePathEditor = Find<TextBox>(root, "SourcePathEditor");
             _loadModeEditor = Find<ComboBox>(root, "LoadModeEditor");
+            _frameRateEditor = Find<TextBox>(root, "FrameRateEditor");
             _maxPreloadedImagesEditor = Find<TextBox>(root, "MaxPreloadedImagesEditor");
             _maxPreloadedBytesEditor = Find<TextBox>(root, "MaxPreloadedBytesEditor");
             _skipErrorImagesEditor = Find<CheckBox>(root, "SkipErrorImagesEditor");
@@ -38,6 +40,7 @@ namespace NodeCraft.Vision.Views
             _loadModeEditor.ItemsSource = Enum.GetValues(typeof(VirtualCameraLoadMode));
             _sourcePathEditor.TextChanged += SourcePathEditor_TextChanged;
             _loadModeEditor.SelectionChanged += LoadModeEditor_SelectionChanged;
+            _frameRateEditor.TextChanged += FrameRateEditor_TextChanged;
             _maxPreloadedImagesEditor.TextChanged += MaxPreloadedImagesEditor_TextChanged;
             _maxPreloadedBytesEditor.TextChanged += MaxPreloadedBytesEditor_TextChanged;
             _skipErrorImagesEditor.Checked += SkipErrorImagesEditor_Changed;
@@ -45,6 +48,9 @@ namespace NodeCraft.Vision.Views
 
             _sourcePathEditor.Text = _node.SourcePath ?? string.Empty;
             _loadModeEditor.SelectedItem = _node.LoadMode;
+            _frameRateEditor.Text = _node.FrameRate.ToString(
+                "G17",
+                CultureInfo.InvariantCulture);
             _maxPreloadedImagesEditor.Text = _node.MaxPreloadedImages.ToString(
                 CultureInfo.InvariantCulture);
             _maxPreloadedBytesEditor.Text = _node.MaxPreloadedBytes.ToString(
@@ -111,6 +117,23 @@ namespace NodeCraft.Vision.Views
             }
 
             _node.LoadMode = mode;
+            NotifyChanged();
+        }
+
+        private void FrameRateEditor_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_initializing
+                || !double.TryParse(
+                    _frameRateEditor.Text,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out var value)
+                || !VirtualCameraNodeModel.IsValidFrameRate(value))
+            {
+                return;
+            }
+
+            _node.FrameRate = value;
             NotifyChanged();
         }
 
