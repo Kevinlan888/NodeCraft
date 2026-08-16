@@ -12,6 +12,7 @@ using NLog.Targets;
 using NodeCraft.Flow;
 using NodeCraft.Pages;
 using NodeCraft.Plugins;
+using NodeCraft.Theming;
 
 namespace NodeCraft
 {
@@ -59,6 +60,8 @@ namespace NodeCraft
                 builder.AddNLog(BuildFallbackLoggingConfiguration());
             });
             services.AddSingleton<IConfiguration>(_configuration);
+            services.AddSingleton<ThemePreferenceStore>();
+            services.AddSingleton<ApplicationThemeManager>();
             services.AddTransient<PluginLoader>(provider => new PluginLoader(
                 NodeExecutorFactory.Registry,
                 new Version(1, 0),
@@ -69,6 +72,10 @@ namespace NodeCraft
             Services = services.BuildServiceProvider();
             _fatalLogger = Services.GetRequiredService<ILoggerFactory>().CreateLogger("NodeCraft.App");
             AttachUnhandledExceptionHandlers();
+
+            var themePreferenceStore = Services.GetRequiredService<ThemePreferenceStore>();
+            var themeManager = Services.GetRequiredService<ApplicationThemeManager>();
+            themeManager.Apply(themePreferenceStore.Load());
 
             PluginLoadReport = Services.GetRequiredService<PluginLoader>().LoadAll(
                 Path.Combine(AppContext.BaseDirectory, "Plugins"));

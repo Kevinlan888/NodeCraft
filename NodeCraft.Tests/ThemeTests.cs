@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Windows;
 
 internal static partial class Program
 {
@@ -138,6 +139,67 @@ internal static partial class Program
             {
                 Directory.Delete(directory, recursive: true);
             }
+        });
+
+        Run("application theme manager applies and reports the current theme", () =>
+            RunOnSta(() =>
+            {
+                var resources = new ResourceDictionary();
+                var controlTheme = new CommonControlTheme
+                {
+                    Theme = CommonControlTheme.BaseTheme.Light,
+                };
+                resources.MergedDictionaries.Add(controlTheme);
+                var logger = new RecordingLogger<ApplicationThemeManager>();
+                var manager = new ApplicationThemeManager(resources, logger);
+
+                return manager.Apply(CommonControlTheme.BaseTheme.Dark)
+                    && manager.CurrentTheme == CommonControlTheme.BaseTheme.Dark
+                    && controlTheme.Theme == CommonControlTheme.BaseTheme.Dark
+                    && logger.Entries.Count == 0;
+            }));
+
+        Run("application theme manager logs a missing theme dictionary", () =>
+            RunOnSta(() =>
+            {
+                var logger = new RecordingLogger<ApplicationThemeManager>();
+                var manager = new ApplicationThemeManager(
+                    new ResourceDictionary(),
+                    logger);
+
+                return !manager.Apply(CommonControlTheme.BaseTheme.Dark)
+                    && manager.CurrentTheme == CommonControlTheme.BaseTheme.Light
+                    && logger.Entries.Any(entry =>
+                        entry.Level == LogLevel.Warning
+                        && entry.Message.Contains(
+                            "CommonControlTheme",
+                            StringComparison.Ordinal));
+            }));
+
+        Run("NodeCraft restores the theme before loading plugins and resolving UI", () =>
+        {
+            var source = File.ReadAllText(
+                FindRepositoryFile("NodeCraft", "App.xaml.cs"));
+            var startup = ExtractMethodBody(source, "OnStartup");
+            var restoreIndex = startup.IndexOf(
+                "themeManager.Apply(themePreferenceStore.Load())",
+                StringComparison.Ordinal);
+            var pluginIndex = startup.IndexOf(
+                "GetRequiredService<PluginLoader>()",
+                StringComparison.Ordinal);
+            var windowIndex = startup.IndexOf(
+                "GetRequiredService<MainWindow>()",
+                StringComparison.Ordinal);
+
+            return source.Contains(
+                    "AddSingleton<ThemePreferenceStore>()",
+                    StringComparison.Ordinal)
+                && source.Contains(
+                    "AddSingleton<ApplicationThemeManager>()",
+                    StringComparison.Ordinal)
+                && restoreIndex >= 0
+                && pluginIndex > restoreIndex
+                && windowIndex > restoreIndex;
         });
     }
 
