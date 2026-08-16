@@ -2624,7 +2624,7 @@ internal static partial class Program
                 }
                 catch (InvalidOperationException ex)
                 {
-                    return ex.Message.Contains("Current format is v4");
+                    return ex.Message.Contains("Current format is v5");
                 }
             }
             finally

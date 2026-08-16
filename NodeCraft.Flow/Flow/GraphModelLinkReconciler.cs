@@ -17,6 +17,19 @@ namespace NodeCraft.Flow
             graph.Links ??= new List<GraphLink>();
 
             var nodeLookup = BuildNodeLookup(graph.Nodes);
+            var definitionsByNodeId = new Dictionary<string, FlowNodeDefinition>(StringComparer.Ordinal);
+            foreach (var node in graph.Nodes)
+            {
+                if (!string.IsNullOrWhiteSpace(node.ExecutorType)
+                    && NodeExecutorFactory.Registry.TryResolve(node.ExecutorType, out var registration))
+                {
+                    FlowDynamicInputResolver.MaterializeNodePorts(node, registration.Definition);
+                    definitionsByNodeId[node.Id] = FlowDynamicInputResolver.ResolveDefinition(
+                        registration.Definition,
+                        FlowDynamicInputResolver.GetDynamicPortIds(node));
+                }
+            }
+
             ClearInputLinkIds(graph.Nodes);
 
             var linkIds = new HashSet<string>(StringComparer.Ordinal);
@@ -50,13 +63,19 @@ namespace NodeCraft.Flow
                         $"Link '{link.Id}' references unknown origin slot {link.OriginSlot} on node '{sourceNode.Id}'.");
                 }
 
-                if (link.TargetSlot < 0 || link.TargetSlot >= targetRegistration.Definition.InputPorts.Count)
+                if (!definitionsByNodeId.TryGetValue(targetNode.Id, out var targetDefinitionModel))
+                {
+                    throw new InvalidOperationException(
+                        $"Link '{link.Id}' target node '{targetNode.Id}' has no resolved input definition.");
+                }
+
+                if (link.TargetSlot < 0 || link.TargetSlot >= targetDefinitionModel.InputPorts.Count)
                 {
                     throw new InvalidOperationException(
                         $"Link '{link.Id}' references unknown target slot {link.TargetSlot} on node '{targetNode.Id}'.");
                 }
 
-                var targetDefinition = targetRegistration.Definition.InputPorts[link.TargetSlot];
+                var targetDefinition = targetDefinitionModel.InputPorts[link.TargetSlot];
                 var targetSlot = Tuple.Create(targetNode.Id, link.TargetSlot);
                 if (!occupiedTargetSlots.Add(targetSlot))
                 {

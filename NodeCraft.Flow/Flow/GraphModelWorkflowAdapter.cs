@@ -29,6 +29,9 @@ namespace NodeCraft.Flow
                     DisplayName = node.Name,
                     X = node.X,
                     Y = node.Y,
+                    DynamicInputPortIds = FlowDynamicInputResolver
+                        .GetDynamicPortIds(node)
+                        .ToList(),
                 };
 
                 if (node is IWorkflowNodeValueProvider valueProvider)

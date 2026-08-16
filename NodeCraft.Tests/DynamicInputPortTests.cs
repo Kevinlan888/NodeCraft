@@ -1,7 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using NodeCraft.Flow;
+using NodeCraft.Flow.Nodes;
 
 internal static partial class Program
 {
@@ -81,6 +85,198 @@ internal static partial class Program
                 && ThrowsInvalidTemplate(invalidMaximum, "MaxCount")
                 && ThrowsInvalidTemplate(collidingPrefix, "flowIn");
         });
+
+        Run("dynamic graph saves v5 and adapter preserves ordered links", () =>
+        {
+            EnsureDynamicTestRegistration();
+            var graph = new GraphModel
+            {
+                Nodes = new List<NodeModel>
+                {
+                    CreateStringSourceNode("source-a"),
+                    CreateStringSourceNode("source-b"),
+                    CreateDynamicNode("target", "input_1", "input_2"),
+                },
+                Links = new List<GraphLink>
+                {
+                    new GraphLink
+                    {
+                        Id = "link-a",
+                        OriginNodeId = "source-a",
+                        OriginSlot = 0,
+                        TargetNodeId = "target",
+                        TargetSlot = 1,
+                    },
+                    new GraphLink
+                    {
+                        Id = "link-b",
+                        OriginNodeId = "source-b",
+                        OriginSlot = 0,
+                        TargetNodeId = "target",
+                        TargetSlot = 2,
+                    },
+                },
+            };
+            var path = Path.Combine(Path.GetTempPath(), "dynamic-input-v5-" + Guid.NewGuid().ToString("N") + ".flow.xml");
+
+            try
+            {
+                GraphModelXmlSerializer.Save(graph, path);
+                var xml = File.ReadAllText(path);
+                var loaded = GraphModelXmlSerializer.LoadWithReport(path);
+                var target = loaded.Graph.Nodes.Single(node => node.Id == "target");
+                var workflow = GraphModelWorkflowAdapter.Convert(loaded.Graph);
+                var workflowTarget = workflow.Nodes.Single(node => node.Id == "target");
+
+                return xml.Contains("FormatVersion=\"5\"", StringComparison.Ordinal)
+                    && xml.Contains("IsDynamic=\"true\"", StringComparison.Ordinal)
+                    && loaded.FormatVersion == 5
+                    && FlowDynamicInputResolver.GetDynamicPortIds(target)
+                        .SequenceEqual(new[] { "input_1", "input_2" })
+                    && target.InputParameters[1].LinkId == "link-a"
+                    && target.InputParameters[2].LinkId == "link-b"
+                    && workflowTarget.DynamicInputPortIds.SequenceEqual(new[] { "input_1", "input_2" })
+                    && ((LinkRef)workflowTarget.Inputs["input_1"]).SourceNodeId == "source-a"
+                    && ((LinkRef)workflowTarget.Inputs["input_2"]).SourceNodeId == "source-b";
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        });
+
+        Run("v4 graphs load missing dynamic markers as fixed ports", () =>
+        {
+            var path = Path.Combine(Path.GetTempPath(), "dynamic-input-v4-" + Guid.NewGuid().ToString("N") + ".flow.xml");
+            try
+            {
+                File.WriteAllText(path, CreateIntegerPreviewGraphXml(targetLinkId: null, targetSlot: 1));
+                var result = GraphModelXmlSerializer.LoadWithReport(path);
+                return result.FormatVersion == 4
+                    && result.Graph.Nodes.SelectMany(node => node.InputParameters)
+                        .All(port => !port.IsDynamic);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        });
+
+        Run("serializer rejects malformed dynamic markers", () =>
+        {
+            var path = Path.Combine(Path.GetTempPath(), "dynamic-input-invalid-marker-" + Guid.NewGuid().ToString("N") + ".flow.xml");
+            try
+            {
+                var xml = CreateIntegerPreviewGraphXml(targetLinkId: null, targetSlot: 1)
+                    .Replace(
+                        "PortId=\"input\" Direction=\"Left\"",
+                        "PortId=\"input\" Direction=\"Left\" IsDynamic=\"maybe\"",
+                        StringComparison.Ordinal);
+                File.WriteAllText(path, xml);
+
+                try
+                {
+                    GraphModelXmlSerializer.LoadWithReport(path);
+                    return false;
+                }
+                catch (InvalidOperationException exception)
+                {
+                    return exception.Message.Contains("IsDynamic", StringComparison.Ordinal)
+                        && exception.Message.Contains("Boolean", StringComparison.Ordinal);
+                }
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        });
+
+        Run("reconciliation rejects unlinked dynamic metadata on a fixed node", () =>
+        {
+            var node = new AppendTextNodeModel
+            {
+                Id = "invalid-dynamic-node",
+            };
+            node.InputParameters.Add(CreateDynamicPort("input_1"));
+            var graph = new GraphModel
+            {
+                Nodes = new List<NodeModel> { node },
+                Links = new List<GraphLink>(),
+            };
+
+            return Throws<InvalidOperationException>(() => GraphModelLinkReconciler.Reconcile(graph));
+        });
+    }
+
+    private const string DynamicTestTypeKey = "test.dynamic-input-ports";
+
+    private static void EnsureDynamicTestRegistration()
+    {
+        if (NodeExecutorFactory.Registry.Contains(DynamicTestTypeKey))
+        {
+            return;
+        }
+
+        var definition = CreateDynamicDefinition(initialCount: 1, maxCount: null, isRequired: true);
+        definition.TypeKey = DynamicTestTypeKey;
+        NodeExecutorFactory.Registry.RegisterNode(
+            new FlowNodeRegistration(definition, () => new DynamicTestExecutor()),
+            typeof(DynamicTestNodeModel),
+            () => new DynamicTestNodeModel(),
+            showInPalette: false);
+    }
+
+    private static NodeModel CreateStringSourceNode(string nodeId)
+    {
+        var node = new StringValueNodeModel
+        {
+            Id = nodeId,
+            Name = nodeId,
+        };
+        FlowDynamicInputResolver.MaterializeNodePorts(
+            node,
+            NodeExecutorFactory.Registry.Resolve(StringValueExecutor.FlowNodeTypeKey).Definition);
+        return node;
+    }
+
+    private static NodeModel CreateDynamicNode(string nodeId, params string[] dynamicPortIds)
+    {
+        var node = new DynamicTestNodeModel
+        {
+            Id = nodeId,
+            Name = nodeId,
+            InputParameters = new List<PortParameter>
+            {
+                new PortParameter { PortId = FlowPorts.FlowIn },
+            },
+        };
+        node.InputParameters.AddRange(dynamicPortIds.Select(CreateDynamicPort));
+        FlowDynamicInputResolver.MaterializeNodePorts(
+            node,
+            NodeExecutorFactory.Registry.Resolve(DynamicTestTypeKey).Definition);
+        return node;
+    }
+
+    private sealed class DynamicTestNodeModel : NodeModel
+    {
+        public DynamicTestNodeModel()
+        {
+            ExecutorType = DynamicTestTypeKey;
+        }
+    }
+
+    private sealed class DynamicTestExecutor : IFlowNodeExecutor
+    {
+        public Task<IReadOnlyDictionary<string, object>> ExecuteAsync(
+            FlowExecutionContext context,
+            WorkflowNode node,
+            FlowNodeDefinition definition,
+            IReadOnlyDictionary<string, object> inputs,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<IReadOnlyDictionary<string, object>>(
+                new Dictionary<string, object> { ["output"] = string.Empty });
+        }
     }
 
     private static FlowNodeDefinition CreateDynamicDefinition(
@@ -170,4 +366,5 @@ internal static partial class Program
             return exception.Message.Contains(expectedMessage, StringComparison.Ordinal);
         }
     }
+
 }

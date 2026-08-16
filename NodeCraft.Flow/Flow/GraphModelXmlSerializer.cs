@@ -18,7 +18,7 @@ namespace NodeCraft.Flow
 
     public static class GraphModelXmlSerializer
     {
-        public const int CurrentFormatVersion = 4;
+        public const int CurrentFormatVersion = 5;
 
         public static void Save(GraphModel graph, string filePath, ILogger logger = null)
         {
@@ -64,7 +64,7 @@ namespace NodeCraft.Flow
                 var root = document.Root ?? throw new InvalidOperationException("Graph XML is missing the root element.");
                 var formatVersion = ReadFormatVersion(root);
 
-                if (formatVersion != CurrentFormatVersion)
+                if (formatVersion != 4 && formatVersion != CurrentFormatVersion)
                 {
                     throw new InvalidOperationException(
                         $"Graph format v{formatVersion} is unsupported. Current format is v{CurrentFormatVersion}.");
@@ -73,7 +73,7 @@ namespace NodeCraft.Flow
                 if (root.Element("Connections") != null)
                 {
                     throw new InvalidOperationException(
-                        "Legacy Connections graphs are unsupported. Use a NodeCraft v4 graph.");
+                        "Legacy Connections graphs are unsupported. Use a NodeCraft v5 graph.");
                 }
 
                 var nodes = root.Element("Nodes")
@@ -86,6 +86,15 @@ namespace NodeCraft.Flow
                     Nodes = nodes.Elements("Node").Select(DeserializeNode).ToList(),
                     Links = links.Elements("Link").Select(DeserializeLink).ToList(),
                 };
+
+                foreach (var node in graph.Nodes)
+                {
+                    if (NodeExecutorFactory.Registry.TryResolve(node.ExecutorType, out var registration))
+                    {
+                        FlowDynamicInputResolver.MaterializeNodePorts(node, registration.Definition);
+                    }
+                }
+
                 GraphModelLinkReconciler.Reconcile(graph);
 
                 logger?.LogInformation("Loaded graph from '{FilePath}'.", filePath);
@@ -143,7 +152,8 @@ namespace NodeCraft.Flow
                 new XAttribute("Direction", port.PortDirection.ToString()),
                 new XAttribute("ParameterType", port.Parameter?.ParameterType ?? string.Empty),
                 new XAttribute("Value", Convert.ToString(port.Parameter?.Value, CultureInfo.InvariantCulture) ?? string.Empty),
-                new XAttribute("LinkId", port.LinkId ?? string.Empty));
+                new XAttribute("LinkId", port.LinkId ?? string.Empty),
+                new XAttribute("IsDynamic", port.IsDynamic ? "true" : "false"));
         }
 
         private static XElement SerializeLink(GraphLink link)
@@ -200,6 +210,7 @@ namespace NodeCraft.Flow
                 PortId = (string)element.Attribute("PortId"),
                 LinkId = (string)element.Attribute("LinkId"),
                 PortDirection = ParseEnum((string)element.Attribute("Direction"), EPortDirection.None),
+                IsDynamic = ReadOptionalBooleanAttribute(element, "IsDynamic"),
                 Parameter = new Parameter
                 {
                     ParameterType = (string)element.Attribute("ParameterType"),
@@ -337,6 +348,23 @@ namespace NodeCraft.Flow
             }
 
             return 1;
+        }
+
+        private static bool ReadOptionalBooleanAttribute(XElement element, string attributeName)
+        {
+            var attribute = element.Attribute(attributeName);
+            if (attribute == null)
+            {
+                return false;
+            }
+
+            if (bool.TryParse(attribute.Value, out var value))
+            {
+                return value;
+            }
+
+            throw new InvalidOperationException(
+                $"Port attribute '{attributeName}' must be a valid Boolean, but was '{attribute.Value}'.");
         }
 
         private static TEnum ParseEnum<TEnum>(string rawValue, TEnum fallback)

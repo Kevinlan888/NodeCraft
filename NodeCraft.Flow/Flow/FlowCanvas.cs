@@ -1542,7 +1542,7 @@ namespace NodeCraft.Flow
                 return;
             }
 
-            ApplyPortDefinitions(nodeInfo.InputParameters, registration.Definition.InputPorts);
+            FlowDynamicInputResolver.MaterializeNodePorts(nodeInfo, registration.Definition);
             ApplyPortDefinitions(nodeInfo.OutputParameters, registration.Definition.OutputPorts);
         }
 
