@@ -14,6 +14,8 @@ using NodeCraft.Communication.Nodes;
 using NodeCraft.Communication.Plugin;
 using NodeCraft.Communication.Transport;
 using NodeCraft.Flow;
+using NodeCraft.Flow.Nodes;
+using NodeCraft.Plugins;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -540,6 +542,169 @@ internal static partial class Program
                 }
             }
         });
+
+        var communicationLoaderRoot = CreateTemporaryPluginDirectory("nodecraft-communication-loader-");
+        try
+        {
+            Run("PluginLoader loads the Communication manifest and TCP registration", () =>
+            {
+                var pluginsDirectory = Path.Combine(communicationLoaderRoot, "Plugins");
+                var packageDirectory = Path.Combine(pluginsDirectory, "NodeCraft.Communication");
+                Directory.CreateDirectory(packageDirectory);
+                FlowNodeRegistry registry = null!;
+                PluginLoader loader = null!;
+                PluginLoadReport report = null!;
+
+                try
+                {
+                    CopyFileToDirectory(FindBuiltCommunicationAssembly(), packageDirectory);
+                    CopyFileToDirectory(FindBuiltCommunicationManifest(), packageDirectory);
+                    registry = new FlowNodeRegistry();
+                    loader = new PluginLoader(
+                        registry,
+                        new Version(1, 0),
+                        NullLoggerFactory.Instance);
+                    report = loader.LoadAll(pluginsDirectory);
+
+                    return report.Failures.Count == 0
+                        && report.Results.Count == 1
+                        && report.Results[0].PluginId == "nodecraft.communication"
+                        && report.Results[0].IsSuccess
+                        && registry.Contains(TcpClientSendNodeModel.FlowNodeTypeKey)
+                        && registry.Resolve(TcpClientSendNodeModel.FlowNodeTypeKey).ContentFactory != null;
+                }
+                finally
+                {
+                    loader = null!;
+                    registry = null!;
+                    UnloadPluginLoadContexts(ref report);
+                }
+            });
+        }
+        finally
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            DeleteDirectoryIfExists(communicationLoaderRoot);
+        }
+
+        Run("Graph adapter preserves ordered Communication dynamic input links", () =>
+        {
+            var registry = EnsureCommunicationRegistered();
+            var sourceOne = new StringValueNodeModel { Id = "source-one" };
+            var sourceTwo = new StringValueNodeModel { Id = "source-two" };
+            var target = new TcpClientSendNodeModel { Id = "tcp-target" };
+            var targetDefinition = registry.Resolve(TcpClientSendNodeModel.FlowNodeTypeKey).Definition;
+            FlowDynamicInputResolver.MaterializeNodePorts(target, targetDefinition);
+            if (!FlowDynamicInputResolver.TryAddDynamicPort(
+                target,
+                targetDefinition,
+                out _,
+                out _))
+            {
+                return false;
+            }
+
+            var graph = new GraphModel
+            {
+                Nodes = new List<NodeModel> { sourceOne, sourceTwo, target },
+                Links = new List<GraphLink>
+                {
+                    new GraphLink
+                    {
+                        Id = "link-one",
+                        OriginNodeId = sourceOne.Id,
+                        OriginSlot = 0,
+                        TargetNodeId = target.Id,
+                        TargetSlot = 1,
+                    },
+                    new GraphLink
+                    {
+                        Id = "link-two",
+                        OriginNodeId = sourceTwo.Id,
+                        OriginSlot = 0,
+                        TargetNodeId = target.Id,
+                        TargetSlot = 2,
+                    },
+                },
+            };
+
+            var workflow = GraphModelWorkflowAdapter.Convert(graph);
+            var workflowTarget = workflow.Nodes.Single(node => node.Id == target.Id);
+            var first = workflowTarget.Inputs["message_1"] as LinkRef;
+            var second = workflowTarget.Inputs["message_2"] as LinkRef;
+            return workflowTarget.DynamicInputPortIds.SequenceEqual(
+                    new[] { "message_1", "message_2" })
+                && first != null
+                && first.SourceNodeId == sourceOne.Id
+                && first.SourceSlot == 0
+                && second != null
+                && second.SourceNodeId == sourceTwo.Id
+                && second.SourceSlot == 0;
+        });
+
+        await RunAsync("TCP Client Send delivers ordered bytes to a loopback server", async () =>
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            try
+            {
+                var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                var model = new TcpClientSendNodeModel
+                {
+                    Host = IPAddress.Loopback.ToString(),
+                    Port = port,
+                };
+                var definition = CreateEffectiveTcpDefinition(model, 2);
+                var workflowNode = CreateWorkflowNode(model);
+                var registration = EnsureCommunicationRegistered()
+                    .Resolve(TcpClientSendNodeModel.FlowNodeTypeKey);
+                var executor = registration.ExecutorFactory();
+                var lifecycle = executor as IFlowNodeSessionLifecycle;
+                if (lifecycle == null)
+                {
+                    return false;
+                }
+
+                var sessionContext = new FlowNodeSessionContext(
+                    workflowNode,
+                    definition,
+                    NullLogger.Instance);
+                var acceptTask = listener.AcceptTcpClientAsync();
+                var started = false;
+                try
+                {
+                    await lifecycle.StartSessionAsync(sessionContext, CancellationToken.None);
+                    started = true;
+                    using var server = await acceptTask;
+                    using var stream = server.GetStream();
+                    await executor.ExecuteAsync(
+                        new FlowExecutionContext(),
+                        workflowNode,
+                        definition,
+                        new Dictionary<string, object>
+                        {
+                            ["message_1"] = "first",
+                            ["message_2"] = "second",
+                        },
+                        CancellationToken.None);
+                    var received = await ReadExactlyAsync(stream, "firstsecond".Length);
+                    return Encoding.UTF8.GetString(received) == "firstsecond";
+                }
+                finally
+                {
+                    if (started)
+                    {
+                        await lifecycle.StopSessionAsync(sessionContext, CancellationToken.None);
+                    }
+                }
+            }
+            finally
+            {
+                listener.Stop();
+            }
+        });
     }
 
     private static FlowNodeDefinition CreateEffectiveTcpDefinition(
@@ -607,6 +772,25 @@ internal static partial class Program
         plugin.Register(context);
         registry.RegisterPlugin(plugin.Metadata.Id, context.Registrations);
         return registry;
+    }
+
+    private static string FindBuiltCommunicationAssembly()
+    {
+        return FindRepositoryFile(
+            "NodeCraft.Communication",
+            "bin",
+            GetBuildMetadata("BuildConfiguration"),
+            GetBuildMetadata("BuildTargetFramework"),
+            "NodeCraft.Communication.dll");
+    }
+
+    private static string FindBuiltCommunicationManifest()
+    {
+        return Path.Combine(
+            Path.GetDirectoryName(FindBuiltCommunicationAssembly())
+                ?? throw new InvalidOperationException(
+                    "Communication plugin output directory was not found."),
+            "plugin.json");
     }
 
     private static async Task<byte[]> ReadExactlyAsync(NetworkStream stream, int length)
