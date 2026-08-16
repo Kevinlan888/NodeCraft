@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using NodeCraft.Flow;
+using NodeCraft.Vision.Camera;
 
 namespace NodeCraft.Vision.Nodes
 {
@@ -14,6 +15,9 @@ namespace NodeCraft.Vision.Nodes
         IFlowIterationSource
     {
         private readonly IVirtualCameraImageLoader _imageLoader;
+        private readonly IMonotonicClock _clock;
+        private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
+        private readonly Func<DateTimeOffset> _utcNow;
         private List<VirtualCameraEntry> _entries
             = new List<VirtualCameraEntry>();
         private string _imageDirectory;
@@ -22,12 +26,23 @@ namespace NodeCraft.Vision.Nodes
         private VirtualCameraEntry _currentEntry;
         private bool _skipErrorImages;
         private VirtualCameraLoadMode _loadMode;
+        private TimeSpan _framePeriod;
+        private TimeSpan _sessionClockOrigin;
+        private TimeSpan _nextFrameDue;
+        private ulong _nextFrameId;
         private bool _starting;
         private bool _started;
 
-        internal VirtualCameraExecutor(IVirtualCameraImageLoader imageLoader = null)
+        internal VirtualCameraExecutor(
+            IVirtualCameraImageLoader imageLoader = null,
+            IMonotonicClock clock = null,
+            Func<TimeSpan, CancellationToken, Task> delayAsync = null,
+            Func<DateTimeOffset> utcNow = null)
         {
             _imageLoader = imageLoader ?? new VirtualCameraImageLoader();
+            _clock = clock ?? new SystemMonotonicClock();
+            _delayAsync = delayAsync ?? Task.Delay;
+            _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         }
 
         public async Task StartSessionAsync(
@@ -54,6 +69,8 @@ namespace NodeCraft.Vision.Nodes
                 var maxPreloadedImages = ReadInput<int>(context, "maxPreloadedImages", sourceLabel);
                 var maxPreloadedBytes = ReadInput<long>(context, "maxPreloadedBytes", sourceLabel);
                 var skipErrorImages = ReadInput<bool>(context, "skipErrorImages", sourceLabel);
+                var frameRate = ReadFrameRateOrDefault(context, sourceLabel);
+                var framePeriod = TimeSpan.FromSeconds(1.0 / frameRate);
 
                 if (!Enum.IsDefined(typeof(VirtualCameraLoadMode), loadMode))
                 {
@@ -105,10 +122,15 @@ namespace NodeCraft.Vision.Nodes
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
+                var clockOrigin = _clock.Now;
                 _entries = preparedEntries;
                 _index = -1;
                 _current = null;
                 _currentEntry = null;
+                _framePeriod = framePeriod;
+                _sessionClockOrigin = clockOrigin;
+                _nextFrameDue = clockOrigin + framePeriod;
+                _nextFrameId = 0;
                 _started = true;
             }
             catch
@@ -145,7 +167,7 @@ namespace NodeCraft.Vision.Nodes
             return Task.FromResult(outputs);
         }
 
-        public Task PrepareIterationAsync(
+        public async Task PrepareIterationAsync(
             FlowNodeSessionContext context,
             CancellationToken cancellationToken)
         {
@@ -159,19 +181,43 @@ namespace NodeCraft.Vision.Nodes
 
             _current = null;
             _currentEntry = null;
+            var frameStart = await WaitForFrameStartAsync(cancellationToken)
+                .ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            VirtualCameraEntry entry;
+            VirtualCameraImageTemplate template;
+            int nextIndex;
             if (_loadMode == VirtualCameraLoadMode.Dynamic)
             {
-                return PrepareDynamicIteration(context, cancellationToken);
+                var candidate = PrepareDynamicCandidate(context, cancellationToken);
+                entry = candidate.Entry;
+                template = candidate.Template;
+                nextIndex = candidate.Index;
+            }
+            else
+            {
+                nextIndex = (_index + 1) % _entries.Count;
+                entry = _entries[nextIndex];
+                template = entry.PreloadedTemplate
+                    ?? throw new InvalidOperationException(
+                        $"VirtualCamera source '{GetSourceLabel(context.Node)}' has no preloaded image for '{entry.Path}'.");
             }
 
-            _index = (_index + 1) % _entries.Count;
-            var entry = _entries[_index];
+            var frameId = _nextFrameId;
+            var followingFrameId = IncrementFrameIdChecked(
+                frameId,
+                GetSourceLabel(context.Node));
+            var deviceTimestamp = GetDeviceTimestampMicroseconds(frameStart, context);
+            var capturedAtUtc = _utcNow();
+            var image = template.CreateFrame(frameId, deviceTimestamp, capturedAtUtc);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            _current = image;
             _currentEntry = entry;
-            _current = entry.PreloadedTemplate.CreateFrame(
-                (ulong)entry.Ordinal,
-                0,
-                DateTimeOffset.UtcNow);
-            return Task.CompletedTask;
+            _index = nextIndex;
+            _nextFrameId = followingFrameId;
+            _nextFrameDue = frameStart + _framePeriod;
         }
 
         public Task<IReadOnlyDictionary<string, object>> ExecuteAsync(
@@ -210,6 +256,22 @@ namespace NodeCraft.Vision.Nodes
             {
                 throw new InvalidOperationException(
                     $"VirtualCamera source '{sourcePath}' overflowed decoded byte accounting near '{imagePath}'.",
+                    exception);
+            }
+        }
+
+        internal static ulong IncrementFrameIdChecked(
+            ulong frameId,
+            string sourcePath)
+        {
+            try
+            {
+                return checked(frameId + 1);
+            }
+            catch (OverflowException exception)
+            {
+                throw new InvalidOperationException(
+                    $"VirtualCamera source '{sourcePath}' exhausted frame IDs.",
                     exception);
             }
         }
@@ -277,7 +339,10 @@ namespace NodeCraft.Vision.Nodes
             return validEntries;
         }
 
-        private Task PrepareDynamicIteration(
+        private (
+            VirtualCameraEntry Entry,
+            VirtualCameraImageTemplate Template,
+            int Index) PrepareDynamicCandidate(
             FlowNodeSessionContext context,
             CancellationToken cancellationToken)
         {
@@ -302,13 +367,7 @@ namespace NodeCraft.Vision.Nodes
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
-                    _current = template.CreateFrame(
-                        (ulong)entry.Ordinal,
-                        0,
-                        DateTimeOffset.UtcNow);
-                    _currentEntry = entry;
-                    _index = nextIndex;
-                    return Task.CompletedTask;
+                    return (entry, template, nextIndex);
                 }
                 catch (Exception exception) when (
                     _skipErrorImages
@@ -338,6 +397,57 @@ namespace NodeCraft.Vision.Nodes
                 throw new InvalidOperationException(
                     $"VirtualCamera source '{GetSourceLabel(context?.Node)}' session is not started.");
             }
+        }
+
+        private async Task<TimeSpan> WaitForFrameStartAsync(
+            CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var now = _clock.Now;
+                var remaining = _nextFrameDue - now;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    return now;
+                }
+
+                await _delayAsync(remaining, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        private ulong GetDeviceTimestampMicroseconds(
+            TimeSpan frameStart,
+            FlowNodeSessionContext context)
+        {
+            var elapsed = frameStart - _sessionClockOrigin;
+            if (elapsed < TimeSpan.Zero)
+            {
+                throw new InvalidOperationException(
+                    $"VirtualCamera source '{GetSourceLabel(context.Node)}' monotonic clock moved backwards.");
+            }
+
+            return checked((ulong)(elapsed.Ticks / 10L));
+        }
+
+        private static double ReadFrameRateOrDefault(
+            FlowNodeSessionContext context,
+            string sourceLabel)
+        {
+            if (context?.Node?.Inputs == null
+                || !context.Node.Inputs.TryGetValue("frameRate", out var value))
+            {
+                return VirtualCameraNodeModel.DefaultFrameRate;
+            }
+
+            if (!(value is double frameRate)
+                || !VirtualCameraNodeModel.IsValidFrameRate(frameRate))
+            {
+                throw new InvalidOperationException(
+                    $"VirtualCamera source '{sourceLabel}' has invalid runtime input 'frameRate'.");
+            }
+
+            return frameRate;
         }
 
         private static T ReadInput<T>(
@@ -387,6 +497,10 @@ namespace NodeCraft.Vision.Nodes
             _currentEntry = null;
             _skipErrorImages = false;
             _loadMode = VirtualCameraLoadMode.Preload;
+            _framePeriod = TimeSpan.Zero;
+            _sessionClockOrigin = TimeSpan.Zero;
+            _nextFrameDue = TimeSpan.Zero;
+            _nextFrameId = 0;
             _started = false;
         }
     }

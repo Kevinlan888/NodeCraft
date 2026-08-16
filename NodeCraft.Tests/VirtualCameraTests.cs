@@ -14,6 +14,7 @@ using System.Windows.Threading;
 using System.Xml.Linq;
 using Microsoft.Extensions.Logging.Abstractions;
 using NodeCraft.Flow;
+using NodeCraft.Vision.Camera;
 using NodeCraft.Vision.Nodes;
 using NodeCraft.Vision.Plugin;
 using NodeCraft.Vision.Views;
@@ -358,7 +359,7 @@ internal static partial class Program
                 using var fixture = new TemporaryVirtualCameraFiles();
                 fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
                 fixture.WriteBitmap("b.png", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
-                var executor = new VirtualCameraExecutor();
+                var executor = CreateVirtualCameraExecutor();
                 var context = CreateVirtualCameraContext(
                     fixture.DirectoryPath,
                     VirtualCameraLoadMode.Preload,
@@ -410,7 +411,7 @@ internal static partial class Program
                     && firstImage.FrameId == 0
                     && (string)first["imagePath"] == Path.Combine(fixture.DirectoryPath, "a.png")
                     && ((FlowImage)second["image"]).FrameId == 1
-                    && wrappedImage.FrameId == 0
+                    && wrappedImage.FrameId == 2
                     && !ReferenceEquals(firstImage, wrappedImage)
                     && firstArrayFound
                     && wrappedArrayFound
@@ -489,6 +490,7 @@ internal static partial class Program
                 ("sourcePath", node => node.Inputs.Remove("sourcePath")),
                 ("sourcePath", node => node.Inputs["sourcePath"] = 123),
                 ("loadMode", node => node.Inputs["loadMode"] = "Preload"),
+                ("frameRate", node => node.Inputs["frameRate"] = "18"),
                 ("maxPreloadedImages", node => node.Inputs["maxPreloadedImages"] = 10L),
                 ("maxPreloadedBytes", node => node.Inputs["maxPreloadedBytes"] = 10),
                 ("skipErrorImages", node => node.Inputs["skipErrorImages"] = "false"),
@@ -505,7 +507,7 @@ internal static partial class Program
                     out var node,
                     out _);
                 mutation.Mutate(node);
-                var executor = new VirtualCameraExecutor();
+                var executor = CreateVirtualCameraExecutor();
                 try
                 {
                     await executor.StartSessionAsync(context, CancellationToken.None);
@@ -524,6 +526,164 @@ internal static partial class Program
             }
 
             return allRejected;
+        });
+
+        await RunAsync("virtual camera defaults missing runtime frame rate and rejects invalid values", async () =>
+        {
+            var timing = new VirtualCameraTestTiming();
+            var executor = new VirtualCameraExecutor(
+                null,
+                timing.Clock,
+                timing.DelayAsync,
+                () => DateTimeOffset.UnixEpoch);
+            var context = CreateVirtualCameraContext(
+                "builtin://vision/sample-set",
+                VirtualCameraLoadMode.Preload,
+                10,
+                100,
+                false,
+                out _,
+                out _);
+            await executor.StartSessionAsync(context, CancellationToken.None);
+            await executor.PrepareIterationAsync(context, CancellationToken.None);
+            await executor.StopSessionAsync(context, CancellationToken.None);
+            var defaultDelay = timing.Delays.Single();
+            var expectedDefault = TimeSpan.FromSeconds(1.0 / 18.0);
+
+            var invalidValues = new object[]
+            {
+                "18",
+                double.NaN,
+                double.NegativeInfinity,
+                double.PositiveInfinity,
+                0.099,
+                1000.001,
+            };
+            var rejected = 0;
+            foreach (var invalidValue in invalidValues)
+            {
+                var invalidContext = CreateVirtualCameraContext(
+                    "builtin://vision/sample-set",
+                    VirtualCameraLoadMode.Preload,
+                    10,
+                    100,
+                    false,
+                    out var invalidNode,
+                    out _);
+                invalidNode.Inputs["frameRate"] = invalidValue;
+                var invalidExecutor = CreateVirtualCameraExecutor();
+                try
+                {
+                    await invalidExecutor.StartSessionAsync(
+                        invalidContext,
+                        CancellationToken.None);
+                }
+                catch (InvalidOperationException exception)
+                {
+                    if (exception.Message.Contains("VirtualCamera", StringComparison.Ordinal)
+                        && exception.Message.Contains("frameRate", StringComparison.Ordinal)
+                        && exception.Message.Contains(
+                            "builtin://vision/sample-set", StringComparison.Ordinal))
+                    {
+                        rejected++;
+                    }
+                }
+                finally
+                {
+                    await invalidExecutor.StopSessionAsync(
+                        invalidContext,
+                        CancellationToken.None);
+                }
+            }
+
+            var acceptedBoundaries = 0;
+            foreach (var validRate in new[] { 0.1, 1000.0 })
+            {
+                var validContext = CreateVirtualCameraContext(
+                    "builtin://vision/sample-set",
+                    VirtualCameraLoadMode.Preload,
+                    10,
+                    100,
+                    false,
+                    out _,
+                    out _,
+                    frameRate: validRate);
+                var validExecutor = CreateVirtualCameraExecutor();
+                await validExecutor.StartSessionAsync(validContext, CancellationToken.None);
+                acceptedBoundaries++;
+                await validExecutor.StopSessionAsync(validContext, CancellationToken.None);
+            }
+
+            return defaultDelay == expectedDefault
+                && rejected == invalidValues.Length
+                && acceptedBoundaries == 2;
+        });
+
+        await RunAsync("virtual camera paces sequential frames and rebases after slow graph", async () =>
+        {
+            var timing = new VirtualCameraTestTiming();
+            var utcValues = new Queue<DateTimeOffset>(new[]
+            {
+                new DateTimeOffset(2026, 8, 16, 1, 0, 0, TimeSpan.Zero),
+                new DateTimeOffset(2026, 8, 16, 1, 0, 1, TimeSpan.Zero),
+                new DateTimeOffset(2026, 8, 16, 1, 0, 2, TimeSpan.Zero),
+                new DateTimeOffset(2026, 8, 16, 1, 0, 3, TimeSpan.Zero),
+            });
+            var executor = new VirtualCameraExecutor(
+                null,
+                timing.Clock,
+                timing.DelayAsync,
+                () => utcValues.Dequeue());
+            var context = CreateVirtualCameraContext(
+                "builtin://vision/sample-set",
+                VirtualCameraLoadMode.Preload,
+                10,
+                100,
+                false,
+                out var node,
+                out var definition,
+                frameRate: 20.0);
+
+            await executor.StartSessionAsync(context, CancellationToken.None);
+            var first = await ReadVirtualCameraFrameAsync(
+                executor, context, node, definition, CancellationToken.None);
+            timing.Clock.Advance(TimeSpan.FromMilliseconds(10));
+            var second = await ReadVirtualCameraFrameAsync(
+                executor, context, node, definition, CancellationToken.None);
+            timing.Clock.Advance(TimeSpan.FromMilliseconds(100));
+            var third = await ReadVirtualCameraFrameAsync(
+                executor, context, node, definition, CancellationToken.None);
+            var fourth = await ReadVirtualCameraFrameAsync(
+                executor, context, node, definition, CancellationToken.None);
+            await executor.StopSessionAsync(context, CancellationToken.None);
+
+            var images = new[] { first.Image, second.Image, third.Image, fourth.Image };
+            return timing.Delays.SequenceEqual(new[]
+                {
+                    TimeSpan.FromMilliseconds(50),
+                    TimeSpan.FromMilliseconds(40),
+                    TimeSpan.FromMilliseconds(50),
+                })
+                && new[] { first.Path, second.Path, third.Path, fourth.Path }
+                    .Select(path => path.Substring(path.LastIndexOf('/') + 1))
+                    .SequenceEqual(new[]
+                    {
+                        "checkerboard",
+                        "color-bars",
+                        "checkerboard",
+                        "color-bars",
+                    })
+                && images.Select(image => image.FrameId).SequenceEqual(
+                    new[] { 0UL, 1UL, 2UL, 3UL })
+                && images.Select(image => image.DeviceTimestamp).SequenceEqual(
+                    new[] { 50000UL, 100000UL, 200000UL, 250000UL })
+                && images.Select(image => image.CapturedAtUtc).SequenceEqual(new[]
+                    {
+                        new DateTimeOffset(2026, 8, 16, 1, 0, 0, TimeSpan.Zero),
+                        new DateTimeOffset(2026, 8, 16, 1, 0, 1, TimeSpan.Zero),
+                        new DateTimeOffset(2026, 8, 16, 1, 0, 2, TimeSpan.Zero),
+                        new DateTimeOffset(2026, 8, 16, 1, 0, 3, TimeSpan.Zero),
+                    });
         });
 
         await RunAsync("virtual camera wraps decoded byte accounting overflow", async () =>
@@ -545,9 +705,27 @@ internal static partial class Program
             }
         });
 
+        await RunAsync("virtual camera wraps frame id overflow", async () =>
+        {
+            try
+            {
+                VirtualCameraExecutor.IncrementFrameIdChecked(
+                    ulong.MaxValue,
+                    "builtin://vision/sample-set");
+                return false;
+            }
+            catch (InvalidOperationException exception)
+            {
+                return exception.Message.Contains("VirtualCamera", StringComparison.Ordinal)
+                    && exception.Message.Contains(
+                        "builtin://vision/sample-set", StringComparison.Ordinal)
+                    && exception.InnerException is OverflowException;
+            }
+        });
+
         await RunAsync("virtual camera reports distinct prepare and execute errors after stop", async () =>
         {
-            var executor = new VirtualCameraExecutor();
+            var executor = CreateVirtualCameraExecutor();
             var context = CreateVirtualCameraContext(
                 "builtin://vision/sample-set",
                 VirtualCameraLoadMode.Preload,
@@ -608,7 +786,7 @@ internal static partial class Program
             {
                 using var fixture = new TemporaryVirtualCameraFiles();
                 fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
-                var executor = new VirtualCameraExecutor();
+                var executor = CreateVirtualCameraExecutor();
                 var failedContext = CreateVirtualCameraContext(
                     fixture.DirectoryPath,
                     VirtualCameraLoadMode.Preload,
@@ -661,7 +839,7 @@ internal static partial class Program
             {
                 using var fixture = new TemporaryVirtualCameraFiles();
                 fixture.WriteBitmap("a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
-                var executor = new VirtualCameraExecutor();
+                var executor = CreateVirtualCameraExecutor();
                 var context = CreateVirtualCameraContext(
                     fixture.DirectoryPath,
                     VirtualCameraLoadMode.Preload,
@@ -728,7 +906,7 @@ internal static partial class Program
                 var loader = new CancelOnLoadVirtualCameraImageLoader(
                     cancellation,
                     cancelOnLoad: 2);
-                var executor = new VirtualCameraExecutor(loader);
+                var executor = CreateVirtualCameraExecutor(loader);
                 var context = CreateVirtualCameraContext(
                     fixture.DirectoryPath,
                     VirtualCameraLoadMode.Preload,
@@ -772,7 +950,7 @@ internal static partial class Program
                 fixture.WriteImage("Bad.png", new byte[] { 0, 1, 2, 3 });
                 fixture.WriteBitmap(
                     "C.png", PixelFormats.Bgr24, 1, 1, new byte[] { 4, 5, 6 }, 3);
-                var executor = new VirtualCameraExecutor();
+                var executor = CreateVirtualCameraExecutor();
                 var context = CreateVirtualCameraContext(
                     fixture.DirectoryPath,
                     VirtualCameraLoadMode.Preload,
@@ -831,7 +1009,7 @@ internal static partial class Program
         await RunAsync("virtual camera rejects builtin dynamic before materializing images", async () =>
         {
             var loader = new RecordingVirtualCameraImageLoader();
-            var executor = new VirtualCameraExecutor(loader);
+            var executor = CreateVirtualCameraExecutor(loader);
             var context = CreateVirtualCameraContext(
                 "builtin://vision/sample-set",
                 VirtualCameraLoadMode.Dynamic,
@@ -861,7 +1039,7 @@ internal static partial class Program
                 var path = fixture.WriteBitmap(
                     "a.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
                 var loader = new RecordingVirtualCameraImageLoader();
-                var executor = new VirtualCameraExecutor(loader);
+                var executor = CreateVirtualCameraExecutor(loader);
                 var context = CreateVirtualCameraContext(
                     path,
                     VirtualCameraLoadMode.Dynamic,
@@ -896,7 +1074,7 @@ internal static partial class Program
                     && (string)first["imagePath"] == Path.GetFullPath(path)
                     && (string)second["imagePath"] == Path.GetFullPath(path)
                     && ((FlowImage)first["image"]).FrameId == 0
-                    && ((FlowImage)second["image"]).FrameId == 0
+                    && ((FlowImage)second["image"]).FrameId == 1
                     && !((FlowImage)first["image"]).Buffer.Span.SequenceEqual(
                         ((FlowImage)second["image"]).Buffer.Span)
                     && !ReferenceEquals(first["image"], second["image"]);
@@ -914,7 +1092,7 @@ internal static partial class Program
                 var c = fixture.WriteBitmap(
                     "C.jpg", PixelFormats.Bgr24, 1, 1, new byte[] { 3, 3, 3 }, 3);
                 var loader = new SelectiveVirtualCameraImageLoader(bad);
-                var executor = new VirtualCameraExecutor(loader);
+                var executor = CreateVirtualCameraExecutor(loader);
                 var context = CreateVirtualCameraContext(
                     fixture.DirectoryPath,
                     VirtualCameraLoadMode.Dynamic,
@@ -942,7 +1120,7 @@ internal static partial class Program
 
                 return paths.SequenceEqual(new[]
                     { Path.GetFullPath(a), Path.GetFullPath(c), Path.GetFullPath(a) })
-                    && frames.SequenceEqual(new[] { 0UL, 2UL, 0UL })
+                    && frames.SequenceEqual(new[] { 0UL, 1UL, 2UL })
                     && loader.Loads.Select(Path.GetFileName).SequenceEqual(
                         new[] { "A.jpg", "Bad.jpg", "C.jpg", "A.jpg" });
             }));
@@ -957,7 +1135,7 @@ internal static partial class Program
                 var loader = new CancelOnLoadVirtualCameraImageLoader(
                     cancellation,
                     cancelOnLoad: 1);
-                var executor = new VirtualCameraExecutor(loader);
+                var executor = CreateVirtualCameraExecutor(loader);
                 var context = CreateVirtualCameraContext(
                     fixture.DirectoryPath,
                     VirtualCameraLoadMode.Dynamic,
@@ -999,7 +1177,7 @@ internal static partial class Program
                 using var fixture = new TemporaryVirtualCameraFiles();
                 var bad = fixture.WriteImage("Bad.png", new byte[] { 1 });
                 var loader = new SelectiveVirtualCameraImageLoader(bad);
-                var executor = new VirtualCameraExecutor(loader);
+                var executor = CreateVirtualCameraExecutor(loader);
                 var context = CreateVirtualCameraContext(
                     fixture.DirectoryPath,
                     VirtualCameraLoadMode.Dynamic,
@@ -1037,7 +1215,7 @@ internal static partial class Program
             {
                 using var fixture = new TemporaryVirtualCameraFiles();
                 var bad = fixture.WriteImage("Bad.png", new byte[] { 1 });
-                var executor = new VirtualCameraExecutor(
+                var executor = CreateVirtualCameraExecutor(
                     new SelectiveVirtualCameraImageLoader(bad));
                 var context = CreateVirtualCameraContext(
                     fixture.DirectoryPath,
@@ -1081,7 +1259,7 @@ internal static partial class Program
                     VirtualCameraLoadMode.Dynamic,
                 })
                 {
-                    var executor = new VirtualCameraExecutor(
+                    var executor = CreateVirtualCameraExecutor(
                         new ThrowingVirtualCameraImageLoader(exception));
                     var context = CreateVirtualCameraContext(
                         fixture.DirectoryPath,
@@ -1469,6 +1647,64 @@ internal static partial class Program
         }
     }
 
+    private sealed class VirtualCameraTestClock : IMonotonicClock
+    {
+        public TimeSpan Now { get; private set; }
+
+        internal void Advance(TimeSpan duration)
+        {
+            if (duration < TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(duration));
+            }
+
+            Now += duration;
+        }
+    }
+
+    private sealed class VirtualCameraTestTiming
+    {
+        internal VirtualCameraTestClock Clock { get; } = new VirtualCameraTestClock();
+
+        internal List<TimeSpan> Delays { get; } = new List<TimeSpan>();
+
+        internal Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Delays.Add(duration);
+            Clock.Advance(duration);
+            return Task.CompletedTask;
+        }
+    }
+
+    private static VirtualCameraExecutor CreateVirtualCameraExecutor(
+        IVirtualCameraImageLoader imageLoader = null!)
+    {
+        var timing = new VirtualCameraTestTiming();
+        return new VirtualCameraExecutor(
+            imageLoader,
+            timing.Clock,
+            timing.DelayAsync,
+            () => DateTimeOffset.UnixEpoch);
+    }
+
+    private static async Task<(FlowImage Image, string Path)> ReadVirtualCameraFrameAsync(
+        VirtualCameraExecutor executor,
+        FlowNodeSessionContext context,
+        WorkflowNode node,
+        FlowNodeDefinition definition,
+        CancellationToken cancellationToken)
+    {
+        await executor.PrepareIterationAsync(context, cancellationToken);
+        var output = await executor.ExecuteAsync(
+            new FlowExecutionContext(),
+            node,
+            definition,
+            new Dictionary<string, object>(),
+            cancellationToken);
+        return ((FlowImage)output["image"], (string)output["imagePath"]);
+    }
+
     private static FlowNodeSessionContext CreateVirtualCameraContext(
         string sourcePath,
         VirtualCameraLoadMode loadMode,
@@ -1476,7 +1712,8 @@ internal static partial class Program
         long maxBytes,
         bool skipErrors,
         out WorkflowNode node,
-        out FlowNodeDefinition definition)
+        out FlowNodeDefinition definition,
+        double? frameRate = null)
     {
         node = new WorkflowNode
         {
@@ -1491,6 +1728,11 @@ internal static partial class Program
                 ["skipErrorImages"] = skipErrors,
             },
         };
+        if (frameRate.HasValue)
+        {
+            node.Inputs["frameRate"] = frameRate.Value;
+        }
+
         definition = new FlowNodeDefinition
         {
             TypeKey = VirtualCameraNodeModel.FlowNodeTypeKey,
@@ -1533,7 +1775,7 @@ internal static partial class Program
         long maxBytes,
         bool skipErrors)
     {
-        var executor = new VirtualCameraExecutor();
+        var executor = CreateVirtualCameraExecutor();
         var context = CreateVirtualCameraContext(
             sourcePath,
             loadMode,
