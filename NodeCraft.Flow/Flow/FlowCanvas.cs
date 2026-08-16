@@ -383,18 +383,34 @@ namespace NodeCraft.Flow
                 return false;
             }
 
+            if (GraphModel?.Links?.Any(link => link == null) == true)
+            {
+                error = "Graph contains a null link.";
+                return false;
+            }
+
+            if (!TryReconcileGraph(out error))
+            {
+                return false;
+            }
+
             if (!FlowDynamicInputResolver.TryAddDynamicPort(
                     node,
                     registration.Definition,
-                    out _,
+                    out var addedPort,
                     out error))
             {
                 return false;
             }
 
+            if (!TryReconcileGraph(out error))
+            {
+                node.InputParameters?.Remove(addedPort);
+                return false;
+            }
+
             EnsureDynamicInputHeight(node);
             GetNodeViewByNodeID(node.Id)?.RefreshDynamicInputs();
-            ReconcileGraphIfAvailable();
             UpdateCanvas();
             RaiseGraphChanged();
             return true;
@@ -414,6 +430,11 @@ namespace NodeCraft.Flow
             if (GraphModel?.Links?.Any(link => link == null) == true)
             {
                 error = "Graph contains a null link.";
+                return false;
+            }
+
+            if (!TryReconcileGraph(out error))
+            {
                 return false;
             }
 
@@ -446,7 +467,11 @@ namespace NodeCraft.Flow
                 GraphModel.Nodes.Add(node);
             }
 
-            ReconcileGraphIfAvailable();
+            if (!TryReconcileGraph(out error))
+            {
+                return false;
+            }
+
             EnsureDynamicInputHeight(node);
             GetNodeViewByNodeID(node.Id)?.RefreshDynamicInputs();
             UpdateCanvas();
@@ -464,6 +489,24 @@ namespace NodeCraft.Flow
             GraphModel.Nodes ??= new List<NodeModel>();
             GraphModel.Links ??= new List<GraphLink>();
             GraphModelLinkReconciler.Reconcile(GraphModel);
+        }
+
+        private bool TryReconcileGraph(out string error)
+        {
+            error = null;
+            try
+            {
+                ReconcileGraphIfAvailable();
+                return true;
+            }
+            catch (InvalidOperationException exception)
+            {
+                _logger.LogError(exception, "Failed to reconcile graph after a dynamic input operation.");
+                error = string.IsNullOrWhiteSpace(exception.Message)
+                    ? "Graph reconciliation failed."
+                    : exception.Message;
+                return false;
+            }
         }
 
         private static void EnsureDynamicInputHeight(NodeModel node)
@@ -1933,7 +1976,7 @@ namespace NodeCraft.Flow
             GraphChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        private void RaiseConnectionCreateFailed(string message)
+        internal void RaiseConnectionCreateFailed(string message)
         {
             if (string.IsNullOrWhiteSpace(message))
             {

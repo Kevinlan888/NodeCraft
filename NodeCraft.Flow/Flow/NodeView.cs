@@ -252,11 +252,17 @@ namespace NodeCraft.Flow
                 var automationName = AutomationProperties.GetName(button);
                 if (string.Equals(automationName, "Add input", StringComparison.Ordinal))
                 {
-                    _parentCanvas.TryAddDynamicInput(NodeModel, out _);
+                    if (!_parentCanvas.TryAddDynamicInput(NodeModel, out var error))
+                    {
+                        _parentCanvas.RaiseConnectionCreateFailed(error);
+                    }
                 }
                 else if (string.Equals(automationName, "Remove input", StringComparison.Ordinal))
                 {
-                    _parentCanvas.TryRemoveDynamicInput(NodeModel, button.Tag as string, out _);
+                    if (!_parentCanvas.TryRemoveDynamicInput(NodeModel, button.Tag as string, out var error))
+                    {
+                        _parentCanvas.RaiseConnectionCreateFailed(error);
+                    }
                 }
             }
 

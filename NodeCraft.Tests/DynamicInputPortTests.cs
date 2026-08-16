@@ -431,6 +431,47 @@ internal static partial class Program
                     .SequenceEqual(new[] { "input_1", "input_2" });
             }));
 
+        Run("canvas rejects adding to a null-link graph before mutation", () =>
+            RunOnSta(() =>
+            {
+            EnsureDynamicTestRegistration();
+            var canvas = CreateHeadlessCanvas();
+            var node = CreateDynamicNode("malformed-add-target", "input_1", "input_2");
+            canvas.GraphModel.Nodes.Add(node);
+            canvas.GraphModel.Links.Add(null);
+
+            var added = canvas.TryAddDynamicInput(node, out var error);
+            return !added
+                && error.Contains("null link", StringComparison.OrdinalIgnoreCase)
+                && FlowDynamicInputResolver.GetDynamicPortIds(node)
+                    .SequenceEqual(new[] { "input_1", "input_2" });
+            }));
+
+        Run("canvas converts reconcile failures into add errors", () =>
+            RunOnSta(() =>
+            {
+            EnsureDynamicTestRegistration();
+            var canvas = CreateHeadlessCanvas();
+            var source = CreateStringSourceNode("malformed-add-source");
+            var node = CreateDynamicNode("malformed-slot-target", "input_1", "input_2");
+            canvas.GraphModel.Nodes.Add(source);
+            canvas.GraphModel.Nodes.Add(node);
+            canvas.GraphModel.Links.Add(new GraphLink
+            {
+                Id = "malformed-slot-link",
+                OriginNodeId = source.Id,
+                OriginSlot = 0,
+                TargetNodeId = node.Id,
+                TargetSlot = 99,
+            });
+
+            var added = canvas.TryAddDynamicInput(node, out var error);
+            return !added
+                && error.Contains("unknown target slot", StringComparison.OrdinalIgnoreCase)
+                && FlowDynamicInputResolver.GetDynamicPortIds(node)
+                    .SequenceEqual(new[] { "input_1", "input_2" });
+            }));
+
         Run("canvas enforces dynamic input bounds and fixed-port protection", () =>
             RunOnSta(() =>
             {
@@ -545,6 +586,51 @@ internal static partial class Program
                     && !staticButtons.Any(button =>
                         !string.IsNullOrWhiteSpace(
                             System.Windows.Automation.AutomationProperties.GetName(button)));
+            })));
+
+        Run("dynamic input buttons report boundary errors", () =>
+            RunOnSta(() => RunWithTemplatedFlowCanvas((canvas, _, worldCanvas) =>
+            {
+                EnsureDynamicTestRegistration();
+                EnsureBoundedDynamicTestRegistration();
+                var boundedNode = CreateDynamicNodeForType(
+                    BoundedDynamicTestTypeKey,
+                    "boundary-maximum",
+                    "input_1",
+                    "input_2");
+                var minimumNode = CreateDynamicNode("boundary-minimum", "input_1");
+                canvas.LoadGraph(new GraphModel
+                {
+                    Nodes = new List<NodeModel> { boundedNode, minimumNode },
+                    Links = new List<GraphLink>(),
+                });
+                canvas.UpdateLayout();
+
+                var messages = new List<string>();
+                canvas.ConnectionCreateFailed += (_, args) => messages.Add(args.Message);
+
+                var boundedView = worldCanvas.Children.OfType<NodeView>()
+                    .Single(view => view.NodeModel.Id == boundedNode.Id);
+                var addButton = FindVisualDescendants<System.Windows.Controls.Button>(boundedView)
+                    .Single(button => string.Equals(
+                        System.Windows.Automation.AutomationProperties.GetName(button),
+                        "Add input",
+                        StringComparison.Ordinal));
+                addButton.RaiseEvent(new System.Windows.RoutedEventArgs(
+                    System.Windows.Controls.Button.ClickEvent));
+
+                var minimumView = worldCanvas.Children.OfType<NodeView>()
+                    .Single(view => view.NodeModel.Id == minimumNode.Id);
+                var removeButton = FindVisualDescendants<System.Windows.Controls.Button>(minimumView)
+                    .Single(button => string.Equals(
+                        System.Windows.Automation.AutomationProperties.GetName(button),
+                        "Remove input",
+                        StringComparison.Ordinal));
+                removeButton.RaiseEvent(new System.Windows.RoutedEventArgs(
+                    System.Windows.Controls.Button.ClickEvent));
+
+                return messages.Any(message => message.Contains("maximum", StringComparison.OrdinalIgnoreCase))
+                    && messages.Any(message => message.Contains("at least", StringComparison.OrdinalIgnoreCase));
             })));
 
         Run("generic dynamic nodes render effective input bindings", () =>
