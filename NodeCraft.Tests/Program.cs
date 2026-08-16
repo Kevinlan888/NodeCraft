@@ -69,6 +69,7 @@ internal static partial class Program
         await RunSessionNodeInitializationTestsAsync();
         await RunFlowExecutionControllerTestsAsync();
         RunExecutionErrorFormatterTests();
+        RunThemeTests();
 
         Run("NodeCraft Flow owns its localization resources", () =>
         {
