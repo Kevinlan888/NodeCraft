@@ -173,7 +173,7 @@ namespace NodeCraft.Pages
         public void NewGraph()
         {
             CreateStarterGraph();
-            TxtExecutionResult.Text = "已新建示例流程。";
+            TxtExecutionResult.Text = "已新建空白流程。";
         }
 
         public void ClearGraph()

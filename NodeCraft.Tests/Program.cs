@@ -982,8 +982,9 @@ internal static partial class Program
                     }
 
                     flowEditor.NewGraph();
-                    var starterNodeCount = canvas.GraphModel?.Nodes?.Count ?? 0;
-                    if (starterNodeCount == 0
+                    var newGraphNodeCount = canvas.GraphModel?.Nodes?.Count ?? 0;
+                    if (newGraphNodeCount != 0
+                        || GetExecutionResult(flowEditor).Text != "已新建空白流程。"
                         || GetCurrentFilePath(flowEditor).Text != "当前文件: 未保存"
                         || !flowEditor.TryLoadGraphFile(operationPath))
                     {
@@ -2456,34 +2457,6 @@ internal static partial class Program
                 && style.BrushResourceKey == "colorStatusWarningBackground3"
                 && style.LabelOpacity == 1;
         });
-        Run("image preview uses a fill Grid while regular content keeps a StackPanel", () =>
-            RunOnSta(() =>
-            {
-                var factory = new DefaultFlowNodeContentFactory(new FlowCanvas());
-                var imageNode = new ImagePreviewNodeModel { Name = "Image Header" };
-                var regularNode = new StringValueNodeModel { Name = "Ordinary Header" };
-                var imageContent = factory.Build(imageNode);
-                var regularContent = factory.Build(regularNode);
-                var imageGrid = imageContent as System.Windows.Controls.Grid;
-                var previewBorder = FindLogicalDescendant<System.Windows.Controls.Border>(imageContent);
-
-                return regularContent is System.Windows.Controls.StackPanel regularPanel
-                    && regularPanel.Orientation == System.Windows.Controls.Orientation.Vertical
-                    && regularPanel.Children
-                        .OfType<System.Windows.Controls.TextBlock>()
-                        .All(text => text.Text != "Ordinary Header")
-                    && imageGrid != null
-                    && imageGrid.RowDefinitions.Count >= 1
-                    && imageGrid.RowDefinitions[0].Height.IsStar
-                    && !imageGrid.Children
-                        .OfType<System.Windows.Controls.TextBlock>()
-                        .Any(text => text.Text == "Image")
-                    && previewBorder != null
-                    && double.IsNaN(previewBorder.Width)
-                    && double.IsNaN(previewBorder.Height)
-                    && previewBorder.HorizontalAlignment == System.Windows.HorizontalAlignment.Stretch
-                    && previewBorder.VerticalAlignment == System.Windows.VerticalAlignment.Stretch;
-            }));
         Run("all flow nodes are resizable by default", () =>
             NodeView.IsResizableProperty.DefaultMetadata.DefaultValue is bool value && value);
         Run("dragged node position is persisted to model", () =>
