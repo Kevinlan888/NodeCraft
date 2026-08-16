@@ -10,6 +10,7 @@
     <ProjectReference Include="..\NodeCraft\NodeCraft.csproj" />
     <ProjectReference Include="..\NodeCraft.Flow\NodeCraft.Flow.csproj" />
     <ProjectReference Include="..\NodeCraft.Vision\NodeCraft.Vision.csproj" />
+    <ProjectReference Include="..\NodeCraft.Communication\NodeCraft.Communication.csproj" />
     <ProjectReference Include="..\NodeCraft.PluginSample\NodeCraft.PluginSample.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\NodeCraft.PluginSample\PrivateDependency\PluginPrivateDependency.csproj" Private="false" />
   </ItemGroup>

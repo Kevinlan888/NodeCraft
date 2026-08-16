@@ -1,0 +1,7 @@
+{
+  "id": "nodecraft.communication",
+  "entryAssembly": "NodeCraft.Communication.dll",
+  "entryType": "NodeCraft.Communication.Plugin.CommunicationPlugin",
+  "apiVersion": "1.0",
+  "privateLibraryPath": "lib"
+}
