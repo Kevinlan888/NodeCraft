@@ -39,18 +39,6 @@ namespace NodeCraft.Theming
         {
             try
             {
-                if (!File.Exists(_settingsPath))
-                {
-                    if (Directory.Exists(_settingsPath))
-                    {
-                        _logger.LogWarning(
-                            "Theme settings path '{SettingsPath}' is not a file; using Light.",
-                            _settingsPath);
-                    }
-
-                    return CommonControlTheme.BaseTheme.Light;
-                }
-
                 var document = JsonSerializer.Deserialize<ThemePreferenceDocument>(
                     File.ReadAllText(_settingsPath),
                     SerializerOptions);
@@ -67,6 +55,14 @@ namespace NodeCraft.Theming
                 _logger.LogWarning(
                     "Theme settings at '{SettingsPath}' contain an unknown theme; using Light.",
                     _settingsPath);
+            }
+            catch (FileNotFoundException)
+            {
+                return CommonControlTheme.BaseTheme.Light;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return CommonControlTheme.BaseTheme.Light;
             }
             catch (Exception exception) when (IsPersistenceException(exception))
             {

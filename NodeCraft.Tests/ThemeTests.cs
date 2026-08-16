@@ -59,6 +59,31 @@ internal static partial class Program
             }
         });
 
+        Run("theme preferences log and fall back for an invalid existing path", () =>
+        {
+            var directory = CreateThemeTestDirectory();
+            var settingsPath = Path.Combine(directory, "settings?.json");
+            try
+            {
+                var logger = new RecordingLogger<ThemePreferenceStore>();
+                var store = new ThemePreferenceStore(settingsPath, logger);
+
+                var loaded = store.Load();
+
+                return loaded == CommonControlTheme.BaseTheme.Light
+                    && logger.Entries.Count(entry => entry.Level == LogLevel.Warning) == 1
+                    && logger.Entries.Any(entry =>
+                        entry.Message.Contains(
+                            "Failed to read theme settings",
+                            StringComparison.Ordinal))
+                    && logger.Entries.Single().Exception != null;
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        });
+
         Run("theme preferences round-trip dark then light without temporary files", () =>
         {
             var directory = CreateThemeTestDirectory();
