@@ -62,9 +62,12 @@ namespace NodeCraft.Flow
                 }
 
                 _executors.Add(node.Id, executor);
+                var definition = FlowDynamicInputResolver.ResolveDefinition(
+                    registration.Definition,
+                    node.DynamicInputPortIds ?? new List<string>());
                 _sessionContexts.Add(
                     node.Id,
-                    new FlowNodeSessionContext(node, registration.Definition, _logger));
+                    new FlowNodeSessionContext(node, definition, _logger));
             }
 
             _definitionsByNodeId = _sessionContexts.ToDictionary(

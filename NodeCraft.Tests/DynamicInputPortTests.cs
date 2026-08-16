@@ -206,6 +206,110 @@ internal static partial class Program
 
             return Throws<InvalidOperationException>(() => GraphModelLinkReconciler.Reconcile(graph));
         });
+
+        Run("executor resolves dynamic inputs in declared order", () =>
+        {
+            EnsureDynamicTestRegistration();
+            DynamicTestExecutor.ObservedInputIds.Clear();
+            var workflow = new WorkflowDocument();
+            workflow.Nodes.Add(new WorkflowNode
+            {
+                Id = "dynamic",
+                TypeKey = DynamicTestTypeKey,
+                DynamicInputPortIds = { "input_1", "input_2" },
+                Inputs =
+                {
+                    ["input_1"] = "first",
+                    ["input_2"] = "second",
+                },
+            });
+
+            var executor = new GraphExecutor(workflow);
+            if (!executor.Validate().IsValid)
+            {
+                return false;
+            }
+
+            var context = executor.ExecuteAsync().GetAwaiter().GetResult();
+            return context.TryGetPortValue("dynamic", 0, out var value)
+                && string.Equals(value as string, "first|second", StringComparison.Ordinal)
+                && DynamicTestExecutor.ObservedInputIds.SequenceEqual(new[] { "input_1", "input_2" });
+        });
+
+        Run("executor validates required dynamic inputs", () =>
+        {
+            EnsureDynamicTestRegistration();
+            var workflow = new WorkflowDocument();
+            workflow.Nodes.Add(new WorkflowNode
+            {
+                Id = "dynamic",
+                TypeKey = DynamicTestTypeKey,
+                DynamicInputPortIds = { "input_1", "input_2" },
+                Inputs =
+                {
+                    ["input_1"] = "only one",
+                },
+            });
+
+            var validation = new GraphExecutor(workflow).Validate();
+            return validation.Errors.Count(error => error.Code == "MissingRequiredInput"
+                    && error.PortId == "input_2") == 1;
+        });
+
+        Run("executor rejects dynamic keys missing from workflow metadata", () =>
+        {
+            EnsureDynamicTestRegistration();
+            var workflow = new WorkflowDocument();
+            workflow.Nodes.Add(new WorkflowNode
+            {
+                Id = "dynamic",
+                TypeKey = DynamicTestTypeKey,
+                DynamicInputPortIds = { "input_1" },
+                Inputs =
+                {
+                    ["input_1"] = "known",
+                    ["input_2"] = "not declared",
+                },
+            });
+
+            var validation = new GraphExecutor(workflow).Validate();
+            return validation.Errors.Any(error => error.Code == "UnknownPort"
+                && error.NodeId == "dynamic"
+                && error.PortId == "input_2");
+        });
+
+        Run("executor validates dynamic source compatibility", () =>
+        {
+            EnsureDynamicTestRegistration();
+            var workflow = new WorkflowDocument();
+            workflow.Nodes.Add(new WorkflowNode
+            {
+                Id = "source",
+                TypeKey = "node.integer-value",
+                Inputs = { ["value"] = 7 },
+            });
+            workflow.Nodes.Add(new WorkflowNode
+            {
+                Id = "dynamic",
+                TypeKey = DynamicTestTypeKey,
+                DynamicInputPortIds = { "input_1" },
+                Inputs =
+                {
+                    ["input_1"] = new LinkRef
+                    {
+                        SourceNodeId = "source",
+                        SourceSlot = 0,
+                    },
+                },
+            });
+
+            var validation = new GraphExecutor(workflow).Validate();
+            return validation.Errors.Any(error => error.Code == "IncompatiblePortTypes"
+                    && error.NodeId == "dynamic"
+                    && error.PortId == "input_1")
+                && !validation.Errors.Any(error => error.Code == "UnknownPort"
+                    && error.NodeId == "dynamic");
+        });
     }
 
     private const string DynamicTestTypeKey = "test.dynamic-input-ports";
@@ -267,6 +371,8 @@ internal static partial class Program
 
     private sealed class DynamicTestExecutor : IFlowNodeExecutor
     {
+        public static List<string> ObservedInputIds { get; } = new List<string>();
+
         public Task<IReadOnlyDictionary<string, object>> ExecuteAsync(
             FlowExecutionContext context,
             WorkflowNode node,
@@ -274,8 +380,15 @@ internal static partial class Program
             IReadOnlyDictionary<string, object> inputs,
             CancellationToken cancellationToken)
         {
+            var values = new List<string>();
+            foreach (var inputPort in definition.InputPorts.Where(port => port.IsDynamic))
+            {
+                ObservedInputIds.Add(inputPort.Id);
+                values.Add(inputs.TryGetValue(inputPort.Id, out var value) ? value as string : null);
+            }
+
             return Task.FromResult<IReadOnlyDictionary<string, object>>(
-                new Dictionary<string, object> { ["output"] = string.Empty });
+                new Dictionary<string, object> { ["output"] = string.Join("|", values) });
         }
     }
 

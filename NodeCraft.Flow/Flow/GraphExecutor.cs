@@ -25,6 +25,7 @@ namespace NodeCraft.Flow
         {
             var result = new FlowValidationResult();
             var nodeLookup = _workflow.Nodes.ToDictionary(node => node.Id, node => node);
+            var definitionsByNodeId = new Dictionary<string, FlowNodeDefinition>(StringComparer.Ordinal);
 
             foreach (var node in _workflow.Nodes)
             {
@@ -39,18 +40,45 @@ namespace NodeCraft.Flow
                     continue;
                 }
 
-                ValidateRequiredInputs(node, registration.Definition, result);
-            }
-
-            foreach (var node in _workflow.Nodes)
-            {
-                if (!_registry.TryResolve(node.TypeKey, out var registration))
+                if (!TryResolveDefinition(node, registration, result, out var definition))
                 {
                     continue;
                 }
 
-                foreach (var pair in node.Inputs)
+                definitionsByNodeId[node.Id] = definition;
+                ValidateRequiredInputs(node, definition, result);
+            }
+
+            foreach (var node in _workflow.Nodes)
+            {
+                if (!definitionsByNodeId.TryGetValue(node.Id, out var definition))
                 {
+                    continue;
+                }
+
+                foreach (var pair in node.Inputs ?? new Dictionary<string, object>())
+                {
+                    var targetPort = definition.GetInputPort(pair.Key);
+                    if (targetPort == null)
+                    {
+                        if (!(pair.Value is LinkRef)
+                            && !IsDynamicInputKey(definition, pair.Key))
+                        {
+                            // Some model-backed nodes intentionally keep editor-only values
+                            // in WorkflowNode.Inputs without declaring runtime input ports.
+                            continue;
+                        }
+
+                        result.Errors.Add(new FlowValidationError
+                        {
+                            Code = "UnknownPort",
+                            Message = $"Node '{node.DisplayName ?? node.Id}' input '{pair.Key}' references an unknown slot/port.",
+                            NodeId = node.Id,
+                            PortId = pair.Key,
+                        });
+                        continue;
+                    }
+
                     if (!(pair.Value is LinkRef linkRef))
                     {
                         continue;
@@ -73,8 +101,7 @@ namespace NodeCraft.Flow
                     }
 
                     var sourcePort = GetPortAtSlot(sourceRegistration.Definition.OutputPorts, linkRef.SourceSlot);
-                    var targetPort = registration.Definition.GetInputPort(pair.Key);
-                    if (sourcePort == null || targetPort == null)
+                    if (sourcePort == null)
                     {
                         result.Errors.Add(new FlowValidationError
                         {
@@ -253,6 +280,40 @@ namespace NodeCraft.Flow
                     });
                 }
             }
+        }
+
+        private static bool TryResolveDefinition(
+            WorkflowNode node,
+            FlowNodeRegistration registration,
+            FlowValidationResult result,
+            out FlowNodeDefinition definition)
+        {
+            try
+            {
+                definition = FlowDynamicInputResolver.ResolveDefinition(
+                    registration.Definition,
+                    node.DynamicInputPortIds ?? new List<string>());
+                return true;
+            }
+            catch (InvalidOperationException exception)
+            {
+                definition = null;
+                result.Errors.Add(new FlowValidationError
+                {
+                    Code = "InvalidDynamicInputs",
+                    Message = $"Node '{node.DisplayName ?? node.Id}' has invalid dynamic input metadata: {exception.Message}",
+                    NodeId = node.Id,
+                });
+                return false;
+            }
+        }
+
+        private static bool IsDynamicInputKey(FlowNodeDefinition definition, string portId)
+        {
+            var prefix = definition.DynamicInputTemplate?.PortIdPrefix?.Trim();
+            return !string.IsNullOrWhiteSpace(prefix)
+                && !string.IsNullOrWhiteSpace(portId)
+                && portId.StartsWith(prefix + "_", StringComparison.Ordinal);
         }
 
         private static FlowPortDefinition GetPortAtSlot(IReadOnlyList<FlowPortDefinition> ports, int slot)
