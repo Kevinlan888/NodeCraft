@@ -35,5 +35,10 @@ namespace NodeCraft.Flow
         public List<PortParameter> InputParameters { get; set; }
 
         public List<PortParameter> OutputParameters { get; set; }
+
+        // Tracks whether a dynamic input list came from a node instance or persisted graph state.
+        // It is intentionally internal and non-serialized so new nodes can receive InitialCount
+        // ports while loaded nodes preserve an explicitly saved zero-port list.
+        internal bool DynamicInputPortsInitialized { get; set; }
     }
 }

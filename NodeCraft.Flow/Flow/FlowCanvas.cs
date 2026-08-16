@@ -411,6 +411,12 @@ namespace NodeCraft.Flow
                 return false;
             }
 
+            if (GraphModel?.Links?.Any(link => link == null) == true)
+            {
+                error = "Graph contains a null link.";
+                return false;
+            }
+
             if (!FlowDynamicInputResolver.TryRemoveDynamicPort(
                     node,
                     registration.Definition,

@@ -33,6 +33,49 @@ internal static partial class Program
                 && ports[2].Slot == 2;
         });
 
+        Run("dynamic materialization creates initial ports with fixed runtime ports", () =>
+        {
+            var definition = CreateDynamicDefinition(initialCount: 2, maxCount: null);
+            var node = new NodeModel
+            {
+                ExecutorType = definition.TypeKey,
+                InputParameters = new List<PortParameter>
+                {
+                    new PortParameter { PortId = FlowPorts.FlowIn },
+                },
+            };
+
+            FlowDynamicInputResolver.MaterializeNodePorts(node, definition);
+            return FlowDynamicInputResolver.GetDynamicPortIds(node)
+                .SequenceEqual(new[] { "input_1", "input_2" });
+        });
+
+        Run("dynamic materialization preserves an explicitly empty dynamic list", () =>
+        {
+            var definition = CreateDynamicDefinition(initialCount: 2, maxCount: null);
+            definition.DynamicInputTemplate.MinCount = 0;
+            var node = new NodeModel { ExecutorType = definition.TypeKey };
+
+            FlowDynamicInputResolver.MaterializeNodePorts(node, definition);
+            var removedFirst = FlowDynamicInputResolver.TryRemoveDynamicPort(
+                node,
+                definition,
+                "input_1",
+                out _,
+                out _);
+            var removedSecond = FlowDynamicInputResolver.TryRemoveDynamicPort(
+                node,
+                definition,
+                "input_2",
+                out _,
+                out _);
+            FlowDynamicInputResolver.MaterializeNodePorts(node, definition);
+
+            return removedFirst
+                && removedSecond
+                && FlowDynamicInputResolver.GetDynamicPortIds(node).Count == 0;
+        });
+
         Run("nodes without a dynamic template keep only fixed ports", () =>
         {
             var definition = CreateStaticDefinition();
@@ -278,6 +321,30 @@ internal static partial class Program
                 && error.PortId == "input_2");
         });
 
+        Run("executor rejects dynamic metadata outside template bounds", () =>
+        {
+            EnsureBoundedDynamicTestRegistration();
+            var belowMinimum = new WorkflowDocument();
+            belowMinimum.Nodes.Add(new WorkflowNode
+            {
+                Id = "below-minimum",
+                TypeKey = BoundedDynamicTestTypeKey,
+            });
+
+            var aboveMaximum = new WorkflowDocument();
+            aboveMaximum.Nodes.Add(new WorkflowNode
+            {
+                Id = "above-maximum",
+                TypeKey = BoundedDynamicTestTypeKey,
+                DynamicInputPortIds = { "input_1", "input_2", "input_3" },
+            });
+
+            var belowValidation = new GraphExecutor(belowMinimum).Validate();
+            var aboveValidation = new GraphExecutor(aboveMaximum).Validate();
+            return belowValidation.Errors.Any(error => error.Code == "InvalidDynamicInputs")
+                && aboveValidation.Errors.Any(error => error.Code == "InvalidDynamicInputs");
+        });
+
         Run("executor validates dynamic source compatibility", () =>
         {
             EnsureDynamicTestRegistration();
@@ -346,6 +413,22 @@ internal static partial class Program
                 && FlowDynamicInputResolver.GetDynamicPortIds(node)
                     .SequenceEqual(new[] { "input_2", "input_3" })
                 && changedCount == 2;
+            }));
+
+        Run("canvas rejects removal from a malformed graph before mutation", () =>
+            RunOnSta(() =>
+            {
+            EnsureDynamicTestRegistration();
+            var canvas = CreateHeadlessCanvas();
+            var node = CreateDynamicNode("malformed-target", "input_1", "input_2");
+            canvas.GraphModel.Nodes.Add(node);
+            canvas.GraphModel.Links.Add(null);
+
+            var removed = canvas.TryRemoveDynamicInput(node, "input_1", out var error);
+            return !removed
+                && error.Contains("null link", StringComparison.OrdinalIgnoreCase)
+                && FlowDynamicInputResolver.GetDynamicPortIds(node)
+                    .SequenceEqual(new[] { "input_1", "input_2" });
             }));
 
         Run("canvas enforces dynamic input bounds and fixed-port protection", () =>

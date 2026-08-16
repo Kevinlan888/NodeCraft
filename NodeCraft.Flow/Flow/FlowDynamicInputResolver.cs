@@ -105,7 +105,6 @@ namespace NodeCraft.Flow
             ValidateTemplate(definition);
 
             var existing = node.InputParameters ?? new List<PortParameter>();
-            var hadRuntimePorts = existing.Count > 0;
             var fixedDefinitions = (definition.InputPorts ?? new List<FlowPortDefinition>())
                 .Where(port => port != null)
                 .ToList();
@@ -173,7 +172,7 @@ namespace NodeCraft.Flow
 
             if (definition.DynamicInputTemplate != null)
             {
-                if (!hadRuntimePorts)
+                if (!node.DynamicInputPortsInitialized && dynamicRuntime.Count == 0)
                 {
                     dynamicRuntime = new List<PortParameter>();
                     for (var index = 1; index <= definition.DynamicInputTemplate.InitialCount; index++)
@@ -184,6 +183,7 @@ namespace NodeCraft.Flow
 
                 EnsureDynamicCountInBounds(node, definition.DynamicInputTemplate, dynamicRuntime.Count);
                 normalized.AddRange(dynamicRuntime);
+                node.DynamicInputPortsInitialized = true;
             }
             else
             {
@@ -272,6 +272,14 @@ namespace NodeCraft.Flow
             {
                 throw new InvalidOperationException(
                     $"Node definition '{registeredDefinition.TypeKey ?? string.Empty}' does not support dynamic input ports.");
+            }
+
+            if (registeredDefinition.DynamicInputTemplate != null)
+            {
+                EnsureDynamicCountInBounds(
+                    registeredDefinition.TypeKey ?? string.Empty,
+                    registeredDefinition.DynamicInputTemplate,
+                    dynamicIds.Count);
             }
 
             var effective = new FlowNodeDefinition
@@ -453,16 +461,24 @@ namespace NodeCraft.Flow
             FlowDynamicInputTemplate template,
             int count)
         {
+            EnsureDynamicCountInBounds(node?.Id ?? string.Empty, template, count);
+        }
+
+        private static void EnsureDynamicCountInBounds(
+            string nodeId,
+            FlowDynamicInputTemplate template,
+            int count)
+        {
             if (count < template.MinCount)
             {
                 throw new InvalidOperationException(
-                    $"Node '{node.Id}' has {count} dynamic inputs, below the minimum of {template.MinCount}.");
+                    $"Node '{nodeId}' has {count} dynamic inputs, below the minimum of {template.MinCount}.");
             }
 
             if (template.MaxCount.HasValue && count > template.MaxCount.Value)
             {
                 throw new InvalidOperationException(
-                    $"Node '{node.Id}' has {count} dynamic inputs, above the maximum of {template.MaxCount.Value}.");
+                    $"Node '{nodeId}' has {count} dynamic inputs, above the maximum of {template.MaxCount.Value}.");
             }
         }
 

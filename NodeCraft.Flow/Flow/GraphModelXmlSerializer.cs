@@ -179,7 +179,9 @@ namespace NodeCraft.Flow
             node.Width = ReadDoubleAttribute(element, "Width");
             node.Height = ReadDoubleAttribute(element, "Height");
             node.ExecutorType = executorType ?? node.ExecutorType;
-            node.InputParameters = element.Element("InputPorts")?.Elements("Port").Select(DeserializePort).ToList() ?? new List<PortParameter>();
+            var serializedInputPorts = element.Element("InputPorts");
+            node.InputParameters = serializedInputPorts?.Elements("Port").Select(DeserializePort).ToList() ?? new List<PortParameter>();
+            node.DynamicInputPortsInitialized = serializedInputPorts != null;
             node.OutputParameters = element.Element("OutputPorts")?.Elements("Port").Select(DeserializePort).ToList() ?? new List<PortParameter>();
 
             foreach (var propertyElement in element.Element("Properties")?.Elements("Property") ?? Enumerable.Empty<XElement>())
