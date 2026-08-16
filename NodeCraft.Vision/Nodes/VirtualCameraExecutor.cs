@@ -123,13 +123,17 @@ namespace NodeCraft.Vision.Nodes
 
                 cancellationToken.ThrowIfCancellationRequested();
                 var clockOrigin = _clock.Now;
+                var firstFrameDue = AddFramePeriodChecked(
+                    clockOrigin,
+                    framePeriod,
+                    sourceLabel);
                 _entries = preparedEntries;
                 _index = -1;
                 _current = null;
                 _currentEntry = null;
                 _framePeriod = framePeriod;
                 _sessionClockOrigin = clockOrigin;
-                _nextFrameDue = clockOrigin + framePeriod;
+                _nextFrameDue = firstFrameDue;
                 _nextFrameId = 0;
                 _started = true;
             }
@@ -204,10 +208,15 @@ namespace NodeCraft.Vision.Nodes
                         $"VirtualCamera source '{GetSourceLabel(context.Node)}' has no preloaded image for '{entry.Path}'.");
             }
 
+            var sourceLabel = GetSourceLabel(context.Node);
             var frameId = _nextFrameId;
             var followingFrameId = IncrementFrameIdChecked(
                 frameId,
-                GetSourceLabel(context.Node));
+                sourceLabel);
+            var followingFrameDue = AddFramePeriodChecked(
+                frameStart,
+                _framePeriod,
+                sourceLabel);
             var deviceTimestamp = GetDeviceTimestampMicroseconds(frameStart, context);
             var capturedAtUtc = _utcNow();
             var image = template.CreateFrame(frameId, deviceTimestamp, capturedAtUtc);
@@ -217,7 +226,7 @@ namespace NodeCraft.Vision.Nodes
             _currentEntry = entry;
             _index = nextIndex;
             _nextFrameId = followingFrameId;
-            _nextFrameDue = frameStart + _framePeriod;
+            _nextFrameDue = followingFrameDue;
         }
 
         public Task<IReadOnlyDictionary<string, object>> ExecuteAsync(
@@ -272,6 +281,23 @@ namespace NodeCraft.Vision.Nodes
             {
                 throw new InvalidOperationException(
                     $"VirtualCamera source '{sourcePath}' exhausted frame IDs.",
+                    exception);
+            }
+        }
+
+        internal static TimeSpan AddFramePeriodChecked(
+            TimeSpan frameStart,
+            TimeSpan framePeriod,
+            string sourcePath)
+        {
+            try
+            {
+                return frameStart + framePeriod;
+            }
+            catch (OverflowException exception)
+            {
+                throw new InvalidOperationException(
+                    $"VirtualCamera source '{sourcePath}' overflowed its frame deadline.",
                     exception);
             }
         }

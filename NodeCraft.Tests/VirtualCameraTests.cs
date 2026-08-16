@@ -830,6 +830,62 @@ internal static partial class Program
             }
         });
 
+        await RunAsync("virtual camera wraps deadline overflow before committing frame", async () =>
+        {
+            const double frameRate = 20.0;
+            var framePeriod = TimeSpan.FromSeconds(1.0 / frameRate);
+            var clock = new VirtualCameraTestClock(TimeSpan.MaxValue - framePeriod);
+            Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                clock.Advance(duration);
+                return Task.CompletedTask;
+            }
+
+            var executor = new VirtualCameraExecutor(
+                null,
+                clock,
+                DelayAsync,
+                () => DateTimeOffset.UnixEpoch);
+            var context = CreateVirtualCameraContext(
+                "builtin://vision/sample-set",
+                VirtualCameraLoadMode.Preload,
+                10,
+                100,
+                false,
+                out _,
+                out _,
+                frameRate);
+            await executor.StartSessionAsync(context, CancellationToken.None);
+            Exception? observed = null;
+            try
+            {
+                await executor.PrepareIterationAsync(context, CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                observed = exception;
+            }
+
+            var fields = BindingFlags.Instance | BindingFlags.NonPublic;
+            var executorType = typeof(VirtualCameraExecutor);
+            var index = (int)executorType.GetField("_index", fields)!.GetValue(executor)!;
+            var nextFrameId = (ulong)executorType
+                .GetField("_nextFrameId", fields)!
+                .GetValue(executor)!;
+            var current = executorType.GetField("_current", fields)!.GetValue(executor);
+            await executor.StopSessionAsync(context, CancellationToken.None);
+
+            return observed is InvalidOperationException invalidOperation
+                && invalidOperation.Message.Contains("VirtualCamera", StringComparison.Ordinal)
+                && invalidOperation.Message.Contains(
+                    "builtin://vision/sample-set", StringComparison.Ordinal)
+                && invalidOperation.InnerException is OverflowException
+                && index == -1
+                && nextFrameId == 0
+                && current == null;
+        });
+
         await RunAsync("virtual camera reports distinct prepare and execute errors after stop", async () =>
         {
             var executor = CreateVirtualCameraExecutor();
@@ -1757,6 +1813,11 @@ internal static partial class Program
 
     private sealed class VirtualCameraTestClock : IMonotonicClock
     {
+        internal VirtualCameraTestClock(TimeSpan now = default)
+        {
+            Now = now;
+        }
+
         public TimeSpan Now { get; private set; }
 
         internal void Advance(TimeSpan duration)
