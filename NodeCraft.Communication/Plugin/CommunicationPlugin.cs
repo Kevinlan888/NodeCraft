@@ -1,4 +1,5 @@
 using System;
+using NodeCraft.Communication.Nodes;
 using NodeCraft.Flow;
 
 namespace NodeCraft.Communication.Plugin
@@ -18,6 +19,33 @@ namespace NodeCraft.Communication.Plugin
             {
                 throw new ArgumentNullException(nameof(context));
             }
+
+            context.Nodes.Register(new FlowNodeRegistration(
+                new FlowNodeDefinition
+                {
+                    TypeKey = TcpClientSendNodeModel.FlowNodeTypeKey,
+                    DisplayName = "TCP Client Send",
+                    Category = "Communication",
+                    DynamicInputTemplate = new FlowDynamicInputTemplate
+                    {
+                        PortIdPrefix = "message",
+                        DisplayNamePrefix = "Message",
+                        DataType = FlowDataType.Object,
+                        PreferredDirection = EPortDirection.Left,
+                        IsRequired = true,
+                        Availability = FlowPortAvailability.Iteration,
+                        MinCount = 1,
+                        InitialCount = 1,
+                        MaxCount = null,
+                    },
+                },
+                () => null)
+            {
+                NodeModelType = typeof(TcpClientSendNodeModel),
+                NodeFactory = () => new TcpClientSendNodeModel(),
+                PaletteDisplayName = "TCP Client Send",
+                PaletteDescription = "Sends each message input over one TCP client session.",
+            });
         }
     }
 }

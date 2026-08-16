@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging.Abstractions;
+using NodeCraft.Communication.Nodes;
 using NodeCraft.Communication.Plugin;
 using NodeCraft.Communication.Transport;
 using NodeCraft.Flow;
@@ -122,6 +123,51 @@ internal static partial class Program
 
             stopwatch.Stop();
             return error != null && stopwatch.Elapsed < TimeSpan.FromSeconds(2);
+        });
+
+        Run("TCP Client Send exposes an unlimited required dynamic message template", () =>
+        {
+            var plugin = new CommunicationPlugin();
+            var context = new PluginRegistrationContext(
+                NullLogger.Instance,
+                new Version(1, 0));
+            plugin.Register(context);
+            var registration = context.Registrations.Single(item =>
+                item.Definition.TypeKey == TcpClientSendNodeModel.FlowNodeTypeKey);
+            var template = registration.Definition.DynamicInputTemplate;
+            var node = (TcpClientSendNodeModel)registration.NodeFactory();
+            FlowDynamicInputResolver.MaterializeNodePorts(node, registration.Definition);
+
+            return template != null
+                && template.PortIdPrefix == "message"
+                && template.DisplayNamePrefix == "Message"
+                && template.DataType == FlowDataType.Object
+                && template.PreferredDirection == EPortDirection.Left
+                && template.IsRequired
+                && template.Availability == FlowPortAvailability.Iteration
+                && template.MinCount == 1
+                && template.InitialCount == 1
+                && template.MaxCount == null
+                && node.InputParameters.Count(port => port.IsDynamic) == 1
+                && node.InputParameters.Single(port => port.IsDynamic).PortId == "message_1";
+        });
+
+        Run("TCP Client Send node projects its persisted workflow settings", () =>
+        {
+            var node = new TcpClientSendNodeModel
+            {
+                Host = "127.0.0.1",
+                Port = 43123,
+                ConnectTimeoutMilliseconds = 2300,
+                StopOnSendFailure = false,
+            };
+            var workflowNode = new WorkflowNode();
+            node.WriteWorkflowInputs(workflowNode);
+
+            return Equals(workflowNode.Inputs["host"], "127.0.0.1")
+                && Equals(workflowNode.Inputs["port"], 43123)
+                && Equals(workflowNode.Inputs["connectTimeoutMilliseconds"], 2300)
+                && Equals(workflowNode.Inputs["stopOnSendFailure"], false);
         });
     }
 
