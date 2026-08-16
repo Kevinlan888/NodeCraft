@@ -493,8 +493,7 @@ internal static partial class Program
             });
             GraphModelLinkReconciler.Reconcile(canvas.GraphModel);
 
-            var content = NodeExecutorFactory.Registry.BuildNodeContent(canvas, target)
-                as System.Windows.FrameworkElement;
+            var content = (System.Windows.FrameworkElement)NodeExecutorFactory.Registry.BuildNodeContent(canvas, target);
             var labels = FindLogicalDescendants<System.Windows.Controls.TextBlock>(content)
                 .Select(textBlock => textBlock.Text)
                 .ToList();
@@ -613,7 +612,9 @@ internal static partial class Program
             foreach (var inputPort in definition.InputPorts.Where(port => port.IsDynamic))
             {
                 ObservedInputIds.Add(inputPort.Id);
-                values.Add(inputs.TryGetValue(inputPort.Id, out var value) ? value as string : null);
+                values.Add(inputs.TryGetValue(inputPort.Id, out var value)
+                    ? value as string ?? string.Empty
+                    : string.Empty);
             }
 
             return Task.FromResult<IReadOnlyDictionary<string, object>>(

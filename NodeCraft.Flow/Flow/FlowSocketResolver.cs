@@ -54,6 +54,11 @@ namespace NodeCraft.Flow
 
             if (isInput)
             {
+                if (node == null || definition == null)
+                {
+                    return result;
+                }
+
                 foreach (var inputPort in FlowDynamicInputResolver.ResolveNodeInputPorts(node, definition))
                 {
                     result.Add(new FlowSocketDescriptor

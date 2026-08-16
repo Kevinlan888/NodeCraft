@@ -434,7 +434,8 @@ namespace NodeCraft.Flow
                 link.TargetSlot--;
             }
 
-            if (GraphModel.Nodes.All(item => !ReferenceEquals(item, node)))
+            if (!GraphModel.Nodes.Any(item => item != null
+                && string.Equals(item.Id, node.Id, StringComparison.Ordinal)))
             {
                 GraphModel.Nodes.Add(node);
             }
@@ -1584,7 +1585,7 @@ namespace NodeCraft.Flow
 
         private void UpdateCanvas()
         {
-            if (_canvasUpdateQueued)
+            if (_canvas == null || _canvasUpdateQueued)
             {
                 return;
             }
