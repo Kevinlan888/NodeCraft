@@ -1527,12 +1527,139 @@ git commit -m "test: verify virtual camera frame pacing"
 
 若没有修正，保持 clean worktree，不创建空提交。
 
+---
+
+### Task 6: 将预加载内存上限的编辑器单位改为 MB
+
+**Files:**
+- Modify: `NodeCraft.Vision/Nodes/VirtualCameraNodeModel.cs:8-55`：增加 UI 换算常量，不改变 `MaxPreloadedBytes` 类型、默认值或 workflow mapping。
+- Modify: `NodeCraft.Vision/Views/VirtualCameraEditor.xaml:26-34`：将字节上限标签改为 `Maximum preloaded memory (MB)`。
+- Modify: `NodeCraft.Vision/Views/VirtualCameraEditor.xaml.cs:48-175`：初始化时 bytes→MB，输入时 MB→bytes，保持非法输入不通知。
+- Test: `NodeCraft.Tests/VirtualCameraTests.cs:1480-1540`：验证默认显示、转换、边界和通知行为。
+
+**Interfaces:**
+- Consumes: `VirtualCameraNodeModel.MaxPreloadedBytes` (`long`) 和现有 `_maxPreloadedBytesEditor`。
+- Produces: `VirtualCameraNodeModel.BytesPerMegabyte`（internal `long` 常量）以及 UI 的 MB 输入/显示行为；`maxPreloadedBytes` workflow key 和 executor 不变。
+
+- [ ] **Step 1: 写编辑器 MB 转换的失败测试**
+
+在 `virtual camera editor mutates all properties and notifies graph changes` 中，把有效字节上限输入改成 MB，并在初始化后记录显示值：
+
+```csharp
+var maxBytes = GetPrivateField<TextBox>(content, "_maxPreloadedBytesEditor");
+var initialMaxBytesText = maxBytes.Text;
+
+source.Text = "C:\\frames";
+mode.SelectedItem = VirtualCameraLoadMode.Dynamic;
+frameRate.Text = "29.97";
+maxImages.Text = "7";
+maxBytes.Text = "256";
+skipErrors.IsChecked = true;
+
+var changesAfterValidInput = graphChanges;
+foreach (var invalid in new[]
+{
+    string.Empty,
+    "not-an-int",
+    "0",
+    "-1",
+    "8796093022208",
+})
+{
+    maxBytes.Text = invalid;
+}
+```
+
+将返回断言补为：
+
+```csharp
+&& initialMaxBytesText == "512"
+&& node.MaxPreloadedBytes == 256L * 1024L * 1024L
+&& changesAfterValidInput == 6
+&& graphChanges == changesAfterValidInput
+```
+
+- [ ] **Step 2: 运行测试确认红灯**
+
+Run:
+
+```powershell
+dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj --no-restore
+```
+
+Expected: editor test fails because the current editor displays `536870912` and treats `256` as 256 bytes.
+
+- [ ] **Step 3: 实现最小 bytes/MB 转换**
+
+在 `VirtualCameraNodeModel` 增加：
+
+```csharp
+internal const long BytesPerMegabyte = 1024L * 1024L;
+```
+
+初始化编辑器时改为：
+
+```csharp
+_maxPreloadedBytesEditor.Text = (_node.MaxPreloadedBytes
+    / VirtualCameraNodeModel.BytesPerMegabyte)
+    .ToString(CultureInfo.InvariantCulture);
+```
+
+handler 使用 invariant culture 解析正整数 MB，checked 转换后才写回模型：
+
+```csharp
+if (_initializing
+    || !long.TryParse(
+        _maxPreloadedBytesEditor.Text,
+        NumberStyles.Integer,
+        CultureInfo.InvariantCulture,
+        out var megabytes)
+    || megabytes <= 0)
+{
+    return;
+}
+
+long bytes;
+try
+{
+    bytes = checked(megabytes * VirtualCameraNodeModel.BytesPerMegabyte);
+}
+catch (OverflowException)
+{
+    return;
+}
+
+_node.MaxPreloadedBytes = bytes;
+NotifyChanged();
+```
+
+- [ ] **Step 4: 运行 editor 和全量测试确认绿灯**
+
+Run:
+
+```powershell
+dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj --no-restore
+```
+
+Expected: MB 编辑器断言 PASS，所有测试末尾输出 `ALL PASS`。
+
+- [ ] **Step 5: 检查契约未改变并提交**
+
+确认 `VirtualCameraNodeModel.WriteWorkflowInputs` 仍写入 `MaxPreloadedBytes` 的原始 bytes 值，未修改 `VirtualCameraExecutor` 的 bytes 校验路径；然后提交：
+
+```powershell
+git diff --check
+git add NodeCraft.Vision/Nodes/VirtualCameraNodeModel.cs NodeCraft.Vision/Views/VirtualCameraEditor.xaml NodeCraft.Vision/Views/VirtualCameraEditor.xaml.cs NodeCraft.Tests/VirtualCameraTests.cs
+git commit -m "feat: show virtual camera memory limit in MB"
+```
+
 ## Spec Coverage Self-Review
 
 | 规格要求 | 计划覆盖 |
 | --- | --- |
 | `double FrameRate`、默认 18、0.1-1000、finite validation | Tasks 1, 3 |
 | XML round-trip、旧 XML default、workflow mapping | Task 1 |
+| 编辑器以 MB 显示/输入、内部仍保存 bytes、溢出不通知 | Task 6 |
 | missing runtime key fallback、错误类型/范围异常 | Task 3 |
 | 编辑器 InvariantCulture、合法/非法通知 | Task 1 |
 | 不修改 Flow/framework/真实相机，不增加后台线程或队列 | Global Constraints, Task 5 |
