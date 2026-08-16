@@ -14,6 +14,8 @@ using NodeCraft.Communication.Nodes;
 using NodeCraft.Communication.Plugin;
 using NodeCraft.Communication.Transport;
 using NodeCraft.Flow;
+using System.Windows;
+using System.Windows.Controls;
 
 internal static partial class Program
 {
@@ -109,7 +111,7 @@ internal static partial class Program
         {
             using var connection = new TcpClientConnection();
             var stopwatch = Stopwatch.StartNew();
-            Exception error = null;
+            Exception? error = null;
             try
             {
                 await connection.ConnectAsync(
@@ -373,7 +375,7 @@ internal static partial class Program
                         new FlowExecutionContext(),
                         workflowNode,
                         definition,
-                        new Dictionary<string, object> { ["message_1"] = null },
+                        new Dictionary<string, object> { ["message_1"] = null! },
                         CancellationToken.None);
                 }
                 catch (InvalidOperationException exception)
@@ -419,6 +421,124 @@ internal static partial class Program
             return threw
                 && factory.Connections.Single().ConnectCount == 1
                 && factory.Connections.Single().Disposed;
+        });
+
+        Run("TCP Client Send registration exposes an editor and network palette metadata", () =>
+        {
+            var plugin = new CommunicationPlugin();
+            var context = new PluginRegistrationContext(
+                NullLogger.Instance,
+                new Version(1, 0));
+            plugin.Register(context);
+            var registration = context.Registrations.Single(item =>
+                item.Definition.TypeKey == TcpClientSendNodeModel.FlowNodeTypeKey);
+            var registry = EnsureCommunicationRegistered();
+            var communicationCategory = registry.CreatePaletteCategories().Single(category =>
+                category.Title == "Communication");
+            var item = communicationCategory.Items.Single(paletteItem =>
+                paletteItem.TypeKey == TcpClientSendNodeModel.FlowNodeTypeKey);
+
+            return registration.ContentFactory != null
+                && item.IconKind == "LanConnect"
+                && communicationCategory.IconKind == "LanConnect";
+        });
+
+        Run("TCP Client Send editor XAML is embedded with all settings controls", () =>
+        {
+            var assembly = typeof(CommunicationPlugin).Assembly;
+            using var stream = assembly.GetManifestResourceStream(
+                "NodeCraft.Communication.Views.TcpClientSendEditor.xaml");
+            if (stream == null)
+            {
+                return false;
+            }
+
+            using var reader = new StreamReader(stream);
+            var xaml = reader.ReadToEnd();
+            return xaml.Contains("HostEditor", StringComparison.Ordinal)
+                && xaml.Contains("PortEditor", StringComparison.Ordinal)
+                && xaml.Contains("ConnectTimeoutEditor", StringComparison.Ordinal)
+                && xaml.Contains("StopOnSendFailureEditor", StringComparison.Ordinal);
+        });
+
+        await RunAsync("TCP Client Send editor updates settings and ignores invalid numbers", () =>
+            Task.FromResult(RunOnSta(() =>
+            {
+                var registry = EnsureCommunicationRegistered();
+                var registration = registry.Resolve(TcpClientSendNodeModel.FlowNodeTypeKey);
+                var canvas = new FlowCanvas();
+                var node = new TcpClientSendNodeModel();
+                var graphChanges = 0;
+                canvas.GraphChanged += (_, __) => graphChanges++;
+                var content = registration.ContentFactory?.Invoke(canvas, node);
+                var host = GetPrivateField<TextBox>(content!, "_hostEditor");
+                var port = GetPrivateField<TextBox>(content!, "_portEditor");
+                var timeout = GetPrivateField<TextBox>(content!, "_connectTimeoutEditor");
+                var stopOnFailure = GetPrivateField<CheckBox>(
+                    content!,
+                    "_stopOnSendFailureEditor");
+                var initialChanges = graphChanges;
+
+                host.Text = "localhost";
+                port.Text = "43210";
+                timeout.Text = "1800";
+                stopOnFailure.IsChecked = false;
+                var validChanges = graphChanges;
+                port.Text = "not-an-int";
+                timeout.Text = "0";
+
+                return content is FrameworkElement
+                    && initialChanges == 0
+                    && node.Host == "localhost"
+                    && node.Port == 43210
+                    && node.ConnectTimeoutMilliseconds == 1800
+                    && !node.StopOnSendFailure
+                    && validChanges == 4
+                    && graphChanges == validChanges;
+            })));
+
+        Run("TCP Client Send configuration and dynamic port survive graph XML round-trip", () =>
+        {
+            var registry = EnsureCommunicationRegistered();
+            var original = new TcpClientSendNodeModel
+            {
+                Host = "localhost",
+                Port = 43210,
+                ConnectTimeoutMilliseconds = 1800,
+                StopOnSendFailure = false,
+            };
+            FlowDynamicInputResolver.MaterializeNodePorts(
+                original,
+                registry.Resolve(TcpClientSendNodeModel.FlowNodeTypeKey).Definition);
+            var path = Path.Combine(
+                Path.GetTempPath(),
+                "nodecraft-communication-" + Guid.NewGuid().ToString("N") + ".flow.xml");
+
+            try
+            {
+                GraphModelXmlSerializer.Save(
+                    new GraphModel
+                    {
+                        Nodes = new List<NodeModel> { original },
+                        Links = new List<GraphLink>(),
+                    },
+                    path);
+                var loaded = GraphModelXmlSerializer.Load(path).Nodes.Single();
+                var node = (TcpClientSendNodeModel)loaded;
+                return node.Host == "localhost"
+                    && node.Port == 43210
+                    && node.ConnectTimeoutMilliseconds == 1800
+                    && !node.StopOnSendFailure
+                    && node.InputParameters.Count(port => port.IsDynamic) == 1
+                    && node.InputParameters.Single(port => port.IsDynamic).PortId == "message_1";
+            }
+            finally
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
         });
     }
 
@@ -472,6 +592,23 @@ internal static partial class Program
         };
     }
 
+    private static FlowNodeRegistry EnsureCommunicationRegistered()
+    {
+        var registry = NodeExecutorFactory.Registry;
+        if (registry.TryResolve(TcpClientSendNodeModel.FlowNodeTypeKey, out _))
+        {
+            return registry;
+        }
+
+        var plugin = new CommunicationPlugin();
+        var context = new PluginRegistrationContext(
+            NullLogger.Instance,
+            new Version(1, 0));
+        plugin.Register(context);
+        registry.RegisterPlugin(plugin.Metadata.Id, context.Registrations);
+        return registry;
+    }
+
     private static async Task<byte[]> ReadExactlyAsync(NetworkStream stream, int length)
     {
         var buffer = new byte[length];
@@ -497,7 +634,7 @@ internal static partial class Program
 
         public int FailOnSendNumber { get; set; }
 
-        public Exception ConnectException { get; set; }
+        public Exception? ConnectException { get; set; }
 
         public ITcpClientConnection Create()
         {
@@ -523,7 +660,7 @@ internal static partial class Program
 
         public int FailOnSendNumber { get; set; }
 
-        public Exception ConnectException { get; set; }
+        public Exception? ConnectException { get; set; }
 
         public Task ConnectAsync(
             string host,
@@ -562,7 +699,8 @@ internal static partial class Program
     {
         public List<string> Messages { get; } = new List<string>();
 
-        public IDisposable BeginScope<TState>(TState state)
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull
         {
             return NullScope.Instance;
         }
@@ -576,8 +714,8 @@ internal static partial class Program
             LogLevel logLevel,
             EventId eventId,
             TState state,
-            Exception exception,
-            Func<TState, Exception, string> formatter)
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
         {
             Messages.Add(formatter(state, exception));
         }

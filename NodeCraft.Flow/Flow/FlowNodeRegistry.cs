@@ -379,6 +379,7 @@ namespace NodeCraft.Flow
                 case "Math": return "CalculatorVariant";
                 case "Logic": return "SourceBranch";
                 case "Vision": return "CameraOutline";
+                case "Communication": return "LanConnect";
                 default: return "ShapeOutline";
             }
         }
@@ -399,6 +400,7 @@ namespace NodeCraft.Flow
                 case "node.text-preview": return "EyeOutline";
                 case "nodecraft.vision.stereo-camera.camera": return "CameraOutline";
                 case "nodecraft.vision.stereo-camera.image-preview": return "ImageOutline";
+                case "nodecraft.communication.tcp-client-send": return "LanConnect";
                 case "node.if": return "SourceBranch";
                 default: return ResolveCategoryIconKind(categoryName);
             }

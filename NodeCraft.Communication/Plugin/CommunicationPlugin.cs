@@ -1,6 +1,7 @@
 using System;
 using NodeCraft.Communication.Nodes;
 using NodeCraft.Communication.Transport;
+using NodeCraft.Communication.Views;
 using NodeCraft.Flow;
 
 namespace NodeCraft.Communication.Plugin
@@ -48,6 +49,7 @@ namespace NodeCraft.Communication.Plugin
                 NodeFactory = () => new TcpClientSendNodeModel(),
                 PaletteDisplayName = "TCP Client Send",
                 PaletteDescription = "Sends each message input over one TCP client session.",
+                ContentFactory = TcpClientSendEditor.CreateContent,
             });
         }
     }
