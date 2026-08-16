@@ -463,6 +463,47 @@ internal static partial class Program
                         !string.IsNullOrWhiteSpace(
                             System.Windows.Automation.AutomationProperties.GetName(button)));
             })));
+
+        Run("generic dynamic nodes render effective input bindings", () =>
+            RunOnSta(() =>
+            {
+            EnsureDynamicTestRegistration();
+            var canvas = CreateHeadlessCanvas();
+            var source = CreateStringSourceNode("generic-source-a");
+            var secondSource = CreateStringSourceNode("generic-source-b");
+            var target = CreateDynamicNode("generic-target", "input_1", "input_2");
+            canvas.GraphModel.Nodes.Add(source);
+            canvas.GraphModel.Nodes.Add(secondSource);
+            canvas.GraphModel.Nodes.Add(target);
+            canvas.GraphModel.Links.Add(new GraphLink
+            {
+                Id = "generic-link-a",
+                OriginNodeId = source.Id,
+                OriginSlot = 0,
+                TargetNodeId = target.Id,
+                TargetSlot = 1,
+            });
+            canvas.GraphModel.Links.Add(new GraphLink
+            {
+                Id = "generic-link-b",
+                OriginNodeId = secondSource.Id,
+                OriginSlot = 0,
+                TargetNodeId = target.Id,
+                TargetSlot = 2,
+            });
+            GraphModelLinkReconciler.Reconcile(canvas.GraphModel);
+
+            var content = NodeExecutorFactory.Registry.BuildNodeContent(canvas, target)
+                as System.Windows.FrameworkElement;
+            var labels = FindLogicalDescendants<System.Windows.Controls.TextBlock>(content)
+                .Select(textBlock => textBlock.Text)
+                .ToList();
+
+            return labels.Contains("Input 1", StringComparer.Ordinal)
+                && labels.Contains("Input 2", StringComparer.Ordinal)
+                && labels.Any(text => text.Contains("generic-source-a", StringComparison.Ordinal))
+                && labels.Any(text => text.Contains("generic-source-b", StringComparison.Ordinal));
+            }));
     }
 
     private const string DynamicTestTypeKey = "test.dynamic-input-ports";
@@ -685,6 +726,32 @@ internal static partial class Program
             }
 
             foreach (var descendant in FindVisualDescendants<T>(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
+    private static IEnumerable<T> FindLogicalDescendants<T>(System.Windows.DependencyObject root)
+    {
+        if (root == null)
+        {
+            yield break;
+        }
+
+        foreach (var child in System.Windows.LogicalTreeHelper.GetChildren(root))
+        {
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            if (child is not System.Windows.DependencyObject childObject)
+            {
+                continue;
+            }
+
+            foreach (var descendant in FindLogicalDescendants<T>(childObject))
             {
                 yield return descendant;
             }

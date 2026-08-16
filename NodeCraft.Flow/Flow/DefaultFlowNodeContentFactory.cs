@@ -113,6 +113,10 @@ namespace NodeCraft.Flow
             {
                 container.Children.Add(BuildPreviewValue("Text", textPreviewNode.LastPreviewText, "等待执行后显示文本结果"));
             }
+            else if (SupportsDynamicInputs(node))
+            {
+                container.Children.Add(BuildInputBindings(node));
+            }
             else
             {
                 container.Children.Add(new TextBlock
@@ -302,8 +306,8 @@ namespace NodeCraft.Flow
                 return new Border { Height = 0, Opacity = 0 };
             }
 
-            var inputPorts = registration.Definition.InputPorts?
-                .Where(port => !port.IsControlPort)
+            var inputPorts = FlowDynamicInputResolver.ResolveNodeInputPorts(node, registration.Definition)
+                .Where(port => port.Definition != null && !port.Definition.IsControlPort)
                 .ToList();
 
             if (inputPorts == null || inputPorts.Count == 0)
@@ -328,9 +332,7 @@ namespace NodeCraft.Flow
 
             foreach (var inputPort in inputPorts)
             {
-                var linkId = node.InputParameters?
-                    .FirstOrDefault(item => string.Equals(item.PortId, inputPort.Id, StringComparison.Ordinal))?
-                    .LinkId;
+                var linkId = inputPort.RuntimePort?.LinkId;
 
                 var sourceName = ResolveConnectedSourceName(FindLink(linkId));
 
@@ -349,7 +351,7 @@ namespace NodeCraft.Flow
                         },
                         Children =
                         {
-                            CreateInputBindingLabel(inputPort.DisplayName ?? inputPort.Id),
+                            CreateInputBindingLabel(inputPort.Definition.DisplayName ?? inputPort.Definition.Id),
                             CreateInputBindingValue(sourceName),
                         }
                     }
@@ -357,6 +359,13 @@ namespace NodeCraft.Flow
             }
 
             return panel;
+        }
+
+        private static bool SupportsDynamicInputs(NodeModel node)
+        {
+            return node != null
+                && NodeExecutorFactory.Registry.TryResolve(node.ExecutorType, out var registration)
+                && registration.Definition.DynamicInputTemplate != null;
         }
 
         private static TextBlock CreateInputBindingLabel(string label)
@@ -510,7 +519,14 @@ namespace NodeCraft.Flow
                 return -1;
             }
 
-            var ports = isInput ? registration.Definition.InputPorts : registration.Definition.OutputPorts;
+            if (isInput)
+            {
+                return FlowDynamicInputResolver.ResolveNodeInputPorts(node, registration.Definition)
+                    .FirstOrDefault(port => string.Equals(port.Definition.Id, portId, StringComparison.Ordinal))?
+                    .Slot ?? -1;
+            }
+
+            var ports = registration.Definition.OutputPorts;
             for (int i = 0; i < ports.Count; i++)
             {
                 if (string.Equals(ports[i].Id, portId, StringComparison.Ordinal))
@@ -554,15 +570,11 @@ namespace NodeCraft.Flow
                 return;
             }
 
-            if (slot < 0 || slot >= registration.Definition.InputPorts.Count)
+            var inputPort = FlowDynamicInputResolver.ResolveNodeInputPorts(node, registration.Definition)
+                .FirstOrDefault(port => port.Slot == slot)?.RuntimePort;
+            if (inputPort != null)
             {
-                return;
-            }
-
-            var port = node.InputParameters.FirstOrDefault(item => string.Equals(item.PortId, registration.Definition.InputPorts[slot].Id, StringComparison.Ordinal));
-            if (port != null)
-            {
-                port.LinkId = linkId;
+                inputPort.LinkId = linkId;
             }
         }
 
