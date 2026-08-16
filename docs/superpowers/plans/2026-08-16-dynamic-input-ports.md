@@ -19,6 +19,7 @@
 - Removing a connected dynamic port removes only its own link, then decrements later target slots on that node.
 - Adding a dynamic port grows a node when its explicit height cannot contain the new input rows; removing a port never automatically shrinks a manually chosen height.
 - A saved graph that uses dynamic ports on a node type that no longer supports them fails validation/load rather than silently dropping ports or links.
+- Reconciliation validates every node's dynamic metadata, including dynamic ports with no links; unsupported or malformed dynamic state must never be ignored on an unreferenced node.
 - Do not add a user-authored port-schema editor or a multi-link fan-in feature.
 - Keep host and flow projects on their existing C# 9/.NET 8 WPF configuration and nullable settings.
 - Follow the existing `NodeCraft.Tests` console runner pattern and run focused tests in a failing state before each production change.
@@ -159,7 +160,7 @@ private static void RunDynamicInputPortTests()
 }
 ```
 
-Add helpers that construct a definition with a fixed control `flowIn` input, one string `output` port, and a `FlowDynamicInputTemplate` using `FlowDataType.String`, `MinCount = 1`, the requested initial count, and the requested maximum. Define one guarded global test registration so XML loading can recreate the dynamic node by `ExecutorType`:
+Add helpers that construct a definition with a fixed control `flowIn` input, one string `output` port, and a `FlowDynamicInputTemplate` using `FlowDataType.String`, `MinCount = 1`, the requested initial count, the requested maximum, and an optional `isRequired` argument for execution-validation tests. Generated display names must be deterministic (`<DisplayNamePrefix> <numericSuffix>`), and generated IDs must not collide with any fixed input ID. Define one guarded global test registration so XML loading can recreate the dynamic node by `ExecutorType`; keep this fake registration out of the palette so it cannot change existing palette/category assertions:
 
 ```csharp
 private const string DynamicTestTypeKey = "test.dynamic-input-ports";
@@ -173,10 +174,11 @@ private static void EnsureDynamicTestRegistration()
 
     NodeExecutorFactory.Registry.RegisterNode(
         new FlowNodeRegistration(
-            CreateDynamicDefinition(initialCount: 1, maxCount: null),
+            CreateDynamicDefinition(initialCount: 1, maxCount: null, isRequired: true),
             () => new DynamicTestExecutor()),
         typeof(DynamicTestNodeModel),
-        () => new DynamicTestNodeModel());
+        () => new DynamicTestNodeModel(),
+        showInPalette: false);
 }
 
 private sealed class DynamicTestNodeModel : NodeModel
@@ -237,7 +239,7 @@ public class FlowDynamicInputTemplate
 }
 ```
 
-Implement the resolver so it validates empty prefixes, null types, negative counts, invalid initial bounds, and prefix collisions; normalizes fixed ports to definition order; preserves saved dynamic relative order; creates missing initial dynamic ports; rejects duplicate/invalid IDs; generates IDs as `<PortIdPrefix>_<n>` using the next unused numeric suffix; never renames surviving ports; creates generated definitions with copied template rules and `IsDynamic = true`; builds effective definitions without mutating shared registrations; and returns descriptors whose slots are effective-list indices.
+Implement the resolver so it validates empty prefixes, null types, negative counts, invalid initial bounds, generated-ID collisions with every fixed input, and prefix collisions; normalizes fixed ports to definition order; preserves saved dynamic relative order; creates missing initial dynamic ports; rejects duplicate/invalid IDs; generates IDs as `<PortIdPrefix>_<n>` using the next unused numeric suffix; never renames surviving ports; creates generated definitions with copied template rules, deterministic display names, and `IsDynamic = true`; builds effective definitions without mutating shared registrations; and returns descriptors whose slots are effective-list indices.
 
 Use this central shape:
 
@@ -321,7 +323,7 @@ return target.DynamicInputPortIds.SequenceEqual(new[] { "input_1", "input_2" })
     && ((LinkRef)target.Inputs["input_2"]).SourceNodeId == "source-b";
 ```
 
-Add a malformed-graph test with dynamic runtime ports but a registration whose `DynamicInputTemplate` is null; `GraphModelLinkReconciler.Reconcile` must throw instead of dropping those ports.
+Add malformed-graph tests with dynamic runtime ports but a registration whose `DynamicInputTemplate` is null, including a case where the dynamic port has no link; `GraphModelLinkReconciler.Reconcile` must throw instead of dropping those ports.
 
 - [ ] **Step 2: Run the harness and verify the graph RED state.**
 
@@ -329,7 +331,7 @@ Run the existing `dotnet run` command. Expected failures include the current for
 
 - [ ] **Step 3: Upgrade XML serialization and version compatibility.**
 
-In `GraphModelXmlSerializer.cs`, set `CurrentFormatVersion` to `5`, accept only versions `4` and `5`, keep version-3 and legacy `Connections` rejection, add `IsDynamic` to `SerializePort`, and parse an optional `IsDynamic` attribute as `false` when absent. After deserializing nodes and before reconciliation, call `MaterializeNodePorts` for every registered node so missing fixed ports are filled without recreating saved dynamic ports.
+In `GraphModelXmlSerializer.cs`, set `CurrentFormatVersion` to `5`, accept only versions `4` and `5`, keep version-3 and legacy `Connections` rejection, update the legacy error text to refer to v5, add `IsDynamic` to `SerializePort`, and parse an optional `IsDynamic` attribute as `false` when absent. If the attribute is present but not a valid Boolean, fail with an actionable format error. After deserializing nodes and before reconciliation, call `MaterializeNodePorts` for every registered node so missing fixed ports are filled without recreating saved dynamic ports.
 
 Use an explicit version check:
 
@@ -343,7 +345,7 @@ if (formatVersion != 4 && formatVersion != CurrentFormatVersion)
 
 - [ ] **Step 4: Update reconciliation and graph-to-workflow conversion.**
 
-In `GraphModelLinkReconciler.cs`, derive dynamic IDs with `GetDynamicPortIds(targetNode)`, validate target slots against `ResolveDefinition`, match runtime ports by effective ID, reject duplicate/unknown dynamic IDs, and continue assigning exactly one `LinkId` per target port. In `GraphModelWorkflowAdapter.cs`, populate ordered IDs before copying configured values/links:
+In `GraphModelLinkReconciler.cs`, first materialize/validate every registered node, including nodes with no links, then derive dynamic IDs with `GetDynamicPortIds(targetNode)`, validate target slots against `ResolveDefinition`, match runtime ports by effective ID, reject duplicate/unknown dynamic IDs, and continue assigning exactly one `LinkId` per target port. This makes direct `Save`, `Convert`, and `Reconcile` calls enforce the same unsupported-node failure as XML load. In `GraphModelWorkflowAdapter.cs`, populate ordered IDs before copying configured values/links:
 
 ```csharp
 workflowNode.DynamicInputPortIds = FlowDynamicInputResolver
@@ -507,7 +509,7 @@ Run the existing `dotnet run` command. Expected: compilation fails because the c
 
 In `FlowSocketResolver.Resolve`, retain the existing output-definition path, but for inputs consume `FlowDynamicInputResolver.ResolveNodeInputPorts`. Return each descriptor's slot, generated definition, and matched runtime port. Keep visual-style and label resolution unchanged except that generated definitions supply type/display data.
 
-Update `NodeView` to rebuild from effective descriptors, append a compact add `Button` only when `DynamicInputTemplate` is present, append a remove `Button` only for `PortParameter.IsDynamic`, route clicks through the canvas APIs, rebuild sockets after success, preserve connector hit testing, and call `EnsureDynamicInputHeight`. If explicit `Height` is smaller than measured desired height, grow `Height` and `NodeModel.Height`; never shrink on removal.
+Update `NodeView` to rebuild from effective descriptors, append a compact add `Button` only when `DynamicInputTemplate` is present, append a remove `Button` only for `PortParameter.IsDynamic`, route clicks through the canvas APIs, and expose an internal refresh method so the canvas can rebuild an already-realized view after mutation. Preserve connector hit testing and call `EnsureDynamicInputHeight`: after rebuilding, measure/update layout, compare the desired visual height with an explicit positive `Height`, and only grow `Height` and `NodeModel.Height` when the desired height is larger; never shrink on removal. The canvas APIs must also work for model-only nodes that do not currently have a `NodeView` (for example, headless graph tests).
 
 Add a compact `FlowDynamicInputActionButtonStyle` in `Flow.xaml` with an 18px square footprint and existing neutral/hover theme resources. Set automation names or tooltips to `Add input` and `Remove input` so tests do not depend on glyph rendering.
 
@@ -573,7 +575,7 @@ git commit -m "feat: add dynamic input controls"
 
 - [ ] **Step 1: Add a failing standard-content regression.**
 
-Create a dynamic fake registration with two runtime dynamic ports and two links, call `NodeExecutorFactory.Registry.BuildNodeContent(canvas, node)`, and inspect the returned `StackPanel` descendants. Assert both generated labels appear and resolve their connected source names. Keep the existing binary-operation swap test unchanged.
+Create a dynamic fake registration with two runtime dynamic ports and two links, call `NodeExecutorFactory.Registry.BuildNodeContent(canvas, node)`, and inspect the returned `StackPanel` descendants. Because the fake model is not one of the built-in binary/unary model types, this test must exercise the generic dynamic-node fallback in `DefaultFlowNodeContentFactory.Build`; assert both generated labels appear and resolve their connected source names. Keep the existing binary-operation swap test unchanged.
 
 - [ ] **Step 2: Run the harness and verify the content RED state.**
 
@@ -583,11 +585,11 @@ Run:
 dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj -f net8.0-windows --no-restore
 ```
 
-Expected: the dynamic summary test fails because `BuildInputBindings` currently iterates only `registration.Definition.InputPorts`.
+Expected: the dynamic summary test fails because the generic content fallback does not currently render dynamic input bindings and `BuildInputBindings` iterates only `registration.Definition.InputPorts`.
 
 - [ ] **Step 3: Use effective descriptors in the standard content factory.**
 
-In `BuildInputBindings`, replace the static definition list with:
+In `DefaultFlowNodeContentFactory.Build`, resolve the registration once and, for an otherwise-unhandled node with a non-null `DynamicInputTemplate`, render `BuildInputBindings(node)` instead of the generic `Output node` placeholder. In `BuildInputBindings`, replace the static definition list with:
 
 ```csharp
 var inputPorts = FlowDynamicInputResolver
