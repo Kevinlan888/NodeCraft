@@ -9,6 +9,7 @@ namespace NodeCraft.Vision.Nodes
         internal const double DefaultFrameRate = 18.0;
         internal const double MinimumFrameRate = 0.1;
         internal const double MaximumFrameRate = 1000.0;
+        internal const long BytesPerMegabyte = 1024L * 1024L;
 
         public VirtualCameraNodeModel()
         {

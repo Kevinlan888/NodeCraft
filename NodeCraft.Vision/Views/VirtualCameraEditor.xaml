@@ -27,7 +27,7 @@
                        Foreground="{DynamicResource colorNeutralForeground3}"
                        Margin="0,0,0,3" />
             <TextBox x:Name="MaxPreloadedImagesEditor" Margin="0,0,0,6" />
-            <TextBlock Text="Maximum preloaded bytes"
+            <TextBlock Text="Maximum preloaded memory (MB)"
                        Foreground="{DynamicResource colorNeutralForeground3}"
                        Margin="0,0,0,3" />
             <TextBox x:Name="MaxPreloadedBytesEditor" Margin="0,0,0,6" />

@@ -53,8 +53,9 @@ namespace NodeCraft.Vision.Views
                 CultureInfo.InvariantCulture);
             _maxPreloadedImagesEditor.Text = _node.MaxPreloadedImages.ToString(
                 CultureInfo.InvariantCulture);
-            _maxPreloadedBytesEditor.Text = _node.MaxPreloadedBytes.ToString(
-                CultureInfo.InvariantCulture);
+            _maxPreloadedBytesEditor.Text = (_node.MaxPreloadedBytes
+                / VirtualCameraNodeModel.BytesPerMegabyte)
+                .ToString(CultureInfo.InvariantCulture);
             _skipErrorImagesEditor.IsChecked = _node.SkipErrorImages;
             _initializing = false;
         }
@@ -164,12 +165,23 @@ namespace NodeCraft.Vision.Views
                     _maxPreloadedBytesEditor.Text,
                     NumberStyles.Integer,
                     CultureInfo.InvariantCulture,
-                    out var value))
+                    out var megabytes)
+                || megabytes <= 0)
             {
                 return;
             }
 
-            _node.MaxPreloadedBytes = value;
+            long bytes;
+            try
+            {
+                bytes = checked(megabytes * VirtualCameraNodeModel.BytesPerMegabyte);
+            }
+            catch (OverflowException)
+            {
+                return;
+            }
+
+            _node.MaxPreloadedBytes = bytes;
             NotifyChanged();
         }
 

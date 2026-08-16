@@ -1498,12 +1498,13 @@ internal static partial class Program
                 var maxImages = GetPrivateField<TextBox>(content, "_maxPreloadedImagesEditor");
                 var maxBytes = GetPrivateField<TextBox>(content, "_maxPreloadedBytesEditor");
                 var skipErrors = GetPrivateField<CheckBox>(content, "_skipErrorImagesEditor");
+                var initialMaxBytesText = maxBytes.Text;
 
                 source.Text = "C:\\frames";
                 mode.SelectedItem = VirtualCameraLoadMode.Dynamic;
                 frameRate.Text = "29.97";
                 maxImages.Text = "7";
-                maxBytes.Text = "123456";
+                maxBytes.Text = "256";
                 skipErrors.IsChecked = true;
 
                 var changesAfterValidInput = graphChanges;
@@ -1520,7 +1521,17 @@ internal static partial class Program
                     frameRate.Text = invalid;
                 }
                 maxImages.Text = "not-an-int";
-                maxBytes.Text = "not-a-long";
+                foreach (var invalid in new[]
+                {
+                    string.Empty,
+                    "not-an-int",
+                    "0",
+                    "-1",
+                    "8796093022208",
+                })
+                {
+                    maxBytes.Text = invalid;
+                }
 
                 return content is FrameworkElement
                     && initializedWithoutChange
@@ -1528,7 +1539,8 @@ internal static partial class Program
                     && node.LoadMode == VirtualCameraLoadMode.Dynamic
                     && node.FrameRate == 29.97
                     && node.MaxPreloadedImages == 7
-                    && node.MaxPreloadedBytes == 123456L
+                    && initialMaxBytesText == "512"
+                    && node.MaxPreloadedBytes == 256L * 1024L * 1024L
                     && node.SkipErrorImages
                     && changesAfterValidInput == 6
                     && graphChanges == changesAfterValidInput;
