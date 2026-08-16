@@ -81,6 +81,7 @@ namespace NodeCraft.Flow
         private void ApplyRegistration(FlowNodeRegistration registration)
         {
             EnsureControlInputPort(registration.Definition);
+            FlowDynamicInputResolver.ValidateTemplate(registration.Definition);
 
             if (!_registrations.ContainsKey(registration.Definition.TypeKey))
             {

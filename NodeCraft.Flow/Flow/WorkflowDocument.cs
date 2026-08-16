@@ -19,6 +19,7 @@ namespace NodeCraft.Flow
         public WorkflowNode()
         {
             Inputs = new Dictionary<string, object>();
+            DynamicInputPortIds = new List<string>();
         }
 
         public string Id { get; set; }
@@ -32,6 +33,8 @@ namespace NodeCraft.Flow
         public double Y { get; set; }
 
         public Dictionary<string, object> Inputs { get; set; }
+
+        public List<string> DynamicInputPortIds { get; set; }
     }
 
     public class FlowValidationResult

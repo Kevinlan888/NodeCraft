@@ -169,12 +169,38 @@ namespace NodeCraft.Flow
 
         public bool AllowMultipleConnections { get; set; }
 
+        public bool IsDynamic { get; set; }
+
         public object DefaultValue { get; set; }
 
         public FlowPortAvailability Availability { get; set; }
             = FlowPortAvailability.Iteration;
 
         public bool IsControlPort => DataType != null && DataType.Equals(FlowDataType.Control);
+    }
+
+    public class FlowDynamicInputTemplate
+    {
+        public string PortIdPrefix { get; set; } = "input";
+
+        public string DisplayNamePrefix { get; set; } = "Input";
+
+        public FlowDataType DataType { get; set; } = FlowDataType.Object;
+
+        public EPortDirection PreferredDirection { get; set; } = EPortDirection.Left;
+
+        public bool IsRequired { get; set; }
+
+        public object DefaultValue { get; set; }
+
+        public FlowPortAvailability Availability { get; set; }
+            = FlowPortAvailability.Iteration;
+
+        public int MinCount { get; set; }
+
+        public int InitialCount { get; set; }
+
+        public int? MaxCount { get; set; }
     }
 
     public class FlowNodeDefinition
@@ -196,6 +222,8 @@ namespace NodeCraft.Flow
         public List<FlowPortDefinition> InputPorts { get; set; }
 
         public List<FlowPortDefinition> OutputPorts { get; set; }
+
+        public FlowDynamicInputTemplate DynamicInputTemplate { get; set; }
 
         public FlowPortDefinition GetInputPort(string portId)
         {

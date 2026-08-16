@@ -21,6 +21,8 @@ namespace NodeCraft.Flow
 
         public EPortDirection PortDirection { get; set; }
 
+        public bool IsDynamic { get; set; }
+
         public Parameter Parameter { get; set; }
     }
 }
