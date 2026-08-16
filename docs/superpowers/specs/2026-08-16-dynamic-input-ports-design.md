@@ -50,7 +50,7 @@ The TCP Send registration opts in by supplying this template. Other nodes remain
 
 ### Node-instance port state
 
-Add `IsDynamic` to `PortParameter`, and add an `IsDynamic` flag to `FlowPortDefinition` whose default is `false`. Runtime definitions materialized from the template set the flag to `true`; registered fixed definitions retain the default. `NodeModel.InputParameters` remains the ordered source of runtime input ports, with fixed ports followed by dynamic ports. No separate parallel list is introduced, so existing socket, link, and serialization code can continue to operate on one ordered port collection.
+Add `IsDynamic` to `PortParameter`, and add an `IsDynamic` flag to `FlowPortDefinition` whose default is `false`. Runtime definitions materialized from the template set the flag to `true`; registered fixed definitions retain the default. `NodeModel.InputParameters` remains the ordered source of runtime input ports, with fixed ports followed by dynamic ports. During creation or loading, the materializer normalizes fixed ports to registered definition order and appends dynamic ports in their saved relative order, so an interleaved or legacy runtime list cannot create ambiguous slots. No separate parallel list is introduced, so existing socket, link, and serialization code can continue to operate on one ordered port collection.
 
 When a dynamic port is created, the framework copies the template into a runtime `PortParameter`, initializes its `Parameter.ParameterType`, applies the preferred direction, and leaves its `LinkId` empty. New IDs use the next unused numeric suffix for the prefix. Existing IDs are never renamed when another dynamic port is removed; the list order, rather than the numeric suffix, defines execution order.
 
@@ -62,9 +62,9 @@ The `NodeView` input area shows an add control only when the bound node's regist
 
 The controls call framework-level add/remove operations rather than editing the list directly:
 
-1. Add validates the node capability and maximum count, appends a generated runtime port, rebuilds sockets, redraws connections, and raises the normal graph-changed notification.
+1. Add validates the node capability and maximum count, appends a generated runtime port, rebuilds sockets, grows the node when its current explicit height cannot contain the input rows, redraws connections, and raises the normal graph-changed notification. An automatic height increase is persisted to `NodeModel.Height`.
 2. Remove validates the dynamic marker and minimum count. If the port has a link, the framework removes that link first. It then removes the runtime port, decrements `TargetSlot` for later links targeting the same node, reconciles link IDs, rebuilds sockets, redraws connections, and raises the graph-changed notification.
-3. Removing a port never renames the remaining ports. Adding a port always appends it, so existing target slots remain stable during addition.
+3. Removing a port never renames the remaining ports. Adding a port always appends it, so existing target slots remain stable during addition. Removing a port does not automatically shrink a manually chosen node height.
 
 New node instances are materialized with the template's `InitialCount`. Loaded instances preserve their serialized dynamic port list; the materializer fills only missing fixed ports and does not recreate or discard saved dynamic ports.
 
@@ -78,6 +78,8 @@ New node instances are materialized with the template's `InitialCount`. Loaded i
 - connection creation;
 - connection redraw;
 - deletion and slot reindexing.
+
+The standard input summary in `DefaultFlowNodeContentFactory` also uses the effective descriptors when it is used by a dynamic node. Custom node content remains responsible only for any custom body-specific presentation; socket creation and connection behavior stay in the framework.
 
 `GraphLink` remains slot-based for this change. Dynamic port removal is the single operation that can shift target slots, and it updates the affected links before reconciliation. Each dynamic port remains subject to the existing one-link-per-target-slot rule.
 
@@ -113,6 +115,7 @@ The workflow model's dynamic ID list is optional for old in-memory documents and
 - Adding to a non-dynamic node, adding at `MaxCount`, or removing at `MinCount` is rejected without mutating the graph.
 - Removing a fixed port, an unknown port, or a port marked dynamic on a node whose definition no longer supports dynamic inputs is rejected with a node/port-specific error.
 - Duplicate dynamic IDs, prefix collisions, invalid template counts, missing dynamic metadata, and invalid dynamic slots fail graph reconciliation or workflow validation with actionable messages.
+- A dynamic ID that does not match its node template's prefix or that collides with a fixed port is rejected rather than silently remapped.
 - A dynamic input with an incompatible source type uses the existing connection rejection and workflow validation errors.
 - A saved graph that references a node type that no longer supports its dynamic ports fails load/reconciliation rather than dropping ports or links.
 - Automatic removal of a link when its dynamic port is removed is the only destructive part of the UI operation and is limited to the selected dynamic port's link.
@@ -143,6 +146,7 @@ Add coverage to the existing test projects and console test runner for:
 - initial-count materialization and opt-in behavior;
 - add, remove, ID generation, order preservation, minimum/maximum boundaries, and no-renaming of surviving ports;
 - dynamic socket rendering and controls only on opted-in nodes;
+- automatic node-height growth when dynamic rows exceed a saved explicit height;
 - connection creation to dynamic slots, type rejection, connected-port removal, and target-slot reindexing;
 - graph XML version 5 round-tripping, version-4 compatibility, and preservation of dynamic IDs, order, values, and links;
 - `GraphModelWorkflowAdapter` output including ordered dynamic IDs and `LinkRef` values;
