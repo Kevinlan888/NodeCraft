@@ -9,7 +9,7 @@ namespace NodeCraft.Vision.Nodes
 {
     internal interface IVirtualCameraImageLoader
     {
-        FlowImage Load(string path, ulong frameId);
+        VirtualCameraImageTemplate Load(string path);
     }
 
     internal sealed class VirtualCameraImageLoadException : Exception
@@ -25,7 +25,7 @@ namespace NodeCraft.Vision.Nodes
 
     internal sealed class VirtualCameraImageLoader : IVirtualCameraImageLoader
     {
-        public FlowImage Load(string path, ulong frameId)
+        public VirtualCameraImageTemplate Load(string path)
         {
             try
             {
@@ -73,7 +73,7 @@ namespace NodeCraft.Vision.Nodes
                 var stride = checked(bitmap.PixelWidth * bytesPerPixel);
                 var buffer = new byte[checked(stride * bitmap.PixelHeight)];
                 bitmap.CopyPixels(buffer, stride, 0);
-                return FlowImage.FromOwnedBuffer(
+                return new VirtualCameraImageTemplate(
                     bitmap.PixelWidth,
                     bitmap.PixelHeight,
                     stride,
@@ -81,10 +81,7 @@ namespace NodeCraft.Vision.Nodes
                         ? FlowPixelFormat.Mono8
                         : FlowPixelFormat.Bgr24,
                     FlowImageKind.Color,
-                    buffer,
-                    frameId,
-                    0,
-                    DateTimeOffset.UtcNow);
+                    buffer);
             }
             catch (Exception exception) when (IsExpectedImageLoadFailure(exception))
             {

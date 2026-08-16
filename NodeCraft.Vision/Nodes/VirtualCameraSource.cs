@@ -9,18 +9,21 @@ namespace NodeCraft.Vision.Nodes
 {
     internal sealed class VirtualCameraEntry
     {
-        internal VirtualCameraEntry(int ordinal, string path, FlowImage preloadedImage)
+        internal VirtualCameraEntry(
+            int ordinal,
+            string path,
+            VirtualCameraImageTemplate preloadedTemplate)
         {
             Ordinal = ordinal;
             Path = path;
-            PreloadedImage = preloadedImage;
+            PreloadedTemplate = preloadedTemplate;
         }
 
         public int Ordinal { get; }
 
         public string Path { get; }
 
-        public FlowImage PreloadedImage { get; }
+        public VirtualCameraImageTemplate PreloadedTemplate { get; }
     }
 
     internal sealed class VirtualCameraSource
@@ -160,27 +163,27 @@ namespace NodeCraft.Vision.Nodes
                     new VirtualCameraEntry(
                         0,
                         "builtin://vision/sample-set/checkerboard",
-                        CreateCheckerboardImage(0)),
+                        CreateCheckerboardImage()),
                     new VirtualCameraEntry(
                         1,
                         "builtin://vision/sample-set/color-bars",
-                        CreateColorBarsImage(1)),
+                        CreateColorBarsImage()),
                 });
         }
 
         private static VirtualCameraSource CreateBuiltinSingle(
             string path,
-            Func<ulong, FlowImage> imageFactory)
+            Func<VirtualCameraImageTemplate> imageFactory)
         {
             return new VirtualCameraSource(
                 "builtin://vision/sample-set",
                 isBuiltin: true,
-                new[] { new VirtualCameraEntry(0, path, imageFactory(0)) });
+                new[] { new VirtualCameraEntry(0, path, imageFactory()) });
         }
 
-        private static FlowImage CreateCheckerboardImage(ulong frameId)
+        private static VirtualCameraImageTemplate CreateCheckerboardImage()
         {
-            return FlowImage.FromOwnedBuffer(
+            return new VirtualCameraImageTemplate(
                 2,
                 2,
                 6,
@@ -190,15 +193,12 @@ namespace NodeCraft.Vision.Nodes
                 {
                     255, 255, 255, 0, 0, 0,
                     0, 0, 0, 255, 255, 255,
-                },
-                frameId,
-                0,
-                DateTimeOffset.UtcNow);
+                });
         }
 
-        private static FlowImage CreateColorBarsImage(ulong frameId)
+        private static VirtualCameraImageTemplate CreateColorBarsImage()
         {
-            return FlowImage.FromOwnedBuffer(
+            return new VirtualCameraImageTemplate(
                 3,
                 1,
                 9,
@@ -207,10 +207,7 @@ namespace NodeCraft.Vision.Nodes
                 new byte[]
                 {
                     255, 0, 0, 0, 255, 0, 0, 0, 255,
-                },
-                frameId,
-                0,
-                DateTimeOffset.UtcNow);
+                });
         }
 
         private static bool IsSupportedImagePath(string path)

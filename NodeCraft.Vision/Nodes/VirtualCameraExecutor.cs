@@ -167,7 +167,10 @@ namespace NodeCraft.Vision.Nodes
             _index = (_index + 1) % _entries.Count;
             var entry = _entries[_index];
             _currentEntry = entry;
-            _current = entry.PreloadedImage;
+            _current = entry.PreloadedTemplate.CreateFrame(
+                (ulong)entry.Ordinal,
+                0,
+                DateTimeOffset.UtcNow);
             return Task.CompletedTask;
         }
 
@@ -223,12 +226,11 @@ namespace NodeCraft.Vision.Nodes
             foreach (var entry in source.Entries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                FlowImage image;
+                VirtualCameraImageTemplate template;
                 try
                 {
-                    image = entry.PreloadedImage
-                        ?? _imageLoader.Load(entry.Path, (ulong)entry.Ordinal);
-                    if (image == null)
+                    template = entry.PreloadedTemplate ?? _imageLoader.Load(entry.Path);
+                    if (template == null)
                     {
                         throw new InvalidOperationException(
                             $"VirtualCamera source '{source.ImageDirectory}' loader returned no image for '{entry.Path}'.");
@@ -252,7 +254,7 @@ namespace NodeCraft.Vision.Nodes
 
                 var nextTotalBytes = AddPreloadedBytesChecked(
                     totalBytes,
-                    image.Buffer.Length,
+                    template.BufferLength,
                     source.ImageDirectory,
                     entry.Path);
                 if (nextTotalBytes > maxPreloadedBytes)
@@ -262,7 +264,7 @@ namespace NodeCraft.Vision.Nodes
                 }
 
                 totalBytes = nextTotalBytes;
-                validEntries.Add(new VirtualCameraEntry(entry.Ordinal, entry.Path, image));
+                validEntries.Add(new VirtualCameraEntry(entry.Ordinal, entry.Path, template));
             }
 
             if (validEntries.Count == 0)
@@ -292,15 +294,18 @@ namespace NodeCraft.Vision.Nodes
                 var entry = _entries[nextIndex];
                 try
                 {
-                    var image = _imageLoader.Load(entry.Path, (ulong)entry.Ordinal);
-                    if (image == null)
+                    var template = _imageLoader.Load(entry.Path);
+                    if (template == null)
                     {
                         throw new InvalidOperationException(
                             $"VirtualCamera source '{_imageDirectory}' loader returned no image for '{entry.Path}'.");
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
-                    _current = image;
+                    _current = template.CreateFrame(
+                        (ulong)entry.Ordinal,
+                        0,
+                        DateTimeOffset.UtcNow);
                     _currentEntry = entry;
                     _index = nextIndex;
                     return Task.CompletedTask;

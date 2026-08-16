@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -129,7 +130,7 @@ internal static partial class Program
                 && source.Entries.Count == 1
                 && source.Entries[0].Ordinal == 0
                 && source.Entries[0].Path == Path.GetFullPath(imagePath)
-                && source.Entries[0].PreloadedImage == null;
+                && source.Entries[0].PreloadedTemplate == null;
         });
 
         await RunAsync("virtual camera sorts supported folder images with ordinal tie break", async () =>
@@ -157,8 +158,18 @@ internal static partial class Program
             var single = VirtualCameraSourceResolver.Resolve("builtin://vision/sample-set/checkerboard");
             var uppercase = VirtualCameraSourceResolver.Resolve(
                 "BUILTIN://VISION/SAMPLE-SET/CHECKERBOARD");
-            var checkerboard = collection.Entries[0].PreloadedImage;
-            var colorBars = collection.Entries[1].PreloadedImage;
+            var checkerboard = collection.Entries[0].PreloadedTemplate.CreateFrame(
+                0,
+                0,
+                DateTimeOffset.UnixEpoch);
+            var colorBars = collection.Entries[1].PreloadedTemplate.CreateFrame(
+                1,
+                0,
+                DateTimeOffset.UnixEpoch);
+            var singleCheckerboard = single.Entries[0].PreloadedTemplate.CreateFrame(
+                0,
+                0,
+                DateTimeOffset.UnixEpoch);
             return collection.IsBuiltin
                 && collection.ImageDirectory == "builtin://vision/sample-set"
                 && collection.Entries.Count == 2
@@ -184,7 +195,7 @@ internal static partial class Program
                 && single.Entries.Count == 1
                 && single.ImageDirectory == "builtin://vision/sample-set"
                 && single.Entries[0].Path == "builtin://vision/sample-set/checkerboard"
-                && single.Entries[0].PreloadedImage.Width == 2
+                && singleCheckerboard.Width == 2
                 && uppercase.ImageDirectory == "builtin://vision/sample-set"
                 && uppercase.Entries[0].Path == "builtin://vision/sample-set/checkerboard";
         });
@@ -231,17 +242,44 @@ internal static partial class Program
                     "mono.png", PixelFormats.Gray8, 2, 1, new byte[] { 9, 10 }, 2);
                 var colorPath = fixture.WriteBitmap(
                     "color.png", PixelFormats.Bgr24, 1, 1, new byte[] { 1, 2, 3 }, 3);
-                var mono = new VirtualCameraImageLoader().Load(monoPath, 4);
-                var color = new VirtualCameraImageLoader().Load(colorPath, 5);
+                var capturedAt = new DateTimeOffset(
+                    2026,
+                    8,
+                    16,
+                    1,
+                    2,
+                    3,
+                    TimeSpan.Zero);
+                var monoTemplate = new VirtualCameraImageLoader().Load(monoPath);
+                var colorTemplate = new VirtualCameraImageLoader().Load(colorPath);
+                var mono = monoTemplate.CreateFrame(4, 1234, capturedAt);
+                var color = colorTemplate.CreateFrame(5, 5678, capturedAt);
+                var monoAgain = monoTemplate.CreateFrame(
+                    6,
+                    6789,
+                    capturedAt.AddSeconds(1));
+
+                var firstArrayFound = MemoryMarshal.TryGetArray(
+                    mono.Buffer,
+                    out var firstArray);
+                var secondArrayFound = MemoryMarshal.TryGetArray(
+                    monoAgain.Buffer,
+                    out var secondArray);
                 return mono.PixelFormat == FlowPixelFormat.Mono8
                     && mono.Stride == 2
                     && mono.Buffer.Span.SequenceEqual(new byte[] { 9, 10 })
                     && mono.FrameId == 4
-                    && mono.DeviceTimestamp == 0
+                    && mono.DeviceTimestamp == 1234
+                    && mono.CapturedAtUtc == capturedAt
                     && color.PixelFormat == FlowPixelFormat.Bgr24
                     && color.Stride == 3
                     && color.Buffer.Span.SequenceEqual(new byte[] { 1, 2, 3 })
-                    && color.FrameId == 5;
+                    && color.FrameId == 5
+                    && color.DeviceTimestamp == 5678
+                    && firstArrayFound
+                    && secondArrayFound
+                    && ReferenceEquals(firstArray.Array, secondArray.Array)
+                    && !ReferenceEquals(mono, monoAgain);
             })));
 
         await RunAsync("virtual camera wraps only expected image load failures", async () =>
@@ -252,7 +290,7 @@ internal static partial class Program
             var loader = new VirtualCameraImageLoader();
             try
             {
-                loader.Load(missingPath, 0);
+                loader.Load(missingPath);
                 return false;
             }
             catch (VirtualCameraImageLoadException exception)
@@ -268,7 +306,7 @@ internal static partial class Program
 
             try
             {
-                loader.Load(corruptPath, 1);
+                loader.Load(corruptPath);
                 return false;
             }
             catch (VirtualCameraImageLoadException exception)
@@ -294,7 +332,10 @@ internal static partial class Program
             {
                 workerApartment = Thread.CurrentThread.GetApartmentState();
                 var loader = new VirtualCameraImageLoader();
-                return (loader.Load(paths.jpg, 6), loader.Load(paths.bmp, 7));
+                var capturedAt = DateTimeOffset.UnixEpoch;
+                return (
+                    loader.Load(paths.jpg).CreateFrame(6, 0, capturedAt),
+                    loader.Load(paths.bmp).CreateFrame(7, 0, capturedAt));
             });
             var movedJpg = paths.jpg + ".moved";
             var movedBmp = paths.bmp + ".moved";
@@ -357,12 +398,23 @@ internal static partial class Program
                 await executor.StopSessionAsync(context, CancellationToken.None);
                 await executor.StopSessionAsync(context, CancellationToken.None);
 
+                var firstImage = (FlowImage)first["image"];
+                var wrappedImage = (FlowImage)wrapped["image"];
+                var firstArrayFound = MemoryMarshal.TryGetArray(
+                    firstImage.Buffer,
+                    out var firstArray);
+                var wrappedArrayFound = MemoryMarshal.TryGetArray(
+                    wrappedImage.Buffer,
+                    out var wrappedArray);
                 return (string)sessionOutputs["imageDirectory"] == Path.GetFullPath(fixture.DirectoryPath)
-                    && ((FlowImage)first["image"]).FrameId == 0
+                    && firstImage.FrameId == 0
                     && (string)first["imagePath"] == Path.Combine(fixture.DirectoryPath, "a.png")
                     && ((FlowImage)second["image"]).FrameId == 1
-                    && ((FlowImage)wrapped["image"]).FrameId == 0
-                    && ReferenceEquals(first["image"], wrapped["image"]);
+                    && wrappedImage.FrameId == 0
+                    && !ReferenceEquals(firstImage, wrappedImage)
+                    && firstArrayFound
+                    && wrappedArrayFound
+                    && ReferenceEquals(firstArray.Array, wrappedArray.Array);
             }));
 
         await RunAsync("virtual camera preload enforces positive count and checked decoded bytes", () =>
@@ -891,10 +943,8 @@ internal static partial class Program
                 return paths.SequenceEqual(new[]
                     { Path.GetFullPath(a), Path.GetFullPath(c), Path.GetFullPath(a) })
                     && frames.SequenceEqual(new[] { 0UL, 2UL, 0UL })
-                    && loader.Loads.Select(load => Path.GetFileName(load.Path)).SequenceEqual(
-                        new[] { "A.jpg", "Bad.jpg", "C.jpg", "A.jpg" })
-                    && loader.Loads.Select(load => load.FrameId).SequenceEqual(
-                        new[] { 0UL, 1UL, 2UL, 0UL });
+                    && loader.Loads.Select(Path.GetFileName).SequenceEqual(
+                        new[] { "A.jpg", "Bad.jpg", "C.jpg", "A.jpg" });
             }));
 
         await RunAsync("virtual camera dynamic cancellation does not commit cursor", () =>
@@ -1517,7 +1567,7 @@ internal static partial class Program
 
         internal int LoadCount { get; private set; }
 
-        public FlowImage Load(string path, ulong frameId)
+        public VirtualCameraImageTemplate Load(string path)
         {
             LoadCount++;
             if (LoadCount == _cancelOnLoad)
@@ -1525,16 +1575,13 @@ internal static partial class Program
                 _cancellation.Cancel();
             }
 
-            return FlowImage.CopyFrom(
+            return new VirtualCameraImageTemplate(
                 1,
                 1,
                 3,
                 FlowPixelFormat.Bgr24,
                 FlowImageKind.Color,
-                new byte[] { 1, 2, 3 },
-                frameId,
-                0,
-                DateTimeOffset.UtcNow);
+                new byte[] { 1, 2, 3 });
         }
     }
 
@@ -1542,15 +1589,14 @@ internal static partial class Program
     {
         private readonly VirtualCameraImageLoader _inner = new VirtualCameraImageLoader();
 
-        internal List<(string Path, ulong FrameId)> Loads { get; }
-            = new List<(string Path, ulong FrameId)>();
+        internal List<string> Loads { get; } = new List<string>();
 
         internal int LoadCount => Loads.Count;
 
-        public FlowImage Load(string path, ulong frameId)
+        public VirtualCameraImageTemplate Load(string path)
         {
-            Loads.Add((path, frameId));
-            return _inner.Load(path, frameId);
+            Loads.Add(path);
+            return _inner.Load(path);
         }
     }
 
@@ -1563,12 +1609,11 @@ internal static partial class Program
             _badPath = Path.GetFullPath(badPath);
         }
 
-        internal List<(string Path, ulong FrameId)> Loads { get; }
-            = new List<(string Path, ulong FrameId)>();
+        internal List<string> Loads { get; } = new List<string>();
 
-        public FlowImage Load(string path, ulong frameId)
+        public VirtualCameraImageTemplate Load(string path)
         {
-            Loads.Add((path, frameId));
+            Loads.Add(path);
             if (string.Equals(Path.GetFullPath(path), _badPath, StringComparison.Ordinal))
             {
                 throw new VirtualCameraImageLoadException(
@@ -1576,16 +1621,13 @@ internal static partial class Program
                     new InvalidDataException("bad image"));
             }
 
-            return FlowImage.CopyFrom(
+            return new VirtualCameraImageTemplate(
                 1,
                 1,
                 3,
                 FlowPixelFormat.Bgr24,
                 FlowImageKind.Color,
-                new byte[] { (byte)frameId, 2, 3 },
-                frameId,
-                0,
-                DateTimeOffset.UtcNow);
+                new byte[] { 1, 2, 3 });
         }
     }
 
@@ -1598,7 +1640,7 @@ internal static partial class Program
             _exception = exception;
         }
 
-        public FlowImage Load(string path, ulong frameId)
+        public VirtualCameraImageTemplate Load(string path)
         {
             throw _exception;
         }
