@@ -574,6 +574,149 @@ internal static partial class Program
             FlowCanvas.ToViewportDragOffset(new System.Windows.Vector(16, -8), 2)
                 == new System.Windows.Vector(32, -16));
 
+        Run("FlowCanvas deletes a selected node when its shell has focus", () =>
+            RunOnSta(() =>
+                RunWithTemplatedFlowCanvas((canvas, _, worldCanvas) =>
+                {
+                    var node = new NodeModel
+                    {
+                        Name = "Delete me",
+                        X = 16,
+                        Y = 16,
+                    };
+                    canvas.AddNode(node);
+                    canvas.UpdateLayout();
+
+                    var nodeView = worldCanvas.Children
+                        .OfType<NodeView>()
+                        .Single(item => item.NodeModel == node);
+
+                    RaiseMouseButtonEvent(nodeView, Mouse.PreviewMouseDownEvent, MouseButton.Left);
+                    RaiseMouseButtonEvent(nodeView, Mouse.PreviewMouseUpEvent, MouseButton.Left);
+                    var shellHasFocus = ReferenceEquals(Keyboard.FocusedElement, nodeView);
+
+                    var keyEvent = RaiseKeyEvent(
+                        nodeView,
+                        Keyboard.PreviewKeyDownEvent,
+                        Key.Delete);
+
+                    return shellHasFocus
+                        && keyEvent.Handled
+                        && !canvas.GraphModel.Nodes.Contains(node)
+                        && !worldCanvas.Children.Contains(nodeView);
+                })));
+
+        Run("FlowCanvas does not delete a node while its editor has focus", () =>
+            RunOnSta(() =>
+                RunWithTemplatedFlowCanvas((canvas, _, worldCanvas) =>
+                {
+                    var editor = new System.Windows.Controls.TextBox { Text = "keep this node" };
+                    canvas.NodeContentFactory = _ => editor;
+                    var node = new NodeModel { Name = "Editable" };
+                    canvas.AddNode(node);
+                    canvas.UpdateLayout();
+
+                    var nodeView = worldCanvas.Children
+                        .OfType<NodeView>()
+                        .Single(item => item.NodeModel == node);
+                    RaiseMouseButtonEvent(nodeView, Mouse.PreviewMouseDownEvent, MouseButton.Left);
+                    RaiseMouseButtonEvent(nodeView, Mouse.PreviewMouseUpEvent, MouseButton.Left);
+
+                    editor.Focus();
+                    var keyEvent = RaiseKeyEvent(editor, Keyboard.PreviewKeyDownEvent, Key.Delete);
+
+                    return ReferenceEquals(Keyboard.FocusedElement, editor)
+                        && !keyEvent.Handled
+                        && canvas.GraphModel.Nodes.Contains(node);
+                })));
+
+        Run("FlowCanvas does not delete a node without shell focus", () =>
+            RunOnSta(() =>
+                RunWithTemplatedFlowCanvas((canvas, viewport, worldCanvas) =>
+                {
+                    var node = new NodeModel { Name = "No shell focus" };
+                    canvas.AddNode(node);
+                    canvas.UpdateLayout();
+
+                    var nodeView = worldCanvas.Children
+                        .OfType<NodeView>()
+                        .Single(item => item.NodeModel == node);
+                    RaiseMouseButtonEvent(nodeView, Mouse.PreviewMouseDownEvent, MouseButton.Left);
+                    RaiseMouseButtonEvent(nodeView, Mouse.PreviewMouseUpEvent, MouseButton.Left);
+                    Keyboard.ClearFocus();
+
+                    var keyEvent = RaiseKeyEvent(viewport, Keyboard.PreviewKeyDownEvent, Key.Delete);
+
+                    return !keyEvent.Handled
+                        && canvas.GraphModel.Nodes.Contains(node);
+                })));
+
+        Run("FlowCanvas ignores non-delete keys on a focused shell", () =>
+            RunOnSta(() =>
+                RunWithTemplatedFlowCanvas((canvas, _, worldCanvas) =>
+                {
+                    var node = new NodeModel { Name = "Keep on Backspace" };
+                    canvas.AddNode(node);
+                    canvas.UpdateLayout();
+
+                    var nodeView = worldCanvas.Children
+                        .OfType<NodeView>()
+                        .Single(item => item.NodeModel == node);
+                    RaiseMouseButtonEvent(nodeView, Mouse.PreviewMouseDownEvent, MouseButton.Left);
+                    RaiseMouseButtonEvent(nodeView, Mouse.PreviewMouseUpEvent, MouseButton.Left);
+
+                    var keyEvent = RaiseKeyEvent(nodeView, Keyboard.PreviewKeyDownEvent, Key.Back);
+
+                    return ReferenceEquals(Keyboard.FocusedElement, nodeView)
+                        && !keyEvent.Handled
+                        && canvas.GraphModel.Nodes.Contains(node);
+                })));
+
+        Run("FlowCanvas deletes all selected nodes and their links from a focused shell", () =>
+            RunOnSta(() =>
+                RunWithTemplatedFlowCanvas((canvas, _, worldCanvas) =>
+                {
+                    var first = new NodeModel { Name = "First" };
+                    var second = new NodeModel { Name = "Second" };
+                    canvas.AddNode(first);
+                    canvas.AddNode(second);
+
+                    var linkId = "delete-selection-link";
+                    var targetPort = new PortParameter
+                    {
+                        PortId = "target",
+                        LinkId = linkId,
+                        PortDirection = EPortDirection.Left,
+                    };
+                    second.InputParameters.Add(targetPort);
+                    canvas.GraphModel.Links.Add(new GraphLink
+                    {
+                        Id = linkId,
+                        OriginNodeId = first.Id,
+                        OriginSlot = 0,
+                        TargetNodeId = second.Id,
+                        TargetSlot = 0,
+                    });
+                    canvas.UpdateLayout();
+
+                    var firstView = worldCanvas.Children
+                        .OfType<NodeView>()
+                        .Single(item => item.NodeModel == first);
+                    var secondView = worldCanvas.Children
+                        .OfType<NodeView>()
+                        .Single(item => item.NodeModel == second);
+                    SetSelectedNodesForTest(canvas, firstView, secondView);
+                    firstView.Focus();
+
+                    var keyEvent = RaiseKeyEvent(firstView, Keyboard.PreviewKeyDownEvent, Key.Delete);
+
+                    return keyEvent.Handled
+                        && canvas.GraphModel.Nodes.Count == 0
+                        && canvas.GraphModel.Links.Count == 0
+                        && worldCanvas.Children.OfType<NodeView>().Count() == 0
+                        && targetPort.LinkId == null;
+                })));
+
         Run("FlowCanvas starts selection only on viewport or world canvas", () =>
             RunOnSta(() =>
             {
@@ -3984,6 +4127,31 @@ internal static partial class Program
         };
         target.RaiseEvent(mouseEvent);
         return mouseEvent;
+    }
+
+    private static KeyEventArgs RaiseKeyEvent(
+        System.Windows.UIElement target,
+        System.Windows.RoutedEvent routedEvent,
+        Key key)
+    {
+        var keyEvent = new KeyEventArgs(
+            Keyboard.PrimaryDevice,
+            System.Windows.PresentationSource.FromVisual(target)!,
+            Environment.TickCount,
+            key)
+        {
+            RoutedEvent = routedEvent,
+        };
+        target.RaiseEvent(keyEvent);
+        return keyEvent;
+    }
+
+    private static void SetSelectedNodesForTest(FlowCanvas canvas, params NodeView[] nodes)
+    {
+        var field = typeof(FlowCanvas).GetField(
+            "_selectedNodes",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        field!.SetValue(canvas, nodes.ToList());
     }
 
     private sealed class CaptureTestFlowCanvas : FlowCanvas

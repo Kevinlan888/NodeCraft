@@ -194,6 +194,7 @@ namespace NodeCraft.Flow
 
             _viewport.Loaded += Canvas_Loaded;
             _viewport.PreviewMouseDown += Canvas_PreviewMouseDown;
+            _viewport.PreviewKeyDown += Viewport_PreviewKeyDown;
             _viewport.PreviewMouseMove += Canvas_PreviewMouseMove;
             _viewport.PreviewMouseUp += Canvas_PreviewMouseUp;
             _viewport.PreviewMouseWheel += Viewport_PreviewMouseWheel;
@@ -558,6 +559,7 @@ namespace NodeCraft.Flow
 
             _viewport.Loaded -= Canvas_Loaded;
             _viewport.PreviewMouseDown -= Canvas_PreviewMouseDown;
+            _viewport.PreviewKeyDown -= Viewport_PreviewKeyDown;
             _viewport.PreviewMouseMove -= Canvas_PreviewMouseMove;
             _viewport.PreviewMouseUp -= Canvas_PreviewMouseUp;
             _viewport.PreviewMouseWheel -= Viewport_PreviewMouseWheel;
@@ -614,6 +616,19 @@ namespace NodeCraft.Flow
         private void Canvas_Loaded(object sender, RoutedEventArgs e)
         {
 
+        }
+
+        private void Viewport_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Delete
+                || Keyboard.FocusedElement is not NodeView focusedNode
+                || !_selectedNodes.Contains(focusedNode))
+            {
+                return;
+            }
+
+            e.Handled = true;
+            DeleteSelectedNodes();
         }
 
         protected void Canvas_PreviewMouseDown(object sender, MouseButtonEventArgs e)
@@ -680,6 +695,7 @@ namespace NodeCraft.Flow
                 }
                 else
                 {
+                    _originalElement.Focus();
                     _startConnector = _originalElement.GetConnectorUnderPosition(_nodePoint);
                     if (_startConnector != null)
                     {
@@ -1200,14 +1216,7 @@ namespace NodeCraft.Flow
 
                     if (deleteSelection)
                     {
-                        foreach (var selectedNode in _selectedNodes.Select(item => item.NodeModel.Id).ToList())
-                        {
-                            RemoveNode(selectedNode);
-                        }
-
-                        _selectedNodes.Clear();
-                        SetSelectedNode(null);
-                        ApplySelectionVisuals();
+                        DeleteSelectedNodes();
                     }
                     else
                     {
@@ -1218,6 +1227,24 @@ namespace NodeCraft.Flow
                     }
                 }
             }
+        }
+
+        private void DeleteSelectedNodes()
+        {
+            var nodeIds = _selectedNodes
+                .Where(item => item?.NodeModel != null)
+                .Select(item => item.NodeModel.Id)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            foreach (var nodeId in nodeIds)
+            {
+                RemoveNode(nodeId);
+            }
+
+            _selectedNodes.Clear();
+            SetSelectedNode(null);
+            ApplySelectionVisuals();
         }
 
         private void DragStarted()

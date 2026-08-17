@@ -53,6 +53,8 @@ namespace NodeCraft.Flow
 
         public NodeView()
         {
+            Focusable = true;
+            IsTabStop = false;
         }
 
         public override void OnApplyTemplate()
