@@ -717,6 +717,65 @@ internal static partial class Program
                         && targetPort.LinkId == null;
                 })));
 
+        Run("FlowCanvas focuses a selected shell after selecting multiple nodes", () =>
+            RunOnSta(() =>
+                RunWithTemplatedFlowCanvas((canvas, _, worldCanvas) =>
+                {
+                    var first = new NodeModel
+                    {
+                        Name = "First selected",
+                        X = 16,
+                        Y = 16,
+                    };
+                    var second = new NodeModel
+                    {
+                        Name = "Second selected",
+                        X = 240,
+                        Y = 16,
+                    };
+                    canvas.AddNode(first);
+                    canvas.AddNode(second);
+                    canvas.UpdateLayout();
+
+                    var selectionRectangle = new System.Windows.Shapes.Rectangle
+                    {
+                        Width = 600,
+                        Height = 300,
+                    };
+                    System.Windows.Controls.Canvas.SetLeft(selectionRectangle, 0);
+                    System.Windows.Controls.Canvas.SetTop(selectionRectangle, 0);
+                    worldCanvas.Children.Add(selectionRectangle);
+
+                    var selectionField = typeof(FlowCanvas).GetField(
+                        "_selectionRect",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+                    selectionField!.SetValue(canvas, selectionRectangle);
+                    Keyboard.ClearFocus();
+
+                    var selectionFinished = typeof(FlowCanvas).GetMethod(
+                        "SelectionFinished",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+                    selectionFinished!.Invoke(canvas, null);
+
+                    var firstView = worldCanvas.Children
+                        .OfType<NodeView>()
+                        .Single(item => item.NodeModel == first);
+                    var secondView = worldCanvas.Children
+                        .OfType<NodeView>()
+                        .Single(item => item.NodeModel == second);
+                    var focusedShell = Keyboard.FocusedElement as NodeView;
+                    var keyEvent = RaiseKeyEvent(
+                        focusedShell ?? firstView,
+                        Keyboard.PreviewKeyDownEvent,
+                        Key.Delete);
+
+                    return (ReferenceEquals(focusedShell, firstView)
+                            || ReferenceEquals(focusedShell, secondView))
+                        && keyEvent.Handled
+                        && canvas.GraphModel.Nodes.Count == 0
+                        && worldCanvas.Children.OfType<NodeView>().Count() == 0;
+                })));
+
         Run("FlowCanvas starts selection only on viewport or world canvas", () =>
             RunOnSta(() =>
             {

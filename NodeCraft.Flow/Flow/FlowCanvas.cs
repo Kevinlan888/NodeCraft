@@ -1625,6 +1625,7 @@ namespace NodeCraft.Flow
 
                 ApplySelectionVisuals();
                 SetSelectedNode(_selectedNodes.Count == 1 ? _selectedNodes[0].NodeModel : null);
+                _selectedNodes.FirstOrDefault()?.Focus();
 
                 _canvas.Children.Remove(_selectionRect);
                 _selectionRect = null;
