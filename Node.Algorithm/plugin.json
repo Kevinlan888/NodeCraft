@@ -1,0 +1,7 @@
+{
+  "id": "nodecraft.algorithm",
+  "entryAssembly": "Node.Algorithm.dll",
+  "entryType": "Node.Algorithm.Plugin.AlgorithmPlugin",
+  "apiVersion": "1.0",
+  "privateLibraryPath": "lib"
+}

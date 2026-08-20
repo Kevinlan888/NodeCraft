@@ -54,6 +54,7 @@ internal static partial class Program
     private static async Task<int> Main()
     {
         RunVisualContractTests();
+        RunAlgorithmPluginTests();
         RunVisionProjectTests();
         RunImvInteropTests();
         RunVisionCameraDeviceTests();
