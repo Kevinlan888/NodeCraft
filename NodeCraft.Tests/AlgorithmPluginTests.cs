@@ -2,7 +2,10 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Collections.Generic;
+using Node.Algorithm.Interop;
 using Node.Algorithm.Nodes;
+using Node.Algorithm.Plugin;
 using NodeCraft.Flow;
 
 internal static partial class Program
@@ -32,6 +35,33 @@ internal static partial class Program
                 && node.OutputParameters[0].Parameter.ParameterType == FlowDataType.Number.Key
                 && node.OutputParameters[1].Parameter.ParameterType == FlowDataType.Object.Key
                 && node.OutputParameters[2].Parameter.ParameterType == FlowDataType.Image.Key;
+        });
+
+        Run("Algorithm plugin registers the Waybill Recognizer node", () =>
+        {
+            var plugin = AlgorithmPlugin.CreateForTesting(
+                new RecordingWaybillSessionFactory(null!),
+                Path.Combine(Path.GetTempPath(), "Node.Algorithm.dll"));
+            var context = new PluginRegistrationContext(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
+                new Version(1, 0));
+            plugin.Register(context);
+            var registration = context.Registrations.Single();
+
+            return plugin.Metadata.Id == "nodecraft.algorithm"
+                && plugin.Metadata.DisplayName == "Algorithm"
+                && plugin.Metadata.Version.Equals(new Version(1, 0, 0))
+                && registration.Definition.TypeKey == WaybillRecognizerNodeModel.FlowNodeTypeKey
+                && registration.Definition.Category == "Algorithm"
+                && registration.Definition.InputPorts.Any(port =>
+                    port.Id == "image"
+                    && port.DataType == FlowDataType.Image
+                    && port.IsRequired)
+                && registration.Definition.OutputPorts.Select(port => port.Id)
+                    .SequenceEqual(new[] { "count", "detections", "annotatedImage" })
+                && registration.NodeModelType == typeof(WaybillRecognizerNodeModel)
+                && registration.NodeFactory() is WaybillRecognizerNodeModel
+                && registration.PaletteDisplayName == "Waybill Recognizer";
         });
     }
 }
