@@ -55,6 +55,8 @@ internal static partial class Program
     {
         RunVisualContractTests();
         RunAlgorithmPluginTests();
+        RunAlgorithmResultTests();
+        RunAlgorithmOverlayTests();
         RunVisionProjectTests();
         RunImvInteropTests();
         RunVisionCameraDeviceTests();
