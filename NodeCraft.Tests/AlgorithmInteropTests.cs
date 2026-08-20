@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Node.Algorithm.Interop;
 using NodeCraft.Flow;
@@ -15,6 +17,29 @@ internal static partial class Program
                 && Marshal.SizeOf<NativeWaybillResult>() == 24
                 && Marshal.OffsetOf<NativeWaybillDetection>(nameof(NativeWaybillDetection.GeometryMethod)).ToInt32() == 36
                 && Marshal.OffsetOf<NativeWaybillDetection>(nameof(NativeWaybillDetection.MaskIou)).ToInt32() == 40);
+
+        Run("Waybill native entry points use exact C ABI names", () =>
+        {
+            var expected = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [nameof(WaybillNativeMethods.Create)] = "waybill_create",
+                [nameof(WaybillNativeMethods.GetConfig)] = "waybill_get_cfg",
+                [nameof(WaybillNativeMethods.SetConfig)] = "waybill_set_cfg",
+                [nameof(WaybillNativeMethods.Process)] = "waybill_process",
+                [nameof(WaybillNativeMethods.ReleaseDetections)] = "waybill_release_detections",
+                [nameof(WaybillNativeMethods.Release)] = "waybill_release",
+            };
+            return expected.All(pair =>
+            {
+                var method = typeof(WaybillNativeMethods).GetMethod(
+                    pair.Key,
+                    BindingFlags.NonPublic | BindingFlags.Static);
+                var import = method?.GetCustomAttribute<DllImportAttribute>();
+                return import != null
+                    && import.CallingConvention == CallingConvention.Cdecl
+                    && import.EntryPoint == pair.Value;
+            });
+        });
 
         Run("Waybill native errors expose stable names", () =>
             WaybillNativeException.GetErrorName(2) == "WAYBILL_ERR_MODEL_LOAD"

@@ -11,6 +11,7 @@ namespace Node.Algorithm.Interop
         private static readonly object Gate = new object();
         private static string _activeLibraryDirectory;
         private static IntPtr _directoryCookie;
+        private static IntPtr _nativeLibraryHandle;
         private static int _referenceCount;
         private int _disposed;
 
@@ -79,8 +80,21 @@ namespace Node.Algorithm.Interop
                         $"AddDllDirectory failed for '{libraryDirectory}'.");
                 }
 
+                IntPtr nativeLibraryHandle;
+                try
+                {
+                    nativeLibraryHandle = NativeLibrary.Load(
+                        Path.Combine(libraryDirectory, WaybillNativeMethods.LibraryName));
+                }
+                catch
+                {
+                    RemoveDllDirectory(cookie);
+                    throw;
+                }
+
                 _activeLibraryDirectory = libraryDirectory;
                 _directoryCookie = cookie;
+                _nativeLibraryHandle = nativeLibraryHandle;
                 _referenceCount = 1;
                 return new WaybillRuntimeScope();
             }
@@ -107,14 +121,32 @@ namespace Node.Algorithm.Interop
                 }
 
                 var cookie = _directoryCookie;
+                var nativeLibraryHandle = _nativeLibraryHandle;
                 _directoryCookie = IntPtr.Zero;
+                _nativeLibraryHandle = IntPtr.Zero;
                 _activeLibraryDirectory = null;
 
-                if (cookie != IntPtr.Zero && !RemoveDllDirectory(cookie))
+                Exception removeException = null;
+                try
                 {
-                    throw new Win32Exception(
-                        Marshal.GetLastWin32Error(),
-                        "RemoveDllDirectory failed for the waybill native runtime.");
+                    if (nativeLibraryHandle != IntPtr.Zero)
+                    {
+                        NativeLibrary.Free(nativeLibraryHandle);
+                    }
+                }
+                finally
+                {
+                    if (cookie != IntPtr.Zero && !RemoveDllDirectory(cookie))
+                    {
+                        removeException = new Win32Exception(
+                            Marshal.GetLastWin32Error(),
+                            "RemoveDllDirectory failed for the waybill native runtime.");
+                    }
+                }
+
+                if (removeException != null)
+                {
+                    throw removeException;
                 }
             }
         }

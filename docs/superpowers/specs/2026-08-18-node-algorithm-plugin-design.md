@@ -225,7 +225,7 @@ artifacts/Plugins/Node.Algorithm/
 - `waybill-recongize\build-win\onnxruntime.dll`
 - OpenCV x64 `opencv_world4110.dll`
 - `waybill-recongize\artifacts\candidates\baseline-2-960.onnx`
-- `waybill-recongize\tests\fixtures\images\positive.jpg`
+- `waybill-recongize\tests\fixtures\images\waybill_small.jpg`
 
 执行一次真实模型推理，验证插件能够创建句柄、返回合法宽高和检测列表，并生成可交给 Image Preview 的 `FlowImage`。原生冒烟依赖本机算法构建产物，不作为没有这些外部资产时的托管单元测试前置条件。
 

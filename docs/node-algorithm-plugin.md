@@ -82,7 +82,7 @@ staging 只删除并重建明确的 `AlgorithmPackageRoot`，不会修改系统 
 $env:NODECRAFT_WAYBILL_NATIVE_SMOKE = "1"
 $env:WAYBILL_PLUGIN_PACKAGE_ROOT = "C:\Users\kevin\cs\NodeCraft\artifacts\Plugins\Node.Algorithm"
 $env:WAYBILL_MODEL_PATH = "C:\Users\kevin\cs\NodeCraft\artifacts\Plugins\Node.Algorithm\models\baseline-2-960.onnx"
-$env:WAYBILL_IMAGE_PATH = "C:\Users\kevin\cs\waybill-recongize\tests\fixtures\images\positive.jpg"
+$env:WAYBILL_IMAGE_PATH = "C:\Users\kevin\cs\waybill-recongize\tests\fixtures\images\waybill_small.jpg"
 dotnet run --project .\NodeCraft.Tests\NodeCraft.Tests.csproj
 ```
 

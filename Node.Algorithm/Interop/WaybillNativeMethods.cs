@@ -43,22 +43,26 @@ namespace Node.Algorithm.Interop
     {
         internal const string LibraryName = "waybill_infer.dll";
 
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.UserDirectories)]
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "waybill_create")]
         internal static extern int Create(
             [MarshalAs(UnmanagedType.LPUTF8Str)] string modelPath,
             out IntPtr handle);
 
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.UserDirectories)]
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "waybill_get_cfg")]
         internal static extern int GetConfig(
             IntPtr handle,
             out NativeWaybillConfig config);
 
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.UserDirectories)]
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "waybill_set_cfg")]
         internal static extern int SetConfig(
             IntPtr handle,
             ref NativeWaybillConfig config);
 
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.UserDirectories)]
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "waybill_process")]
         internal static extern int Process(
             IntPtr handle,
             IntPtr pixels,
@@ -66,10 +70,12 @@ namespace Node.Algorithm.Interop
             int height,
             out NativeWaybillResult result);
 
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.UserDirectories)]
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "waybill_release_detections")]
         internal static extern void ReleaseDetections(ref NativeWaybillResult result);
 
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.UserDirectories)]
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "waybill_release")]
         internal static extern void Release(IntPtr handle);
     }
 }

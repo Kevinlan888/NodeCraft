@@ -1,12 +1,16 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Node.Algorithm.Imaging;
 using Node.Algorithm.Interop;
+using Node.Algorithm.Nodes;
 using NodeCraft.Flow;
+using NodeCraft.Plugins;
 
 internal static partial class Program
 {
@@ -39,13 +43,40 @@ internal static partial class Program
                     "tests",
                     "fixtures",
                     "images",
-                    "positive.jpg"));
+                    "waybill_small.jpg"));
 
             if (!File.Exists(pluginAssemblyPath)
                 || !File.Exists(modelPath)
                 || !File.Exists(imagePath))
             {
                 return false;
+            }
+
+            PluginLoadReport report = null!;
+            try
+            {
+                var registry = new FlowNodeRegistry();
+                var loader = new PluginLoader(
+                    registry,
+                    new Version(1, 0),
+                    NullLoggerFactory.Instance);
+                report = loader.LoadAll(Path.GetDirectoryName(packageRoot)!);
+                if (report.Failures.Count != 0
+                    || report.Results.Count != 1
+                    || !report.Results[0].IsSuccess
+                    || !registry.Contains(WaybillRecognizerNodeModel.FlowNodeTypeKey))
+                {
+                    var failures = string.Join(
+                        "; ",
+                        report.Failures.Select(failure =>
+                            $"{failure.PluginId}/{failure.Phase}: {failure.Exception?.Message}"));
+                    throw new InvalidOperationException(
+                        $"Staged Node.Algorithm cold-load failed. Results={report.Results.Count}; Failures={failures}; Registered={registry.Contains(WaybillRecognizerNodeModel.FlowNodeTypeKey)}.");
+                }
+            }
+            finally
+            {
+                UnloadPluginLoadContexts(ref report);
             }
 
             var image = await RunOnStaValueAsync(() => LoadFlowImage(imagePath))
@@ -66,7 +97,7 @@ internal static partial class Program
             var result = session.Process(image, CancellationToken.None);
             var annotated = WaybillOverlayRenderer.Render(image, result.Detections);
 
-            return result.Width == image.Width
+            var valid = result.Width == image.Width
                 && result.Height == image.Height
                 && result.Detections.Count > 0
                 && result.Detections.Count <= options.MaxDetections
@@ -74,6 +105,13 @@ internal static partial class Program
                 && annotated.Height == image.Height
                 && annotated.PixelFormat == image.PixelFormat
                 && annotated.Buffer.Length == image.Buffer.Length;
+            if (!valid)
+            {
+                throw new InvalidDataException(
+                    $"Waybill smoke returned {result.Width}x{result.Height} with {result.Detections.Count} detections for {image.Width}x{image.Height}.");
+            }
+
+            return true;
         });
     }
 
