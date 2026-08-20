@@ -60,6 +60,7 @@ internal static partial class Program
         RunAlgorithmInteropTests();
         await RunAlgorithmExecutorTestsAsync();
         await RunAlgorithmPackagingTestsAsync();
+        await RunAlgorithmNativeSmokeTestAsync();
         RunVisionProjectTests();
         RunImvInteropTests();
         RunVisionCameraDeviceTests();
