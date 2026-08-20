@@ -517,6 +517,47 @@ internal static partial class Program
                 }
             }));
 
+        Run("FlowCanvas keeps routed wheel zoom available while editing is locked", () =>
+            RunOnSta(() =>
+                RunWithTemplatedFlowCanvas((canvas, viewport, _) =>
+                {
+                    if (!TrySetFlowCanvasEditingEnabled(canvas, false))
+                    {
+                        return false;
+                    }
+
+                    var wheel = new System.Windows.Input.MouseWheelEventArgs(
+                        System.Windows.Input.Mouse.PrimaryDevice,
+                        Environment.TickCount,
+                        120)
+                    {
+                        RoutedEvent = System.Windows.Input.Mouse.PreviewMouseWheelEvent,
+                    };
+                    viewport.RaiseEvent(wheel);
+
+                    return wheel.Handled
+                        && Math.Abs(canvas.Zoom - 1.1) < 0.000001;
+                })));
+
+        Run("FlowCanvas blocks left editing interactions while editing is locked", () =>
+            RunOnSta(() =>
+                RunWithTemplatedFlowCanvas((canvas, viewport, worldCanvas) =>
+                {
+                    if (!TrySetFlowCanvasEditingEnabled(canvas, false))
+                    {
+                        return false;
+                    }
+
+                    var leftDown = RaiseMouseButtonEvent(
+                        viewport,
+                        System.Windows.Input.Mouse.PreviewMouseDownEvent,
+                        MouseButton.Left);
+
+                    return leftDown.Handled
+                        && !worldCanvas.IsHitTestVisible
+                        && !worldCanvas.Children.OfType<System.Windows.Shapes.Rectangle>().Any();
+                })));
+
         Run("NodeView content area grows when node is resized", () =>
             RunOnSta(() => RunWithThemedWindow(window =>
             {
@@ -1330,6 +1371,10 @@ internal static partial class Program
                 && (string?)rightSideBorder.Attribute(xaml + "Name") == "CanvasHost"
                 && inputBlocker != null
                 && (string?)inputBlocker.Attribute("Background") == "Transparent"
+                && string.Equals(
+                    (string?)inputBlocker.Attribute("IsHitTestVisible"),
+                    "False",
+                    StringComparison.OrdinalIgnoreCase)
                 && directChildren.Length == 0
                 && code.Contains("new FlowCanvas(", StringComparison.Ordinal)
                 && code.Contains("CanvasHost.Child", StringComparison.Ordinal)
@@ -4220,6 +4265,20 @@ internal static partial class Program
             "_selectedNodes",
             BindingFlags.Instance | BindingFlags.NonPublic);
         field!.SetValue(canvas, nodes.ToList());
+    }
+
+    private static bool TrySetFlowCanvasEditingEnabled(FlowCanvas canvas, bool value)
+    {
+        var property = typeof(FlowCanvas).GetProperty(
+            "IsEditingEnabled",
+            BindingFlags.Instance | BindingFlags.Public);
+        if (property?.CanWrite != true)
+        {
+            return false;
+        }
+
+        property.SetValue(canvas, value);
+        return true;
     }
 
     private sealed class CaptureTestFlowCanvas : FlowCanvas

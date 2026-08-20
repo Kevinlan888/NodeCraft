@@ -655,6 +655,9 @@ namespace NodeCraft.Pages
                     : Visibility.Collapsed;
             }
 
+            _nodeCanvas.IsEditingEnabled = !IsExecutionActive;
+            NodePalette.IsEnabled = !IsExecutionActive;
+
             ExecutionStateChanged?.Invoke(this, EventArgs.Empty);
         }
 

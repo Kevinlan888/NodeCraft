@@ -100,6 +100,7 @@ namespace NodeCraft.Flow
         private EMouseMode _mouseMode;
 
         private bool _canvasUpdateQueued;
+        private bool _isEditingEnabled = true;
 
         private enum EMouseMode
         {
@@ -111,6 +112,29 @@ namespace NodeCraft.Flow
         }
 
         public double CellSize { get; set; } = 16;
+
+        public bool IsEditingEnabled
+        {
+            get => _isEditingEnabled;
+            set
+            {
+                if (_isEditingEnabled == value)
+                {
+                    return;
+                }
+
+                _isEditingEnabled = value;
+                if (!value)
+                {
+                    CancelActiveInteraction();
+                }
+
+                if (_canvas != null)
+                {
+                    _canvas.IsHitTestVisible = value;
+                }
+            }
+        }
 
         public static readonly DependencyProperty GridBrushProperty
             = DependencyProperty.Register(
@@ -187,6 +211,8 @@ namespace NodeCraft.Flow
             {
                 return;
             }
+
+            _canvas.IsHitTestVisible = IsEditingEnabled;
 
             _canvas.Width = WorldCanvasSize;
             _canvas.Height = WorldCanvasSize;
@@ -376,6 +402,12 @@ namespace NodeCraft.Flow
         internal bool TryAddDynamicInput(NodeModel node, out string error)
         {
             error = null;
+            if (!IsEditingEnabled)
+            {
+                error = "Graph editing is disabled while the flow is running.";
+                return false;
+            }
+
             if (node == null
                 || string.IsNullOrWhiteSpace(node.ExecutorType)
                 || !NodeExecutorFactory.Registry.TryResolve(node.ExecutorType, out var registration))
@@ -420,6 +452,12 @@ namespace NodeCraft.Flow
         internal bool TryRemoveDynamicInput(NodeModel node, string portId, out string error)
         {
             error = null;
+            if (!IsEditingEnabled)
+            {
+                error = "Graph editing is disabled while the flow is running.";
+                return false;
+            }
+
             if (node == null
                 || string.IsNullOrWhiteSpace(node.ExecutorType)
                 || !NodeExecutorFactory.Registry.TryResolve(node.ExecutorType, out var registration))
@@ -620,6 +658,12 @@ namespace NodeCraft.Flow
 
         private void Viewport_PreviewKeyDown(object sender, KeyEventArgs e)
         {
+            if (!IsEditingEnabled)
+            {
+                e.Handled = true;
+                return;
+            }
+
             if (e.Key != Key.Delete
                 || Keyboard.FocusedElement is not NodeView focusedNode
                 || !_selectedNodes.Contains(focusedNode))
@@ -647,6 +691,12 @@ namespace NodeCraft.Flow
 
             if (e.ChangedButton != MouseButton.Left)
             {
+                return;
+            }
+
+            if (!IsEditingEnabled)
+            {
+                e.Handled = true;
                 return;
             }
 
@@ -859,6 +909,12 @@ namespace NodeCraft.Flow
         {
             e.Effects = DragDropEffects.None;
 
+            if (!IsEditingEnabled)
+            {
+                e.Handled = true;
+                return;
+            }
+
             if (e.Data.GetDataPresent(DataFormats.StringFormat))
             {
                 string dataString = (string)e.Data.GetData(DataFormats.StringFormat);
@@ -878,11 +934,21 @@ namespace NodeCraft.Flow
 
         private void Canvas_DragOver(object sender, DragEventArgs e)
         {
-
+            if (!IsEditingEnabled)
+            {
+                e.Effects = DragDropEffects.None;
+                e.Handled = true;
+            }
         }
 
         private void Canvas_Drop(object sender, DragEventArgs e)
         {
+            if (!IsEditingEnabled)
+            {
+                e.Handled = true;
+                return;
+            }
+
             var point = _viewportTransform.ToWorld(e.GetPosition(_viewport));
 
             if (e.Data.GetDataPresent(DataFormats.StringFormat))
@@ -1188,6 +1254,11 @@ namespace NodeCraft.Flow
 
         private void DeleteMenu_Click(object sender, RoutedEventArgs e)
         {
+            if (!IsEditingEnabled)
+            {
+                return;
+            }
+
             if (sender is MenuItem menuItem && menuItem.Parent is ContextMenu contextMenu)
             {
                 if (contextMenu.PlacementTarget is ConnectionLine line)

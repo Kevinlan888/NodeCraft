@@ -106,6 +106,7 @@
             <Border x:Name="ExecutionInputBlocker"
                     Panel.ZIndex="10"
                     Background="Transparent"
+                    IsHitTestVisible="False"
                     Visibility="Collapsed" />
         </Grid>
     </Grid>
