@@ -1380,6 +1380,9 @@ namespace NodeCraft.Flow
         private void DragFinished(bool cancelled = false)
         {
             Debug.WriteLine("drag end");
+            var graphChanged = !cancelled
+                && _dragOverlayElements.Count > 0
+                && _dragWorldOffset != default;
 
             if (_dragOverlayElements.Count > 0)
             {
@@ -1401,6 +1404,10 @@ namespace NodeCraft.Flow
             }
 
             UpdateCanvas();
+            if (graphChanged)
+            {
+                RaiseGraphChanged(refreshNodeContents: false);
+            }
 
             _dragOverlayElements.Clear();
             _dragBounds = null;

@@ -78,6 +78,7 @@ internal static partial class Program
         await RunFlowExecutionControllerTestsAsync();
         RunExecutionErrorFormatterTests();
         RunThemeTests();
+        RunDocumentLifecycleTests();
         RunDynamicInputPortTests();
         await RunCommunicationTestsAsync();
 
@@ -1206,7 +1207,7 @@ internal static partial class Program
                     flowEditor.ClearGraph();
                     if (loadedPath == "当前文件: 未保存"
                         || canvas.GraphModel?.Nodes?.Count != 0
-                        || GetCurrentFilePath(flowEditor).Text != "当前文件: 未保存")
+                        || GetCurrentFilePath(flowEditor).Text != "当前文件: 未保存（有未保存修改）")
                     {
                         return false;
                     }
@@ -1227,6 +1228,7 @@ internal static partial class Program
                         NullLogger<ThemePreferenceStore>.Instance)
                         .Load() == CommonControls.WPF.CommonControlTheme.BaseTheme.Dark;
 
+                    flowEditor.CloseGraph();
                     window.Close();
 
                     var failingSettingsPath = Path.Combine(themeDirectory, "unwritable-settings");

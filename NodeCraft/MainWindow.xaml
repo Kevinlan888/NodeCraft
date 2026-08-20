@@ -23,6 +23,7 @@
                 <MenuItem x:Name="MenuLoadGraph" Header="加载" Click="MenuLoadGraph_Click" />
                 <MenuItem x:Name="MenuSaveGraph" Header="保存" Click="MenuSaveGraph_Click" />
                 <MenuItem x:Name="MenuSaveGraphAs" Header="另存为" Click="MenuSaveGraphAs_Click" />
+                <MenuItem x:Name="MenuCloseGraph" Header="关闭方案" Click="MenuCloseGraph_Click" />
                 <Separator />
                 <MenuItem x:Name="MenuExit" Header="退出" Click="MenuExit_Click" />
             </MenuItem>

@@ -18,6 +18,7 @@ namespace NodeCraft
         private bool _pluginFailureNotificationShown;
         private bool _startupGraphLoaded;
         private bool _allowClose;
+        private bool _closingInProgress;
         private bool _synchronizingTheme;
 
         public MainWindow(
@@ -90,39 +91,97 @@ namespace NodeCraft
 
         private async void MainWindow_Closing(object sender, CancelEventArgs e)
         {
-            if (_allowClose || !FlowEditor.IsExecutionActive)
+            if (_allowClose)
             {
                 return;
             }
 
+            if (_closingInProgress)
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            if (!FlowEditor.IsExecutionActive)
+            {
+                if (!ConfirmSaveChanges())
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                _allowClose = true;
+                return;
+            }
+
             e.Cancel = true;
+            _closingInProgress = true;
             try
             {
-                await FlowEditor.StopExecutionAsync();
-            }
-            catch (Exception exception)
-            {
-                NotificationService.ShowNotification(
-                    "nodecraft-flow-close",
-                    $"停止流程时发生错误: {exception.Message}",
-                    5000);
+                if (FlowEditor.IsExecutionActive)
+                {
+                    try
+                    {
+                        await FlowEditor.StopExecutionAsync();
+                    }
+                    catch (Exception exception)
+                    {
+                        NotificationService.ShowNotification(
+                            "nodecraft-flow-close",
+                            $"停止流程时发生错误: {exception.Message}",
+                            5000);
+                    }
+                }
+
+                if (!ConfirmSaveChanges())
+                {
+                    return;
+                }
+
+                _allowClose = true;
+                _ = Dispatcher.BeginInvoke(new Action(Close));
             }
             finally
             {
-                _allowClose = true;
-                Close();
+                _closingInProgress = false;
             }
         }
 
-        private void MenuNewGraph_Click(object sender, RoutedEventArgs e) => FlowEditor.NewGraph();
+        private void MenuNewGraph_Click(object sender, RoutedEventArgs e)
+        {
+            if (ConfirmSaveChanges())
+            {
+                FlowEditor.NewGraph();
+            }
+        }
 
-        private void MenuClearGraph_Click(object sender, RoutedEventArgs e) => FlowEditor.ClearGraph();
+        private void MenuClearGraph_Click(object sender, RoutedEventArgs e)
+        {
+            if (ConfirmSaveChanges())
+            {
+                FlowEditor.ClearGraph();
+            }
+        }
 
-        private void MenuLoadGraph_Click(object sender, RoutedEventArgs e) => FlowEditor.LoadGraph();
+        private void MenuLoadGraph_Click(object sender, RoutedEventArgs e)
+        {
+            if (ConfirmSaveChanges())
+            {
+                FlowEditor.LoadGraph();
+            }
+        }
 
         private void MenuSaveGraph_Click(object sender, RoutedEventArgs e) => FlowEditor.SaveGraph();
 
         private void MenuSaveGraphAs_Click(object sender, RoutedEventArgs e) => FlowEditor.SaveGraphAs();
+
+        private void MenuCloseGraph_Click(object sender, RoutedEventArgs e)
+        {
+            if (ConfirmSaveChanges())
+            {
+                FlowEditor.CloseGraph();
+            }
+        }
 
         private void MenuValidateGraph_Click(object sender, RoutedEventArgs e) => FlowEditor.ValidateGraph();
 
@@ -146,6 +205,28 @@ namespace NodeCraft
         }
 
         private void MenuExit_Click(object sender, RoutedEventArgs e) => Close();
+
+        private bool ConfirmSaveChanges()
+        {
+            if (!FlowEditor.HasUnsavedChanges)
+            {
+                return true;
+            }
+
+            var result = MessageBox.Show(
+                this,
+                "当前方案有未保存的修改，是否保存？",
+                "保存方案",
+                MessageBoxButton.YesNoCancel,
+                MessageBoxImage.Warning);
+
+            if (result == MessageBoxResult.Yes)
+            {
+                return FlowEditor.SaveGraph();
+            }
+
+            return result == MessageBoxResult.No;
+        }
 
         private void DarkThemeMenuItem_Checked(object sender, RoutedEventArgs e)
         {
@@ -178,6 +259,7 @@ namespace NodeCraft
             MenuLoadGraph.IsEnabled = idle;
             MenuSaveGraph.IsEnabled = idle;
             MenuSaveGraphAs.IsEnabled = idle;
+            MenuCloseGraph.IsEnabled = idle;
             MenuValidateGraph.IsEnabled = idle;
             MenuRunOnce.IsEnabled = idle;
             MenuRunContinuous.IsEnabled = idle;

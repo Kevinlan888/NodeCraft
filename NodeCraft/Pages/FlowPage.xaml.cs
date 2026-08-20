@@ -27,12 +27,16 @@ namespace NodeCraft.Pages
         private readonly FlowCanvas _nodeCanvas;
         private readonly FlowExecutionController _executionController;
         private bool _starterLayoutLoaded;
+        private bool _hasUnsavedChanges;
+        private bool _suppressGraphChangeTracking;
         private int _nextNodeIndex;
         private string _currentGraphFilePath;
 
         public event EventHandler ExecutionStateChanged;
 
         public bool IsExecutionActive => _executionController.State != FlowRunState.Idle;
+
+        public bool HasUnsavedChanges => _hasUnsavedChanges;
 
         public FlowPage(ILoggerFactory loggerFactory)
         {
@@ -52,12 +56,21 @@ namespace NodeCraft.Pages
 
             _nodeCanvas.NodeContentFactory = node => NodeExecutorFactory.Registry.BuildNodeContent(_nodeCanvas, node);
             _nodeCanvas.ConnectionCreateFailed += NodeCanvas_ConnectionCreateFailed;
+            _nodeCanvas.GraphChanged += NodeCanvas_GraphChanged;
             InitializePalette();
         }
 
         private void NodeCanvas_ConnectionCreateFailed(object sender, FlowConnectionFailedEventArgs e)
         {
             TxtExecutionResult.Text = e.Message;
+        }
+
+        private void NodeCanvas_GraphChanged(object sender, EventArgs e)
+        {
+            if (!_suppressGraphChangeTracking)
+            {
+                SetHasUnsavedChanges(true);
+            }
         }
 
         private void FlowPage_Loaded(object sender, RoutedEventArgs e)
@@ -75,6 +88,7 @@ namespace NodeCraft.Pages
                 Nodes = new List<NodeModel>(),
                 Links = new List<GraphLink>()
             });
+            SetHasUnsavedChanges(false);
         }
 
         private void InitializePalette()
@@ -92,18 +106,16 @@ namespace NodeCraft.Pages
             AddNode(node, NodeExecutorFactory.Registry.GetDisplayName(typeKey));
         }
 
-        public void SaveGraph()
+        public bool SaveGraph()
         {
             try
             {
                 if (string.IsNullOrWhiteSpace(_currentGraphFilePath))
                 {
-                    SaveGraphAsCore();
+                    return SaveGraphAsCore();
                 }
-                else
-                {
-                    SaveGraphToPath(_currentGraphFilePath);
-                }
+
+                return SaveGraphToPath(_currentGraphFilePath);
             }
             catch (Exception ex)
             {
@@ -112,14 +124,15 @@ namespace NodeCraft.Pages
                     "Failed to save graph.",
                     ex,
                     512);
+                return false;
             }
         }
 
-        public void SaveGraphAs()
+        public bool SaveGraphAs()
         {
             try
             {
-                SaveGraphAsCore();
+                return SaveGraphAsCore();
             }
             catch (Exception ex)
             {
@@ -128,6 +141,7 @@ namespace NodeCraft.Pages
                     "Failed to save graph as.",
                     ex,
                     512);
+                return false;
             }
         }
 
@@ -155,7 +169,7 @@ namespace NodeCraft.Pages
                 LoadGraph(loadResult.Graph);
                 _starterLayoutLoaded = true;
                 _currentGraphFilePath = filePath;
-                UpdateCurrentFilePath();
+                SetHasUnsavedChanges(false);
                 TxtExecutionResult.Text = FormatLoadResult(filePath, loadResult);
                 return true;
             }
@@ -173,6 +187,7 @@ namespace NodeCraft.Pages
         public void NewGraph()
         {
             CreateStarterGraph();
+            SetHasUnsavedChanges(false);
             TxtExecutionResult.Text = "已新建空白流程。";
         }
 
@@ -185,8 +200,15 @@ namespace NodeCraft.Pages
             });
 
             _currentGraphFilePath = null;
-            UpdateCurrentFilePath();
+            SetHasUnsavedChanges(true);
             TxtExecutionResult.Text = "画布已清空。";
+        }
+
+        public void CloseGraph()
+        {
+            CreateStarterGraph();
+            SetHasUnsavedChanges(false);
+            TxtExecutionResult.Text = "已关闭当前方案。";
         }
 
         public void ValidateGraph()
@@ -315,7 +337,16 @@ namespace NodeCraft.Pages
 
         private void LoadGraph(GraphModel graph)
         {
-            _nodeCanvas.LoadGraph(graph, node => NodeExecutorFactory.Registry.BuildNodeContent(_nodeCanvas, node));
+            _suppressGraphChangeTracking = true;
+            try
+            {
+                _nodeCanvas.LoadGraph(graph, node => NodeExecutorFactory.Registry.BuildNodeContent(_nodeCanvas, node));
+            }
+            finally
+            {
+                _suppressGraphChangeTracking = false;
+            }
+
             _nextNodeIndex = _nodeCanvas.GraphModel?.Nodes?.Count ?? 0;
         }
 
@@ -332,7 +363,7 @@ namespace NodeCraft.Pages
 
         }
 
-        private void SaveGraphAsCore()
+        private bool SaveGraphAsCore()
         {
             var dialog = new SaveFileDialog
             {
@@ -344,25 +375,35 @@ namespace NodeCraft.Pages
 
             if (dialog.ShowDialog() != true)
             {
-                return;
+                return false;
             }
 
-            SaveGraphToPath(dialog.FileName);
+            return SaveGraphToPath(dialog.FileName);
         }
 
-        private void SaveGraphToPath(string filePath)
+        private bool SaveGraphToPath(string filePath)
         {
             GraphModelXmlSerializer.Save(_nodeCanvas.GraphModel, filePath, _logger);
             _currentGraphFilePath = filePath;
-            UpdateCurrentFilePath();
+            SetHasUnsavedChanges(false);
             TxtExecutionResult.Text = $"已保存: {filePath}";
+            return true;
         }
 
         private void UpdateCurrentFilePath()
         {
-            TxtCurrentFilePath.Text = string.IsNullOrWhiteSpace(_currentGraphFilePath)
+            var currentFilePath = string.IsNullOrWhiteSpace(_currentGraphFilePath)
                 ? "当前文件: 未保存"
                 : $"当前文件: {_currentGraphFilePath}";
+            TxtCurrentFilePath.Text = _hasUnsavedChanges
+                ? $"{currentFilePath}（有未保存修改）"
+                : currentFilePath;
+        }
+
+        private void SetHasUnsavedChanges(bool value)
+        {
+            _hasUnsavedChanges = value;
+            UpdateCurrentFilePath();
         }
 
         private string CreateNodeName(string displayName)
