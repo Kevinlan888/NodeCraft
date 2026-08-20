@@ -1,0 +1,55 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <AlgorithmPackageRoot Condition="'$(AlgorithmPackageRoot)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\Plugins\Node.Algorithm</AlgorithmPackageRoot>
+    <WaybillSourceRoot Condition="'$(WaybillSourceRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..\waybill-recongize</WaybillSourceRoot>
+    <WaybillRuntimeRoot Condition="'$(WaybillRuntimeRoot)' == ''">$(WaybillSourceRoot)\build-win</WaybillRuntimeRoot>
+    <WaybillOpenCvRuntimeRoot Condition="'$(WaybillOpenCvRuntimeRoot)' == ''">$(WaybillSourceRoot)\..\opencv-extract\opencv\build\x64\vc16\bin</WaybillOpenCvRuntimeRoot>
+    <WaybillModelPath Condition="'$(WaybillModelPath)' == ''">$(WaybillSourceRoot)\artifacts\candidates\baseline-2-960.onnx</WaybillModelPath>
+  </PropertyGroup>
+
+  <Target Name="StageAlgorithmPlugin" DependsOnTargets="Build">
+    <ReadLinesFromFile File="$(MSBuildThisFileDirectory)WaybillRuntimeFiles.txt">
+      <Output TaskParameter="Lines" ItemName="_WaybillRuntimeFileName" />
+    </ReadLinesFromFile>
+
+    <ItemGroup>
+      <_WaybillRuntimeSource Include="$(WaybillRuntimeRoot)\%(_WaybillRuntimeFileName.Identity)"
+          Condition="Exists('$(WaybillRuntimeRoot)\%(_WaybillRuntimeFileName.Identity)')" />
+      <_WaybillOpenCvSource Include="$(WaybillOpenCvRuntimeRoot)\opencv_world4110.dll"
+          Condition="Exists('$(WaybillOpenCvRuntimeRoot)\opencv_world4110.dll')" />
+
+      <_MissingWaybill Include="$(WaybillRuntimeRoot)\%(_WaybillRuntimeFileName.Identity)"
+          Condition="!Exists('$(WaybillRuntimeRoot)\%(_WaybillRuntimeFileName.Identity)')" />
+      <_MissingWaybill Include="$(WaybillOpenCvRuntimeRoot)\opencv_world4110.dll"
+          Condition="!Exists('$(WaybillOpenCvRuntimeRoot)\opencv_world4110.dll')" />
+      <_MissingWaybill Include="$(WaybillModelPath)"
+          Condition="!Exists('$(WaybillModelPath)')" />
+      <_MissingWaybill Include="$(TargetPath)"
+          Condition="!Exists('$(TargetPath)')" />
+      <_MissingWaybill Include="$(MSBuildThisFileDirectory)..\plugin.json"
+          Condition="!Exists('$(MSBuildThisFileDirectory)..\plugin.json')" />
+    </ItemGroup>
+
+    <Error Condition="'@(_MissingWaybill)' != ''"
+           Text="Node.Algorithm staging is missing required files: @(_MissingWaybill)" />
+    <Error Condition="$([System.String]::Copy('@(_WaybillRuntimeFileName)').Contains('NodeCraft.Flow.dll'))"
+           Text="Node.Algorithm runtime manifest must exclude NodeCraft.Flow.dll." />
+    <Error Condition="$([System.String]::Copy('@(_WaybillRuntimeFileName)').Contains('CommonControls.WPF.dll'))"
+           Text="Node.Algorithm runtime manifest must exclude CommonControls.WPF.dll." />
+    <Error Condition="$([System.String]::Copy('@(_WaybillRuntimeFileName)').Contains('Microsoft.Extensions.Logging'))"
+           Text="Node.Algorithm runtime manifest must exclude Microsoft logging assemblies." />
+
+    <RemoveDir Directories="$(AlgorithmPackageRoot)" />
+    <MakeDir Directories="$(AlgorithmPackageRoot);$(AlgorithmPackageRoot)\lib;$(AlgorithmPackageRoot)\models" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\plugin.json"
+          DestinationFolder="$(AlgorithmPackageRoot)" />
+    <Copy SourceFiles="$(TargetPath)"
+          DestinationFolder="$(AlgorithmPackageRoot)" />
+    <Copy SourceFiles="@(_WaybillRuntimeSource)"
+          DestinationFolder="$(AlgorithmPackageRoot)\lib" />
+    <Copy SourceFiles="@(_WaybillOpenCvSource)"
+          DestinationFolder="$(AlgorithmPackageRoot)\lib" />
+    <Copy SourceFiles="$(WaybillModelPath)"
+          DestinationFiles="$(AlgorithmPackageRoot)\models\baseline-2-960.onnx" />
+  </Target>
+</Project>
