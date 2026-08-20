@@ -13,6 +13,8 @@
 | 输出 | `detections` | Object | `IReadOnlyList<WaybillDetection>`，包含分数、四个角点、几何方式和 mask IoU |
 | 输出 | `annotatedImage` | `FlowImage` | 原图的托管副本，已绘制检测四边形 |
 
+`annotatedImage` 使用高对比双层框线：BGR24/RGB24 图像为黑色外描边加黄色内描边，Mono8 图像为黑色外描边加白色内描边；外层约 7 px、内层约 3 px，便于在复杂背景上观察。
+
 图像输出只能连接到现有的 `Image Preview` 节点显示。典型连线是：
 
 ```text

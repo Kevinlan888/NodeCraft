@@ -8,6 +8,9 @@ namespace Node.Algorithm.Imaging
 {
     public static class WaybillOverlayRenderer
     {
+        private const int OutlineRadius = 3;
+        private const int HighlightRadius = 1;
+
         public static FlowImage Render(
             FlowImage image,
             IReadOnlyList<WaybillDetection> detections)
@@ -75,6 +78,45 @@ namespace Node.Algorithm.Imaging
             int endX,
             int endY)
         {
+            DrawLineStroke(
+                buffer,
+                width,
+                height,
+                stride,
+                pixelFormat,
+                startX,
+                startY,
+                endX,
+                endY,
+                OutlineRadius,
+                true);
+            DrawLineStroke(
+                buffer,
+                width,
+                height,
+                stride,
+                pixelFormat,
+                startX,
+                startY,
+                endX,
+                endY,
+                HighlightRadius,
+                false);
+        }
+
+        private static void DrawLineStroke(
+            byte[] buffer,
+            int width,
+            int height,
+            int stride,
+            FlowPixelFormat pixelFormat,
+            int startX,
+            int startY,
+            int endX,
+            int endY,
+            int radius,
+            bool outline)
+        {
             startX = Clamp(startX, 0, width - 1);
             startY = Clamp(startY, 0, height - 1);
             endX = Clamp(endX, 0, width - 1);
@@ -85,11 +127,19 @@ namespace Node.Algorithm.Imaging
             var deltaY = -Math.Abs(endY - startY);
             var stepY = startY < endY ? 1 : -1;
             var error = deltaX + deltaY;
-            var horizontal = deltaX >= -deltaY;
 
             while (true)
             {
-                DrawThickPixel(buffer, width, height, stride, pixelFormat, startX, startY, horizontal);
+                DrawStroke(
+                    buffer,
+                    width,
+                    height,
+                    stride,
+                    pixelFormat,
+                    startX,
+                    startY,
+                    radius,
+                    outline);
                 if (startX == endX && startY == endY)
                 {
                     break;
@@ -110,26 +160,23 @@ namespace Node.Algorithm.Imaging
             }
         }
 
-        private static void DrawThickPixel(
+        private static void DrawStroke(
             byte[] buffer,
             int width,
             int height,
             int stride,
             FlowPixelFormat pixelFormat,
-            int x,
-            int y,
-            bool horizontal)
+            int centerX,
+            int centerY,
+            int radius,
+            bool outline)
         {
-            SetPixel(buffer, width, height, stride, pixelFormat, x, y);
-            if (horizontal)
+            for (var y = centerY - radius; y <= centerY + radius; y++)
             {
-                SetPixel(buffer, width, height, stride, pixelFormat, x, y - 1);
-                SetPixel(buffer, width, height, stride, pixelFormat, x, y + 1);
-            }
-            else
-            {
-                SetPixel(buffer, width, height, stride, pixelFormat, x - 1, y);
-                SetPixel(buffer, width, height, stride, pixelFormat, x + 1, y);
+                for (var x = centerX - radius; x <= centerX + radius; x++)
+                {
+                    SetPixel(buffer, width, height, stride, pixelFormat, x, y, outline);
+                }
             }
         }
 
@@ -140,7 +187,8 @@ namespace Node.Algorithm.Imaging
             int stride,
             FlowPixelFormat pixelFormat,
             int x,
-            int y)
+            int y,
+            bool outline)
         {
             if (x < 0 || x >= width || y < 0 || y >= height)
             {
@@ -156,13 +204,30 @@ namespace Node.Algorithm.Imaging
 
             if (pixelFormat == FlowPixelFormat.Mono8)
             {
-                buffer[offset] = 255;
+                buffer[offset] = outline ? (byte)0 : (byte)255;
                 return;
             }
 
-            buffer[offset] = pixelFormat == FlowPixelFormat.Bgr24 ? (byte)0 : (byte)255;
-            buffer[offset + 1] = 0;
-            buffer[offset + 2] = pixelFormat == FlowPixelFormat.Bgr24 ? (byte)255 : (byte)0;
+            if (outline)
+            {
+                buffer[offset] = 0;
+                buffer[offset + 1] = 0;
+                buffer[offset + 2] = 0;
+                return;
+            }
+
+            if (pixelFormat == FlowPixelFormat.Bgr24)
+            {
+                buffer[offset] = 0;
+                buffer[offset + 1] = 255;
+                buffer[offset + 2] = 255;
+            }
+            else
+            {
+                buffer[offset] = 255;
+                buffer[offset + 1] = 255;
+                buffer[offset + 2] = 0;
+            }
         }
 
         private static int Clamp(int value, int minimum, int maximum)

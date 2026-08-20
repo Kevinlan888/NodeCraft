@@ -26,7 +26,7 @@ internal static partial class Program
             var output = WaybillOverlayRenderer.Render(image, CreateDetection(1, 1, 6, 4));
             var pixel = Pixel(output, 1, 1, 3);
 
-            return pixel.SequenceEqual(new byte[] { 0, 0, 255 })
+            return pixel.SequenceEqual(new byte[] { 0, 255, 255 })
                 && output.Width == image.Width
                 && output.Height == image.Height
                 && output.Stride == image.Stride
@@ -37,7 +37,25 @@ internal static partial class Program
                 && output.CapturedAtUtc == capturedAt;
         });
 
-        Run("Waybill overlay maps red to the first RGB channel", () =>
+        Run("Waybill overlay uses a black outline and bright yellow core", () =>
+        {
+            var image = FlowImage.CopyFrom(
+                12,
+                12,
+                36,
+                FlowPixelFormat.Bgr24,
+                FlowImageKind.Color,
+                Enumerable.Repeat((byte)255, 36 * 12).ToArray(),
+                1,
+                2,
+                DateTimeOffset.UtcNow);
+            var output = WaybillOverlayRenderer.Render(image, CreateDetection(0, 4, 11, 4));
+
+            return Pixel(output, 5, 1, 3).SequenceEqual(new byte[] { 0, 0, 0 })
+                && Pixel(output, 5, 4, 3).SequenceEqual(new byte[] { 0, 255, 255 });
+        });
+
+        Run("Waybill overlay maps bright yellow to RGB channel order", () =>
         {
             var image = FlowImage.CopyFrom(
                 4,
@@ -50,7 +68,7 @@ internal static partial class Program
                 2,
                 DateTimeOffset.UtcNow);
             var output = WaybillOverlayRenderer.Render(image, CreateDetection(0, 0, 3, 3));
-            return Pixel(output, 0, 0, 3).SequenceEqual(new byte[] { 255, 0, 0 });
+            return Pixel(output, 0, 0, 3).SequenceEqual(new byte[] { 255, 255, 0 });
         });
 
         Run("Waybill overlay renders white lines for Mono8", () =>
@@ -69,6 +87,24 @@ internal static partial class Program
             return output.Buffer.Span[0] == 255
                 && output.Buffer.Span[1] == 255
                 && output.Buffer.Span[4] == 255;
+        });
+
+        Run("Waybill overlay uses a black outline and white core for Mono8", () =>
+        {
+            var image = FlowImage.CopyFrom(
+                12,
+                12,
+                12,
+                FlowPixelFormat.Mono8,
+                FlowImageKind.Color,
+                Enumerable.Repeat((byte)255, 12 * 12).ToArray(),
+                1,
+                2,
+                DateTimeOffset.UtcNow);
+            var output = WaybillOverlayRenderer.Render(image, CreateDetection(0, 4, 11, 4));
+
+            return output.Buffer.Span[1 * output.Stride + 5] == 0
+                && output.Buffer.Span[4 * output.Stride + 5] == 255;
         });
 
         Run("Waybill overlay preserves padded row bytes", () =>
@@ -96,12 +132,12 @@ internal static partial class Program
         Run("Waybill overlay clips out-of-bounds geometry", () =>
         {
             var image = FlowImage.CopyFrom(
-                4,
-                4,
                 12,
+                12,
+                36,
                 FlowPixelFormat.Bgr24,
                 FlowImageKind.Color,
-                new byte[48],
+                new byte[36 * 12],
                 1,
                 2,
                 DateTimeOffset.UtcNow);
@@ -114,15 +150,15 @@ internal static partial class Program
                         new[]
                         {
                             new WaybillPoint(-10, -10),
-                            new WaybillPoint(10, -10),
-                            new WaybillPoint(10, 10),
-                            new WaybillPoint(-10, 10),
+                            new WaybillPoint(20, -20),
+                            new WaybillPoint(20, 20),
+                            new WaybillPoint(-20, 20),
                         },
                         WaybillGeometryMethod.RotatedRectFallback,
                         0.2f),
                 });
-            return Pixel(output, 0, 0, 3).SequenceEqual(new byte[] { 0, 0, 255 })
-                && Pixel(output, 3, 3, 3).SequenceEqual(new byte[] { 0, 0, 255 });
+            return Pixel(output, 0, 0, 3).SequenceEqual(new byte[] { 0, 255, 255 })
+                && Pixel(output, 11, 11, 3).SequenceEqual(new byte[] { 0, 255, 255 });
         });
 
         Run("Waybill overlay returns an unchanged copy for empty detections", () =>
