@@ -128,7 +128,6 @@ namespace NodeCraft.Cli
             @"using System;
 using Microsoft.Extensions.Logging;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
 using {{Namespace}}.Nodes;
 ";
 
@@ -162,7 +161,7 @@ using {{Namespace}}.Nodes;
                     {
                         new FlowPortDefinition
                         {
-                            Id = BuiltInNodePorts.Output,
+                            Id = NodePortIds.Output,
                             DisplayName = ""Value"",
                             IOType = EIOType.Output,
                             DataType = FlowDataType.String,
@@ -210,10 +209,15 @@ using {{Namespace}}.Nodes;
         public static string NodeModel =>
             @"using System.Collections.Generic;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
 
 namespace {{Namespace}}.Nodes
 {
+    internal static class NodePortIds
+    {
+        internal const string Value = ""value"";
+        internal const string Output = ""output"";
+    }
+
     public sealed class {{NodeName}}NodeModel : NodeModel, IWorkflowNodeValueProvider
     {
         public string TextValue { get; set; } = ""{{NodeDisplayName}}"";
@@ -227,7 +231,7 @@ namespace {{Namespace}}.Nodes
             {
                 new PortParameter
                 {
-                    PortId = BuiltInNodePorts.Output,
+                    PortId = NodePortIds.Output,
                     Parameter = new Parameter
                     {
                         ParameterType = FlowDataType.String.Key,
@@ -239,7 +243,7 @@ namespace {{Namespace}}.Nodes
 
         public void WriteWorkflowInputs(WorkflowNode node)
         {
-            node.Inputs[BuiltInNodePorts.Value] = TextValue ?? string.Empty;
+            node.Inputs[NodePortIds.Value] = TextValue ?? string.Empty;
         }
     }
 }
@@ -250,7 +254,6 @@ namespace {{Namespace}}.Nodes
 using System.Threading;
 using System.Threading.Tasks;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
 ";
 
         public static string NodeExecutorFull(ProjectOptions options)
@@ -277,7 +280,7 @@ namespace {{Namespace}}.Nodes
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            node.Inputs.TryGetValue(BuiltInNodePorts.Value, out var value);
+            node.Inputs.TryGetValue(NodePortIds.Value, out var value);
             var text = value as string ?? string.Empty;
 ");
             if (options.IncludePrivateDependency)
@@ -291,7 +294,7 @@ namespace {{Namespace}}.Nodes
 
             builder.Append(@"            IReadOnlyDictionary<string, object> outputs = new Dictionary<string, object>
             {
-                [BuiltInNodePorts.Output] = formatted,
+                [NodePortIds.Output] = formatted,
             };
 
             return Task.FromResult(outputs);

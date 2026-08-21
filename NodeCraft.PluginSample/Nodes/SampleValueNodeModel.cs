@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
 
 namespace NodeCraft.PluginSample.Nodes
 {
@@ -19,7 +18,7 @@ namespace NodeCraft.PluginSample.Nodes
             {
                 new PortParameter
                 {
-                    PortId = BuiltInNodePorts.Output,
+                    PortId = SamplePortIds.Output,
                     Parameter = new Parameter
                     {
                         ParameterType = FlowDataType.String.Key,
@@ -31,7 +30,7 @@ namespace NodeCraft.PluginSample.Nodes
 
         public void WriteWorkflowInputs(WorkflowNode node)
         {
-            node.Inputs[BuiltInNodePorts.Value] = ValueText ?? string.Empty;
+            node.Inputs[SamplePortIds.Value] = ValueText ?? string.Empty;
         }
     }
 }

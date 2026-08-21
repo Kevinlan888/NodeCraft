@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
 
 namespace NodeCraft.PluginSample.Nodes
 {
@@ -19,13 +18,13 @@ namespace NodeCraft.PluginSample.Nodes
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var value = inputs.TryGetValue(BuiltInNodePorts.Input, out var inputValue)
+            var value = inputs.TryGetValue(SamplePortIds.Input, out var inputValue)
                 ? inputValue as string ?? inputValue?.ToString() ?? string.Empty
                 : string.Empty;
 
             IReadOnlyDictionary<string, object> outputs = new Dictionary<string, object>
             {
-                [BuiltInNodePorts.Output] = value,
+                [SamplePortIds.Output] = value,
             };
 
             return Task.FromResult(outputs);

@@ -6,6 +6,19 @@ namespace NodeCraft.Cli.Tests
 {
     internal static class TemplateTests
     {
+        private static int CountOccurrences(string text, string value)
+        {
+            var count = 0;
+            var startIndex = 0;
+            while ((startIndex = text.IndexOf(value, startIndex, StringComparison.Ordinal)) >= 0)
+            {
+                count++;
+                startIndex += value.Length;
+            }
+
+            return count;
+        }
+
         private static ProjectOptions CreateOptions(bool withUi, bool withPrivateDependency)
         {
             return new ProjectOptions
@@ -89,6 +102,23 @@ namespace NodeCraft.Cli.Tests
                 var options = CreateOptions(false, false);
                 return TemplateText.NodeExecutorFull(options)
                     .Contains("company.myplugin.nodes.myPlugin");
+            });
+
+            Program.Run("generated C# templates own one local port identifier declaration", () =>
+            {
+                var options = CreateOptions(false, false);
+                var generatedCSharp = string.Join("\n", new[]
+                {
+                    TemplateText.PluginEntryFull(options),
+                    TemplateText.Fill(TemplateText.NodeModel, options),
+                    TemplateText.NodeExecutorFull(options),
+                });
+
+                return CountOccurrences(generatedCSharp, "internal static class NodePortIds") == 1
+                    && CountOccurrences(generatedCSharp, "internal const string Value = \"value\";") == 1
+                    && CountOccurrences(generatedCSharp, "internal const string Output = \"output\";") == 1
+                    && !generatedCSharp.Contains("using NodeCraft.Flow.Nodes;", StringComparison.Ordinal)
+                    && !generatedCSharp.Contains("BuiltInNodePorts", StringComparison.Ordinal);
             });
 
             Program.Run("no template leaves unreplaced placeholders", () =>

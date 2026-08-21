@@ -1,7 +1,6 @@
 using System;
 using Microsoft.Extensions.Logging;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
 using NodeCraft.PluginSample.Nodes;
 using NodeCraft.PluginSample.Views;
 
@@ -35,7 +34,7 @@ namespace NodeCraft.PluginSample.Plugin
                     {
                         new FlowPortDefinition
                         {
-                            Id = BuiltInNodePorts.Output,
+                            Id = SamplePortIds.Output,
                             DisplayName = "Value",
                             IOType = EIOType.Output,
                             DataType = FlowDataType.String,
@@ -65,7 +64,7 @@ namespace NodeCraft.PluginSample.Plugin
                     {
                         new FlowPortDefinition
                         {
-                            Id = BuiltInNodePorts.Input,
+                            Id = SamplePortIds.Input,
                             DisplayName = "Input",
                             IOType = EIOType.Input,
                             DataType = FlowDataType.Object,
@@ -77,7 +76,7 @@ namespace NodeCraft.PluginSample.Plugin
                     {
                         new FlowPortDefinition
                         {
-                            Id = BuiltInNodePorts.Output,
+                            Id = SamplePortIds.Output,
                             DisplayName = "Output",
                             IOType = EIOType.Output,
                             DataType = FlowDataType.String,

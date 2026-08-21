@@ -25,6 +25,17 @@ using NodeCraft.Theming;
 internal static partial class Program
 {
     private static int _failures;
+    private static bool _pluginPortOwnershipOnly;
+    private static readonly HashSet<string> PluginPortOwnershipTestNames = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "sample plugin C# sources own their port identifiers",
+        "sample plugin package output contains the manifest, entry assembly, and only a private lib copy",
+        "plugin palette exposes a stable type key for drag creation",
+        "sample plugin loads successfully, renders custom content, and executes through its private formatter",
+        "sample value node content creates an editor that updates the model and style switch",
+        "broken plugins do not block the sample plugin and detailed errors stay in the log",
+        "duplicate sample type keys are rejected without replacing the original plugin registration and shared API identity stays unified",
+    };
     private static readonly HashSet<string> DeferredCleanupDirectories
         = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -53,6 +64,8 @@ internal static partial class Program
 
     private static async Task<int> Main(string[] args)
     {
+        _pluginPortOwnershipOnly = args.Contains("--plugin-port-ownership-only", StringComparer.Ordinal);
+
         if (args.Contains("--built-in-real-loader-child", StringComparer.Ordinal))
         {
             RunBuiltInRealLoaderChild(args);
@@ -2228,6 +2241,20 @@ internal static partial class Program
                 report = null;
             }
         });
+        Run("sample plugin C# sources own their port identifiers", () =>
+        {
+            var projectFile = FindRepositoryFile("NodeCraft.PluginSample", "NodeCraft.PluginSample.csproj");
+            var projectDirectory = Path.GetDirectoryName(projectFile);
+            var sources = Directory
+                .EnumerateFiles(projectDirectory!, "*.cs", SearchOption.AllDirectories)
+                .Where(path => !IsBuildOutputPath(path))
+                .Select(File.ReadAllText)
+                .ToArray();
+
+            return sources.Length > 0
+                && sources.All(source => !source.Contains("using NodeCraft.Flow.Nodes;", StringComparison.Ordinal))
+                && sources.All(source => !source.Contains("BuiltInNodePorts", StringComparison.Ordinal));
+        });
         Run("sample plugin package output contains the manifest, entry assembly, and only a private lib copy", () =>
         {
             var outputDirectory = FindBuiltSamplePluginOutputDirectory();
@@ -2359,7 +2386,7 @@ internal static partial class Program
                             Id = "value",
                             TypeKey = "company.sample.nodes.value",
                             DisplayName = "Sample Value",
-                            Inputs = { [BuiltInNodePorts.Value] = "task-six" },
+                            Inputs = { ["value"] = "task-six" },
                         });
                         workflow.Nodes.Add(new WorkflowNode
                         {
@@ -2368,7 +2395,7 @@ internal static partial class Program
                             DisplayName = "Sample Preview",
                             Inputs =
                             {
-                                [BuiltInNodePorts.Input] = new LinkRef
+                                ["input"] = new LinkRef
                                 {
                                     SourceNodeId = "value",
                                     SourceSlot = 0,
@@ -3899,6 +3926,11 @@ internal static partial class Program
 
     private static void Run(string name, Func<bool> assertion)
     {
+        if (_pluginPortOwnershipOnly && !PluginPortOwnershipTestNames.Contains(name))
+        {
+            return;
+        }
+
         try
         {
             if (assertion())
@@ -3920,6 +3952,11 @@ internal static partial class Program
 
     private static async Task RunAsync(string name, Func<Task<bool>> assertion)
     {
+        if (_pluginPortOwnershipOnly && !PluginPortOwnershipTestNames.Contains(name))
+        {
+            return;
+        }
+
         try
         {
             if (await assertion())
@@ -4445,7 +4482,7 @@ public sealed class DuplicateSampleTypeKeyPlugin : IFlowPlugin
                 {
                     new FlowPortDefinition
                     {
-                        Id = BuiltInNodePorts.Output,
+                        Id = "output",
                         DisplayName = "Output",
                         IOType = EIOType.Output,
                         DataType = FlowDataType.String,

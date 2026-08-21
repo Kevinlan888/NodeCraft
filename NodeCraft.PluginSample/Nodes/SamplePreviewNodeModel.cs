@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
 
 namespace NodeCraft.PluginSample.Nodes
 {
@@ -16,7 +15,7 @@ namespace NodeCraft.PluginSample.Nodes
             {
                 new PortParameter
                 {
-                    PortId = BuiltInNodePorts.Input,
+                    PortId = SamplePortIds.Input,
                     Parameter = new Parameter
                     {
                         ParameterType = FlowDataType.Object.Key,
@@ -28,7 +27,7 @@ namespace NodeCraft.PluginSample.Nodes
             {
                 new PortParameter
                 {
-                    PortId = BuiltInNodePorts.Output,
+                    PortId = SamplePortIds.Output,
                     Parameter = new Parameter
                     {
                         ParameterType = FlowDataType.String.Key,

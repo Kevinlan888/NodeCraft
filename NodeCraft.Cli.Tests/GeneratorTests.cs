@@ -33,6 +33,44 @@ namespace NodeCraft.Cli.Tests
             return File.ReadAllText(Path.Combine(root, relativePath.Replace('\\', Path.DirectorySeparatorChar)));
         }
 
+        private static string FindSampleProjectDirectory()
+        {
+            var directory = new DirectoryInfo(Directory.GetCurrentDirectory());
+            while (directory != null)
+            {
+                var candidate = Path.Combine(directory.FullName, "NodeCraft.PluginSample", "NodeCraft.PluginSample.csproj");
+                if (File.Exists(candidate))
+                {
+                    return Path.GetDirectoryName(candidate)!;
+                }
+
+                directory = directory.Parent;
+            }
+
+            throw new FileNotFoundException("Could not locate NodeCraft.PluginSample.csproj for tests.");
+        }
+
+        private static bool IsBuildOutputPath(string path)
+        {
+            return path
+                .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Any(segment => string.Equals(segment, "bin", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(segment, "obj", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static int CountOccurrences(string text, string value)
+        {
+            var count = 0;
+            var startIndex = 0;
+            while ((startIndex = text.IndexOf(value, startIndex, StringComparison.Ordinal)) >= 0)
+            {
+                count++;
+                startIndex += value.Length;
+            }
+
+            return count;
+        }
+
         public static void RunAll()
         {
             Program.Run("generates five core files", () =>
@@ -124,6 +162,40 @@ namespace NodeCraft.Cli.Tests
                 {
                     Directory.Delete(root, recursive: true);
                 }
+            });
+
+            Program.Run("actual generated C# owns its port identifiers", () =>
+            {
+                var root = GenerateToTemp(CreateOptions(false, false), out var files);
+                try
+                {
+                    var generatedCSharp = string.Join(
+                        "\n",
+                        files
+                            .Where(file => string.Equals(Path.GetExtension(file), ".cs", StringComparison.OrdinalIgnoreCase))
+                            .Select(file => ReadGeneratedFile(root, file)));
+
+                    return CountOccurrences(generatedCSharp, "internal static class NodePortIds") == 1
+                        && !generatedCSharp.Contains("using NodeCraft.Flow.Nodes;", StringComparison.Ordinal)
+                        && !generatedCSharp.Contains("BuiltInNodePorts", StringComparison.Ordinal);
+                }
+                finally
+                {
+                    Directory.Delete(root, recursive: true);
+                }
+            });
+
+            Program.Run("active sample C# owns its port identifiers", () =>
+            {
+                var sources = Directory
+                    .EnumerateFiles(FindSampleProjectDirectory(), "*.cs", SearchOption.AllDirectories)
+                    .Where(path => !IsBuildOutputPath(path))
+                    .Select(File.ReadAllText)
+                    .ToArray();
+
+                return sources.Length > 0
+                    && sources.All(source => !source.Contains("using NodeCraft.Flow.Nodes;", StringComparison.Ordinal))
+                    && sources.All(source => !source.Contains("BuiltInNodePorts", StringComparison.Ordinal));
             });
 
             Program.Run("generated files contain no unreplaced placeholders", () =>

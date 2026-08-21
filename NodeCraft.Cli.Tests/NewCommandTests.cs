@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using NodeCraft.Cli;
 
 namespace NodeCraft.Cli.Tests
@@ -59,6 +60,33 @@ namespace NodeCraft.Cli.Tests
                     return exitCode == 0
                         && File.Exists(Path.Combine(root, "MyPlugin", "plugin.json"))
                         && File.Exists(Path.Combine(root, "MyPlugin", "Nodes", "MyPluginNodeExecutor.cs"));
+                }
+                finally
+                {
+                    if (Directory.Exists(root))
+                    {
+                        Directory.Delete(root, recursive: true);
+                    }
+                }
+            });
+
+            Program.Run("new generates C# with one plugin-owned port identifier declaration", () =>
+            {
+                var root = TempRoot();
+                try
+                {
+                    var input = "\n\n\n" + FindFlowProjectPath() + "\n\n";
+                    var exitCode = RunNew("new MyPlugin", input, root, out _);
+                    var projectDirectory = Path.Combine(root, "MyPlugin");
+                    var generatedCSharp = string.Join(
+                        "\n",
+                        Directory.EnumerateFiles(projectDirectory, "*.cs", SearchOption.AllDirectories)
+                            .Select(File.ReadAllText));
+
+                    return exitCode == 0
+                        && generatedCSharp.Split("internal static class NodePortIds").Length - 1 == 1
+                        && !generatedCSharp.Contains("using NodeCraft.Flow.Nodes;", StringComparison.Ordinal)
+                        && !generatedCSharp.Contains("BuiltInNodePorts", StringComparison.Ordinal);
                 }
                 finally
                 {
