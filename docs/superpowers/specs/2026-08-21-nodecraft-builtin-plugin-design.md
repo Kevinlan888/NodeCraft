@@ -22,8 +22,8 @@ plugin.json
 - 18 个节点先合并在一个 `NodeCraft.BuiltIn` 插件中，不按调色板分类拆成多个插件。
 - 所有节点定义、模型、执行器和节点专用辅助类从 `NodeCraft.Flow` 迁出。
 - 删除 `BuiltInNodeRegistration` 和 `DefaultFlowNodeContentFactory`。
-- 没有 `ContentFactory` 的节点内容区为空，仅显示公共节点外壳、标题和端口。
-- 只有需要编辑配置或展示运行结果的 6 个节点提供独立 XAML UI。
+- 核心仍允许第三方插件省略 `ContentFactory`；此时节点内容区为空，仅显示公共节点外壳、标题和端口。
+- 当前 18 个内置节点都有专门的内容 UI；迁移后每个节点都提供自己的 `ContentFactory` 和独立 XAML。
 - UI 遵循当前 Vision 插件模式：XAML 作为 `EmbeddedResource` 随程序集构建，由编辑器构造函数使用 `XamlReader.Parse` 加载。
 - 控件树、布局、资源引用和样式写在 XAML 中；code-behind 不用 C# 手工搭建控件树。
 - 修改 XAML 后重新构建插件生效，不支持运行时修改、热重载或外部 XAML 覆盖。
@@ -69,18 +69,24 @@ NodeCraft.BuiltIn/
 │   ├── BooleanNodePorts.cs
 │   └── NodeValueConverter.cs
 ├── Views/
-│   ├── StringValueEditor.xaml
-│   ├── StringValueEditor.xaml.cs
-│   ├── IntegerValueEditor.xaml
-│   ├── IntegerValueEditor.xaml.cs
-│   ├── FloatValueEditor.xaml
-│   ├── FloatValueEditor.xaml.cs
-│   ├── BooleanValueEditor.xaml
-│   ├── BooleanValueEditor.xaml.cs
-│   ├── AppendTextEditor.xaml
-│   ├── AppendTextEditor.xaml.cs
-│   ├── TextPreviewView.xaml
-│   └── TextPreviewView.xaml.cs
+│   ├── StringValueEditor.xaml + .xaml.cs
+│   ├── AppendTextEditor.xaml + .xaml.cs
+│   ├── TextPreviewView.xaml + .xaml.cs
+│   ├── JsonSerializeView.xaml + .xaml.cs
+│   ├── IntegerValueEditor.xaml + .xaml.cs
+│   ├── FloatValueEditor.xaml + .xaml.cs
+│   ├── BooleanValueEditor.xaml + .xaml.cs
+│   ├── AddNumberView.xaml + .xaml.cs
+│   ├── MultiplyNumberView.xaml + .xaml.cs
+│   ├── SubtractNumberView.xaml + .xaml.cs
+│   ├── DivideNumberView.xaml + .xaml.cs
+│   ├── GreaterThanView.xaml + .xaml.cs
+│   ├── LessThanView.xaml + .xaml.cs
+│   ├── EqualView.xaml + .xaml.cs
+│   ├── BooleanAndView.xaml + .xaml.cs
+│   ├── BooleanOrView.xaml + .xaml.cs
+│   ├── BooleanNotView.xaml + .xaml.cs
+│   └── IfView.xaml + .xaml.cs
 └── Build/
     └── BuiltInPackaging.targets
 ```
@@ -106,21 +112,21 @@ NodeCraft.BuiltIn/
 | Preview | String Value | `nodecraft.builtin.string-value` | 是 |
 | Preview | Append Text | `nodecraft.builtin.append-text` | 是 |
 | Preview | Text Preview | `nodecraft.builtin.text-preview` | 是 |
-| Preview | JSON Serialize | `nodecraft.builtin.json-serialize` | 否 |
+| Preview | JSON Serialize | `nodecraft.builtin.json-serialize` | 是 |
 | Value | Integer Value | `nodecraft.builtin.integer-value` | 是 |
 | Value | Float Value | `nodecraft.builtin.float-value` | 是 |
 | Value | Boolean Value | `nodecraft.builtin.boolean-value` | 是 |
-| Math | Add | `nodecraft.builtin.add-number` | 否 |
-| Math | Multiply | `nodecraft.builtin.multiply-number` | 否 |
-| Math | Subtract | `nodecraft.builtin.subtract-number` | 否 |
-| Math | Divide | `nodecraft.builtin.divide-number` | 否 |
-| Logic | Greater Than | `nodecraft.builtin.greater-than` | 否 |
-| Logic | Less Than | `nodecraft.builtin.less-than` | 否 |
-| Logic | Equal | `nodecraft.builtin.equal` | 否 |
-| Logic | Boolean And | `nodecraft.builtin.boolean-and` | 否 |
-| Logic | Boolean Or | `nodecraft.builtin.boolean-or` | 否 |
-| Logic | Boolean Not | `nodecraft.builtin.boolean-not` | 否 |
-| Logic | If | `nodecraft.builtin.if` | 否 |
+| Math | Add | `nodecraft.builtin.add-number` | 是 |
+| Math | Multiply | `nodecraft.builtin.multiply-number` | 是 |
+| Math | Subtract | `nodecraft.builtin.subtract-number` | 是 |
+| Math | Divide | `nodecraft.builtin.divide-number` | 是 |
+| Logic | Greater Than | `nodecraft.builtin.greater-than` | 是 |
+| Logic | Less Than | `nodecraft.builtin.less-than` | 是 |
+| Logic | Equal | `nodecraft.builtin.equal` | 是 |
+| Logic | Boolean And | `nodecraft.builtin.boolean-and` | 是 |
+| Logic | Boolean Or | `nodecraft.builtin.boolean-or` | 是 |
+| Logic | Boolean Not | `nodecraft.builtin.boolean-not` | 是 |
+| Logic | If | `nodecraft.builtin.if` | 是 |
 
 旧 `node.*` TypeKey 不再注册。保存的新流程 XML 使用上表 TypeKey 和 `NodeCraft.BuiltIn` 中的新模型类型名。
 
@@ -134,7 +140,7 @@ NodeCraft.BuiltIn/
 - `ExecutorFactory`：每次返回新的执行器实例。
 - `NodeModelType` 和 `NodeFactory`：调色板创建及 XML 反序列化所需模型信息。
 - `PaletteDisplayName`、`PaletteDescription` 和图标信息。
-- 可选 `ContentFactory`。
+- `ContentFactory`：18 个内置节点全部显式提供。
 - 可选 `ExecutionResultHandler` 和内容刷新策略。
 
 注册不再分为 `Register` 和 `ConfigureEditors` 两阶段。插件完成暂存后，宿主使用现有 `FlowNodeRegistry.RegisterPlugin` 先验证整个批次，再原子提交 18 个节点。任意重复 TypeKey、缺失模型工厂或其他注册错误都会使整个插件注册失败，不留下部分节点。
@@ -147,7 +153,7 @@ NodeCraft.BuiltIn/
 
 ### 7.1 通用创建契约
 
-六个编辑器各自公开与 `FlowNodeRegistration.ContentFactory` 匹配的静态工厂：
+18 个视图各自公开与 `FlowNodeRegistration.ContentFactory` 匹配的静态工厂：
 
 ```csharp
 internal static FrameworkElement CreateContent(FlowCanvas canvas, NodeModel node)
@@ -164,7 +170,7 @@ internal static FrameworkElement CreateContent(FlowCanvas canvas, NodeModel node
 
 每次工厂调用必须返回新控件，避免 WPF 元素被多个节点父级复用。模型类型不匹配、资源缺失、XAML 根类型错误或命名控件缺失时抛出包含编辑器和控件名称的 `InvalidOperationException`。
 
-### 7.2 六个编辑器
+### 7.2 十八个节点视图
 
 - `StringValueEditor`：字符串文本框，写回 `ValueText`。
 - `IntegerValueEditor`：整数文本框；只有按 invariant culture 成功解析的值写回 `IntegerValue`。
@@ -172,14 +178,22 @@ internal static FrameworkElement CreateContent(FlowCanvas canvas, NodeModel node
 - `BooleanValueEditor`：复选框，写回 `BooleanValue`。
 - `AppendTextEditor`：后缀文本框，写回 `SuffixText`。
 - `TextPreviewView`：只读展示 `LastPreviewText`；没有结果时显示占位文本。
+- `JsonSerializeView`：显示 JSON 公式、用途说明和当前输入连接摘要。
+- `AddNumberView`、`MultiplyNumberView`、`SubtractNumberView`、`DivideNumberView`：分别显示运算公式、说明、两个输入的连接摘要和交换输入操作。
+- `GreaterThanView`、`LessThanView`、`EqualView`：显示比较公式、说明、两个输入的连接摘要和交换输入操作。
+- `BooleanAndView`、`BooleanOrView`：显示布尔公式、说明、两个输入的连接摘要和交换输入操作。
+- `BooleanNotView`：显示取反公式、说明和输入连接摘要。
+- `IfView`：显示 IF 标识以及使用主题状态颜色的 True/False 分支标签。
 
 所有可视结构、标签、边距、布局、换行和主题资源引用位于 XAML。颜色使用宿主 `DynamicResource` 主题键，不硬编码 hex。code-behind 只保留资源加载、类型转换、模型交互、事件处理和变更通知。
 
 Text Preview 的注册继续使用 `ExecutionResultHandler`，按输出 Port ID 解析 slot 并把当前执行结果写入 `LastPreviewText`。保持默认刷新策略，使结果写入后由宿主重建该节点的 XAML 内容。
 
-### 7.3 无 UI 节点
+### 7.3 共享行为与独立布局
 
-其余 12 个节点不设置 `ContentFactory`。它们不再显示原默认内容工厂提供的公式说明、连接摘要、交换输入按钮或通用 `Output node` 文本，只显示公共节点外壳、标题和端口。
+18 个节点必须各有一份可直接修改的 XAML，不能把多个节点的可视树重新合并成 C# 工厂。资源加载、输入连接名称解析、slot 查找、交换输入和数字解析等非可视逻辑可以放在插件内部共享帮助类中。
+
+共享帮助类不得创建 `StackPanel`、`TextBlock`、`TextBox`、`Button` 等业务控件。每个节点实际显示的控件、层次、标签和样式都由自己的 XAML 决定，code-behind 只查找命名元素并挂接行为。
 
 ## 8. 核心清理与插件自描述
 
@@ -236,10 +250,10 @@ NodeCraft/bin/<Configuration>/net8.0-windows/Plugins/NodeCraft.BuiltIn/
 
 - 插件包缺失：应用继续启动，调色板没有内置节点。
 - manifest、入口类型、Metadata 或注册批次错误：整个插件加载失败，复用现有启动汇总通知和完整文件日志。
-- XAML 资源缺失或格式错误：创建对应节点内容时抛出明确异常；自动化测试在发布前实例化全部六个工厂以提前发现。
+- XAML 资源缺失或格式错误：创建对应节点内容时抛出明确异常；自动化测试在发布前实例化全部 18 个工厂以提前发现。
 - 编辑器取得错误模型类型：抛出包含期望模型类型的 `InvalidOperationException`。
 - 数字编辑器输入暂时无效：不覆盖模型中的最后一个有效值，也不报告图已改变；下一次有效输入再写回并通知画布。
-- 无 UI 节点：`BuildNodeContent` 正常返回 `null`，不视为错误。
+- 第三方注册项未提供 `ContentFactory`：`BuildNodeContent` 正常返回 `null`，不视为错误；内置插件自身不存在这种注册项。
 
 ## 12. 测试策略
 
@@ -257,18 +271,20 @@ NodeCraft/bin/<Configuration>/net8.0-windows/Plugins/NodeCraft.BuiltIn/
 - 插件准确暂存 18 个注册项，TypeKey 唯一且全部使用 `nodecraft.builtin.` 前缀。
 - 分类、端口顺序、数据类型、必需性和执行器类型与现有节点行为一致。
 - 每个 `NodeFactory` 和 `ExecutorFactory` 连续调用都返回不同的非空实例。
-- 只有约定的 6 个注册项提供 `ContentFactory`。
+- 18 个注册项全部提供各自的 `ContentFactory`。
 - 同一调色板分类的分类图标一致，每个节点具有明确图标。
 
 ### 12.3 XAML UI 测试
 
-在 WPF STA 测试线程中调用六个真实 `ContentFactory`：
+在 WPF STA 测试线程中调用全部 18 个真实 `ContentFactory`：
 
 - 每个工厂返回正确的编辑器类型和非复用实例。
 - 每份嵌入 XAML 均可解析，所有必需命名控件存在。
 - 字符串、布尔、整数、浮点和后缀编辑能更新对应模型并发出图变更通知。
 - 非法数字文本不覆盖有效模型值。
 - Text Preview 能展示 `ExecutionResultHandler` 写入的最新结果。
+- 数学、比较和二元布尔节点保留公式、连接摘要和交换输入行为。
+- Boolean Not 与 JSON Serialize 保留一元输入摘要，If 保留分支标签和状态颜色。
 - XAML 使用 `DynamicResource` 主题键，不包含硬编码颜色。
 
 ### 12.4 加载与打包测试
@@ -276,7 +292,7 @@ NodeCraft/bin/<Configuration>/net8.0-windows/Plugins/NodeCraft.BuiltIn/
 - 使用临时插件包通过真实 `PluginLoader` 加载 `NodeCraft.BuiltIn`，确认 18 个节点原子进入注册表。
 - 宿主构建输出包含 `Plugins/NodeCraft.BuiltIn/plugin.json` 和插件 DLL。
 - 插件包不包含任何宿主共享程序集，也不删除或覆盖相邻插件目录。
-- 从加载后的注册表创建调色板、创建一个 UI 节点和一个无 UI 节点。
+- 从加载后的注册表创建调色板，并成功创建全部 18 个节点内容实例。
 
 ### 12.5 行为与回归测试
 
@@ -301,8 +317,8 @@ git diff --check
 2. 普通宿主构建自动产生可扫描的 `NodeCraft.BuiltIn` 插件包。
 3. 宿主只通过现有 `PluginLoader` 注册 18 个内置节点，没有直接注册旁路。
 4. 调色板仍显示 Preview、Value、Math 和 Logic 分类中的 18 个节点。
-5. 六个指定节点的内容完全由独立 XAML 定义，修改 XAML 并重建插件即可改变 UI。
-6. 其余 12 个节点内容区为空，不再出现 C# 手写的默认业务 UI。
+5. 18 个内置节点的内容都由各自独立 XAML 定义，修改对应 XAML 并重建插件即可改变 UI。
+6. 数学、比较、逻辑、值和预览节点现有的内容与交互行为迁移后继续保留，不再由核心 C# 工厂手写控件树。
 7. 新建、执行、保存和重新加载使用新 TypeKey 的流程正常工作。
 8. 旧内置节点 XML 不保证加载，也不存在兼容代码。
 9. 插件缺失或加载失败时应用仍可启动，并通过现有通知和日志暴露错误。
