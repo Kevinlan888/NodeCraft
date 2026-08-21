@@ -473,6 +473,7 @@ namespace NodeCraft.Pages
             builder.AppendLine($"运行模式: {runMode}");
             builder.AppendLine($"迭代: {iteration}");
             builder.AppendLine($"耗时: {elapsed.TotalMilliseconds:0.0} ms");
+            builder.AppendLine($"每轮迭代平均耗时: {elapsed.TotalMilliseconds / Math.Max(iteration, 1):0.0} ms");
             builder.AppendLine();
 
             foreach (var node in workflow?.Nodes ?? Enumerable.Empty<WorkflowNode>())
