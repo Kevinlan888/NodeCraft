@@ -32,11 +32,17 @@ NodeCraft.sln
 │   ├── Pages/FlowPage.xaml # 流程编辑器页面
 │   └── Plugins/            # 清单读取、隔离加载上下文、NLog 引导、启动通知
 │
-├── NodeCraft.Flow/         # 引擎 + 插件 API（net8.0-windows, RootNamespace=NodeCraft）
+├── NodeCraft.Flow/         # 引擎 + 插件 API（net8.0-windows, RootNamespace=NodeCraft；不含任何具体内置节点）
 │   ├── Flow/               # FlowCanvas、GraphModel、GraphExecutor、FlowNodeRegistry、FlowTypeValidator
 │   ├── Localization/       # 流程本地化资源
 │   ├── Plugins/            # IFlowPlugin、IPluginContext、IPluginNodeRegistrar、PluginMetadata
 │   └── Themes/Flow.xaml    # 流程编辑器资源
+│
+├── NodeCraft.BuiltIn/      # 内置节点插件（18 个节点，全部经 plugin.json + PluginLoader 注册）
+│   ├── Plugin/             # BuiltInPlugin：原子注册 Preview/Value/Math/Logic 四类
+│   ├── Nodes/              # 各节点模型/执行器 + 插件私有端口常量（BuiltInPortIds）
+│   ├── Registrations/      # 每类的节点注册与调色板图标
+│   └── Views/              # 每节点独立 XAML（EmbeddedResource）+ code-behind
 │
 ├── NodeCraft.PluginSample/ # 示例插件（多节点 + 私有依赖 PrivateDependency）
 ├── NodeCraft.Cli/          # nodecraft-cli 脚手架工具（net8.0, dotnet tool）
@@ -49,6 +55,8 @@ NodeCraft.sln
 
 - **加载时机**：`App.OnStartup` 在 `MainWindow`/`FlowPage` 构造前扫描插件，保证画布节点就绪。扫描 `Path.Combine(AppContext.BaseDirectory, "Plugins")` 下**直接子目录**中含 `plugin.json` 的包，按 `StringComparer.OrdinalIgnoreCase` 排序。
 - **包布局**：`<app root>\Plugins\<PackageFolder>\` 下含 `plugin.json`、`<EntryAssembly>.dll`、`lib\`（私有依赖）。清单字段：`id`（无空白稳定 ID）、`entryAssembly`、`entryType`、`apiVersion`（host/plugin 契约主版本门控，`1.0`）、`privateLibraryPath`（默认 `lib`）。
+- **内置节点是插件**：`NodeCraft.Flow` 不含任何具体内置节点、默认业务内容工厂或旧 `node.*` TypeKey。18 个内置节点全部位于 `NodeCraft.BuiltIn`（ID `nodecraft.builtin`），随宿主 staging 到 `Plugins\NodeCraft.BuiltIn`，运行时不走直接注册旁路，只经 `PluginLoader.LoadAll` 加载。旧的内置 XML/TypeKey 有意不再支持。
+- **内容工厂缺失**：注册项没有 `ContentFactory` 时 `BuildNodeContent` 返回 `null`（空业务内容），不再由核心生成默认编辑器。内置节点内容全部来自独立 EmbeddedResource XAML（`FlowNodeContentFactory` 由插件视图提供）。
 - **注册与身份**：`IFlowPlugin.Metadata.Id` 必须等于清单 `id` 且必须带 `Version`；`Register` 通过 `context.Nodes.Register(...)` 暂存节点注册，宿主在 `Register` 返回后原子调用 `FlowNodeRegistry.RegisterPlugin`。同一扫描内重复插件 ID 被拒绝（前者保留）；重复节点 `TypeKey` 被拒绝（已加载节点不被替换）。
 - **TypeKey 稳定**：`.flow.xml` 身份基于 `TypeKey` 而非程序集限定类型名，必须保持稳定并带命名空间前缀（如 `company.sample.nodes.value`）。
 - **共享程序集**：`NodeCraft.Flow`、`CommonControls.WPF`、WPF 框架程序集、`Microsoft.Extensions.Logging` 保持默认加载上下文统一类型身份（见 `PluginLoader.CreateSharedAssemblyNames`）。私有依赖在每插件可回收 `AssemblyLoadContext` 中从包根目录与 `lib` 解析。**不要**把 `NodeCraft.Flow.dll` 或 `CommonControls.WPF.dll` 拷入插件包。

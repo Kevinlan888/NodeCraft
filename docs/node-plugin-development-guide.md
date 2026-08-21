@@ -230,10 +230,25 @@ Company.Example.Plugin/
 
 文件：`Nodes/HelloValueNodeModel.cs`
 
+端口 ID 属于每个插件自己，不要引用宿主或共享的旧端口常量类。先定义一个插件私有常量类：
+
+文件：`Nodes/HelloPortIds.cs`
+
+```csharp
+namespace Company.Example.Plugin.Nodes
+{
+    internal static class HelloPortIds
+    {
+        internal const string Input = "input";
+        internal const string Value = "value";
+        internal const string Output = "output";
+    }
+}
+```
+
 ```csharp
 using System.Collections.Generic;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
 
 namespace Company.Example.Plugin.Nodes
 {
@@ -250,7 +265,7 @@ namespace Company.Example.Plugin.Nodes
             {
                 new PortParameter
                 {
-                    PortId = BuiltInNodePorts.Output,
+                    PortId = HelloPortIds.Output,
                     Parameter = new Parameter
                     {
                         ParameterType = FlowDataType.String.Key,
@@ -264,7 +279,7 @@ namespace Company.Example.Plugin.Nodes
 
         public void WriteWorkflowInputs(WorkflowNode node)
         {
-            node.Inputs[BuiltInNodePorts.Value] = ValueText ?? string.Empty;
+            node.Inputs[HelloPortIds.Value] = ValueText ?? string.Empty;
         }
     }
 }
@@ -287,7 +302,6 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
 
 namespace Company.Example.Plugin.Nodes
 {
@@ -305,7 +319,7 @@ namespace Company.Example.Plugin.Nodes
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            node.Inputs.TryGetValue(BuiltInNodePorts.Value, out var rawValue);
+            node.Inputs.TryGetValue(HelloPortIds.Value, out var rawValue);
             var value = rawValue as string
                 ?? rawValue?.ToString()
                 ?? string.Empty;
@@ -313,7 +327,7 @@ namespace Company.Example.Plugin.Nodes
             IReadOnlyDictionary<string, object> outputs
                 = new Dictionary<string, object>
                 {
-                    [BuiltInNodePorts.Output] = value,
+                    [HelloPortIds.Output] = value,
                 };
 
             return Task.FromResult(outputs);
@@ -327,7 +341,7 @@ namespace Company.Example.Plugin.Nodes
 如果节点确实有一个从其他节点连入的输入端口，应该在 Definition 中声明它，然后从 `inputs` 按端口 ID 读取：
 
 ```csharp
-var input = inputs.TryGetValue(BuiltInNodePorts.Input, out var value)
+var input = inputs.TryGetValue(HelloPortIds.Input, out var value)
     ? value
     : null;
 ```
@@ -370,7 +384,7 @@ namespace Company.Example.Plugin
                         {
                             new FlowPortDefinition
                             {
-                                Id = BuiltInNodePorts.Output,
+                                Id = HelloPortIds.Output,
                                 DisplayName = "Value",
                                 IOType = EIOType.Output,
                                 DataType = FlowDataType.String,
@@ -384,6 +398,8 @@ namespace Company.Example.Plugin
                     NodeFactory = () => new HelloValueNodeModel(),
                     PaletteDisplayName = "Hello Value",
                     PaletteDescription = "Emits a configured string value.",
+                    PaletteIconKind = "Text",
+                    PaletteCategoryIconKind = "FormatListNumbered",
                 });
         }
     }
@@ -397,9 +413,10 @@ namespace Company.Example.Plugin
 | `ExecutorFactory` | 每个图 Session 创建一个新的 Executor 实例 |
 | `NodeModelType` | 将画布模型类型映射到稳定 TypeKey，支持图加载和面板元数据 |
 | `NodeFactory` | 从节点面板拖入节点时创建新的 NodeModel |
-| `ContentFactory` | 可选的自定义 WPF 内容；不提供时使用默认节点内容 |
+| `ContentFactory` | 自定义 WPF 内容；不提供时返回 `null`（空业务内容），宿主不再生成默认编辑器 |
 | `ExecutionResultHandler` | 可选地把执行结果写回 NodeModel 的预览状态 |
 | `ShowInPalette` | 是否显示在节点面板；显示时必须有 NodeModel 类型和工厂 |
+| `PaletteIconKind` / `PaletteCategoryIconKind` | 节点面板的项/类别图标；省略图标时继承类别图标，类别图标缺省回退到 `ShapeOutline` |
 | `RefreshContentAfterExecution` | 执行完成后是否让画布刷新节点内容 |
 
 ### 4.4 面板和执行验证
@@ -463,7 +480,7 @@ new FlowNodeDefinition
     {
         new FlowPortDefinition
         {
-            Id = BuiltInNodePorts.Input,
+            Id = HelloPortIds.Input,
             DisplayName = "Input",
             IOType = EIOType.Input,
             DataType = FlowDataType.String,
@@ -476,7 +493,7 @@ new FlowNodeDefinition
     {
         new FlowPortDefinition
         {
-            Id = BuiltInNodePorts.Output,
+            Id = HelloPortIds.Output,
             DisplayName = "Output",
             IOType = EIOType.Output,
             DataType = FlowDataType.String,
@@ -1507,7 +1524,7 @@ _logger.LogError(
 
 ## 10. WPF 自定义节点编辑器
 
-节点默认可以使用宿主生成的内容；只有在默认编辑器无法表达配置时，才需要注册 `ContentFactory`。自定义编辑器的职责是把用户输入写回 `NodeModel`，通知画布图发生变化，并在重新加载节点时从模型恢复控件状态。它不应该启动 Session、持有网络连接或直接修改运行时 `WorkflowNode`。
+节点没有内置默认编辑器：未提供 `ContentFactory` 的节点在画布上显示空业务内容。需要编辑器时通过 `ContentFactory` 注册。自定义编辑器的职责是把用户输入写回 `NodeModel`，通知画布图发生变化，并在重新加载节点时从模型恢复控件状态。它不应该启动 Session、持有网络连接或直接修改运行时 `WorkflowNode`。
 
 ### 10.1 注册编辑器
 
@@ -1532,7 +1549,7 @@ new FlowNodeRegistration(
 };
 ```
 
-宿主构建节点内容时会先按 `NodeModel.ExecutorType` 找到注册项；如果注册项有 `ContentFactory`，就调用 `ContentFactory(canvas, node)`，否则使用默认节点内容。因而必须同时检查：
+宿主构建节点内容时会先按 `NodeModel.ExecutorType` 找到注册项；如果注册项有 `ContentFactory`，就调用 `ContentFactory(canvas, node)`，否则返回 `null`（画布显示空业务内容）。没有提供 `ContentFactory` 的节点不再获得核心生成的默认编辑器。因而必须同时检查：
 
 - `ExecutorType` 是否与注册的 `TypeKey` 一致；
 - `CreateContent` 是否接收了正确的 `NodeModel` 类型；
@@ -2013,7 +2030,7 @@ var node = new WorkflowNode
     TypeKey = HelloValueNodeModel.FlowNodeTypeKey,
     Inputs = new Dictionary<string, object>
     {
-        [BuiltInNodePorts.Value] = "hello",
+        [HelloPortIds.Value] = "hello",
     },
 };
 
@@ -2024,7 +2041,7 @@ var outputs = await executor.ExecuteAsync(
     new Dictionary<string, object>(),
     CancellationToken.None);
 
-Assert.Equal("hello", outputs[BuiltInNodePorts.Output]);
+Assert.Equal("hello", outputs[HelloPortIds.Output]);
 ```
 
 至少覆盖：
