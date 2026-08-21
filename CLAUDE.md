@@ -14,6 +14,9 @@ dotnet run --project NodeCraft/NodeCraft.csproj
 # 运行控制台测试跑棒（WPF 目标，需在 Windows 上执行）
 dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj -f net8.0-windows
 # 期望输出 ALL PASS
+# 若本机网络把 192.0.2.1 透明代理接受（有界 TCP 超时测试无法复现），设置环境变量后运行：
+# NODECRAFT_SKIP_ENVIRONMENT_GATED_TESTS=1 dotnet run --project NodeCraft.Tests/NodeCraft.Tests.csproj -f net8.0-windows
+# （普通开发网络上不需要该变量）
 
 # 运行 CLI 脚手架工具自测
 dotnet run --project NodeCraft.Cli.Tests/NodeCraft.Cli.Tests.csproj
