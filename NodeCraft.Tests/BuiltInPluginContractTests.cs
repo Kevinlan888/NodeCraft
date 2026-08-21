@@ -2,15 +2,20 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Xml.Linq;
+using CommonControls.WPF;
 using Microsoft.Extensions.Logging.Abstractions;
 using NodeCraft.BuiltIn.Nodes;
 using NodeCraft.BuiltIn.Plugin;
 using NodeCraft.BuiltIn.Views;
 using NodeCraft.Flow;
+using BusinessBorder = System.Windows.Controls.Border;
 
 internal static partial class Program
 {
@@ -189,24 +194,32 @@ internal static partial class Program
                 .Select(Path.GetFileName)
                 .OrderBy(name => name, StringComparer.Ordinal)
                 .ToArray();
-            var businessControlAllocation = new Regex(
-                @"\bnew\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)*(?:StackPanel|Grid|Border|TextBlock|TextBox|CheckBox|Button|RoundButton)\b",
-                RegexOptions.CultureInvariant);
-            var hexadecimalColor = new Regex(
-                @"(?<![0-9A-Fa-f])#(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{3})(?![0-9A-Fa-f])",
-                RegexOptions.CultureInvariant);
+            var commentOnlyResources = XDocument.Parse(
+                "<Grid><!-- {DynamicResource colorCommentOnly} #fff --></Grid>");
+            var realDynamicResource = XDocument.Parse(
+                "<Grid Background=\"{DynamicResource colorReal}\" />");
+            var realHexColor = XDocument.Parse(
+                "<Grid Background=\"#AABBCC\" />");
+            var bypassAllocations = FindBusinessControlAllocations(
+                typeof(SourcePolicyIlFixture));
 
             return actualCodeBehindFiles.SequenceEqual(expectedCodeBehindFiles, StringComparer.Ordinal)
+                && !XamlHasDynamicResourceAttribute(commentOnlyResources)
+                && !XamlHasHexColorAttribute(commentOnlyResources)
+                && XamlHasDynamicResourceAttribute(realDynamicResource)
+                && XamlHasHexColorAttribute(realHexColor)
+                && bypassAllocations.Contains(typeof(Grid))
+                && bypassAllocations.Contains(typeof(Button))
+                && bypassAllocations.Contains(typeof(BusinessBorder))
                 && contracts.All(contract =>
                 {
                     var viewName = contract.ViewType.Name;
-                    var xaml = File.ReadAllText(Path.Combine(viewsDirectory, viewName + ".xaml"));
-                    var codeBehind = File.ReadAllText(Path.Combine(
+                    var xaml = XDocument.Load(Path.Combine(
                         viewsDirectory,
-                        viewName + ".xaml.cs"));
-                    return xaml.Contains("DynamicResource", StringComparison.Ordinal)
-                        && !hexadecimalColor.IsMatch(xaml)
-                        && !businessControlAllocation.IsMatch(codeBehind);
+                        viewName + ".xaml"));
+                    return XamlHasDynamicResourceAttribute(xaml)
+                        && !XamlHasHexColorAttribute(xaml)
+                        && FindBusinessControlAllocations(contract.ViewType).Count == 0;
                 });
         });
 
@@ -227,6 +240,7 @@ internal static partial class Program
                     ContractNode("integer", "nodecraft.builtin.integer-value", ("value", 42)),
                     ContractNode("float", "nodecraft.builtin.float-value", ("value", 3.25d)),
                     ContractNode("boolean", "nodecraft.builtin.boolean-value", ("value", true)),
+                    ContractNode("boolean-false", "nodecraft.builtin.boolean-value", ("value", false)),
                     ContractNode("append", "nodecraft.builtin.append-text", ("input", "NodeCraft"), ("suffix", " rocks")),
                     ContractNode("preview", "nodecraft.builtin.text-preview", ("input", previewPayload)),
                     ContractNode(
@@ -239,11 +253,17 @@ internal static partial class Program
                     ContractNode("divide", "nodecraft.builtin.divide-number", ("inputA", 9), ("inputB", 4)),
                     ContractNode("divide-zero", "nodecraft.builtin.divide-number", ("inputA", 9), ("inputB", 0)),
                     ContractNode("greater", "nodecraft.builtin.greater-than", ("inputA", 4), ("inputB", 3)),
+                    ContractNode("greater-false", "nodecraft.builtin.greater-than", ("inputA", 2), ("inputB", 3)),
                     ContractNode("less", "nodecraft.builtin.less-than", ("inputA", 2), ("inputB", 3)),
+                    ContractNode("less-false", "nodecraft.builtin.less-than", ("inputA", 3), ("inputB", 2)),
                     ContractNode("equal", "nodecraft.builtin.equal", ("inputA", "same"), ("inputB", "same")),
+                    ContractNode("equal-false", "nodecraft.builtin.equal", ("inputA", "left"), ("inputB", "right")),
                     ContractNode("and", "nodecraft.builtin.boolean-and", ("inputA", true), ("inputB", true)),
+                    ContractNode("and-false", "nodecraft.builtin.boolean-and", ("inputA", true), ("inputB", false)),
                     ContractNode("or", "nodecraft.builtin.boolean-or", ("inputA", false), ("inputB", true)),
+                    ContractNode("or-false", "nodecraft.builtin.boolean-or", ("inputA", false), ("inputB", false)),
                     ContractNode("not", "nodecraft.builtin.boolean-not", ("input", false)),
+                    ContractNode("not-false", "nodecraft.builtin.boolean-not", ("input", true)),
                 },
             };
             var context = await new GraphExecutor(workflow, registry).ExecuteAsync();
@@ -261,6 +281,7 @@ internal static partial class Program
                 && GetContractOutput(context, "integer") is int integerOutput && integerOutput == 42
                 && GetContractOutput(context, "float") is double floatOutput && floatOutput == 3.25d
                 && GetContractOutput(context, "boolean") is bool booleanOutput && booleanOutput
+                && Equals(GetContractOutput(context, "boolean-false"), false)
                 && Equals(GetContractOutput(context, "append"), "NodeCraft rocks")
                 && ReferenceEquals(GetContractOutput(context, "preview"), previewPayload)
                 && Equals(GetContractOutput(context, "json"), "{\r\n  \"name\": \"NodeCraft\"\r\n}")
@@ -270,11 +291,17 @@ internal static partial class Program
                 && Equals(GetContractOutput(context, "divide"), 2.25d)
                 && Equals(GetContractOutput(context, "divide-zero"), 0d)
                 && Equals(GetContractOutput(context, "greater"), true)
+                && Equals(GetContractOutput(context, "greater-false"), false)
                 && Equals(GetContractOutput(context, "less"), true)
+                && Equals(GetContractOutput(context, "less-false"), false)
                 && Equals(GetContractOutput(context, "equal"), true)
+                && Equals(GetContractOutput(context, "equal-false"), false)
                 && Equals(GetContractOutput(context, "and"), true)
+                && Equals(GetContractOutput(context, "and-false"), false)
                 && Equals(GetContractOutput(context, "or"), true)
+                && Equals(GetContractOutput(context, "or-false"), false)
                 && Equals(GetContractOutput(context, "not"), true)
+                && Equals(GetContractOutput(context, "not-false"), false)
                 && IfBranchMatches(trueContext, condition: true)
                 && IfBranchMatches(falseContext, condition: false);
         });
@@ -549,6 +576,177 @@ internal static partial class Program
             && Equals(
                 GetContractOutput(context, selectedNode),
                 condition ? "TRUE" : "FALSE");
+    }
+
+    private static bool XamlHasDynamicResourceAttribute(XDocument document)
+    {
+        const string prefix = "{DynamicResource ";
+        return document.Descendants()
+            .SelectMany(element => element.Attributes())
+            .Select(attribute => attribute.Value.Trim())
+            .Any(value => value.StartsWith(prefix, StringComparison.Ordinal)
+                && value.EndsWith("}", StringComparison.Ordinal)
+                && value.Length > prefix.Length + 1);
+    }
+
+    private static bool XamlHasHexColorAttribute(XDocument document)
+    {
+        return document.Descendants()
+            .SelectMany(element => element.Attributes())
+            .Any(attribute => Regex.IsMatch(
+                attribute.Value,
+                @"(?<![0-9A-Fa-f])#(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{3})(?![0-9A-Fa-f])",
+                RegexOptions.CultureInvariant));
+    }
+
+    private static IReadOnlyList<Type> FindBusinessControlAllocations(Type rootType)
+    {
+        var businessControlTypes = new[]
+        {
+            typeof(StackPanel),
+            typeof(Grid),
+            typeof(BusinessBorder),
+            typeof(TextBlock),
+            typeof(TextBox),
+            typeof(CheckBox),
+            typeof(Button),
+            typeof(RoundButton),
+        };
+        return EnumerateDeclaredTypeTree(rootType)
+            .SelectMany(EnumerateDeclaredMethods)
+            .SelectMany(FindConstructedTypes)
+            .Where(constructedType => businessControlTypes.Any(
+                businessType => businessType.IsAssignableFrom(constructedType)))
+            .Distinct()
+            .ToArray();
+    }
+
+    private static IEnumerable<Type> EnumerateDeclaredTypeTree(Type rootType)
+    {
+        yield return rootType;
+        foreach (var nestedType in rootType.GetNestedTypes(
+            BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            foreach (var type in EnumerateDeclaredTypeTree(nestedType))
+            {
+                yield return type;
+            }
+        }
+    }
+
+    private static IEnumerable<MethodBase> EnumerateDeclaredMethods(Type type)
+    {
+        const BindingFlags flags = BindingFlags.Public
+            | BindingFlags.NonPublic
+            | BindingFlags.Instance
+            | BindingFlags.Static
+            | BindingFlags.DeclaredOnly;
+        return type.GetConstructors(flags).Cast<MethodBase>()
+            .Concat(type.GetMethods(flags));
+    }
+
+    private static IEnumerable<Type> FindConstructedTypes(MethodBase method)
+    {
+        var body = method.GetMethodBody();
+        var il = body?.GetILAsByteArray();
+        if (il == null)
+        {
+            yield break;
+        }
+
+        var offset = 0;
+        while (offset < il.Length)
+        {
+            var opCode = ReadOpCode(il, ref offset);
+            if (opCode.Equals(OpCodes.Newobj))
+            {
+                var token = BitConverter.ToInt32(il, offset);
+                var declaringTypeArguments = method.DeclaringType?.IsGenericType == true
+                    ? method.DeclaringType.GetGenericArguments()
+                    : null;
+                var methodArguments = method is MethodInfo methodInfo && methodInfo.IsGenericMethod
+                    ? methodInfo.GetGenericArguments()
+                    : null;
+                var constructor = method.Module.ResolveMethod(
+                    token,
+                    declaringTypeArguments,
+                    methodArguments);
+                if (constructor?.DeclaringType != null)
+                {
+                    yield return constructor.DeclaringType;
+                }
+            }
+
+            offset += GetOperandSize(opCode.OperandType, il, offset);
+        }
+    }
+
+    private static OpCode ReadOpCode(byte[] il, ref int offset)
+    {
+        var firstByte = il[offset++];
+        var value = firstByte == 0xFE
+            ? (short)(0xFE00 | il[offset++])
+            : (short)firstByte;
+        var opCode = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(field => field.FieldType == typeof(OpCode))
+            .Select(field => (OpCode)field.GetValue(null)!)
+            .Single(candidate => candidate.Value == value);
+        return opCode;
+    }
+
+    private static int GetOperandSize(
+        OperandType operandType,
+        byte[] il,
+        int operandOffset)
+    {
+        switch (operandType)
+        {
+            case OperandType.InlineNone:
+                return 0;
+            case OperandType.ShortInlineBrTarget:
+            case OperandType.ShortInlineI:
+            case OperandType.ShortInlineVar:
+                return 1;
+            case OperandType.InlineVar:
+                return 2;
+            case OperandType.InlineBrTarget:
+            case OperandType.InlineField:
+            case OperandType.InlineI:
+            case OperandType.InlineMethod:
+            case OperandType.InlineSig:
+            case OperandType.InlineString:
+            case OperandType.InlineTok:
+            case OperandType.InlineType:
+            case OperandType.ShortInlineR:
+                return 4;
+            case OperandType.InlineI8:
+            case OperandType.InlineR:
+                return 8;
+            case OperandType.InlineSwitch:
+                return 4 + (BitConverter.ToInt32(il, operandOffset) * 4);
+            default:
+                throw new InvalidOperationException(
+                    $"Unsupported IL operand type '{operandType}'.");
+        }
+    }
+
+    private sealed class SourcePolicyIlFixture
+    {
+        internal static object CreateImplicitGrid()
+        {
+            Grid grid = new();
+            return grid;
+        }
+
+        internal static object CreateQualifiedButton()
+        {
+            return new global::System.Windows.Controls.Button();
+        }
+
+        internal static object CreateAliasedBorder()
+        {
+            return new BusinessBorder();
+        }
     }
 
     private sealed record BuiltInContract(
