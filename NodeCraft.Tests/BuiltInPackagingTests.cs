@@ -174,17 +174,14 @@ internal static partial class Program
                     && !source.Contains("BuiltInPlugin.Register", StringComparison.Ordinal));
         });
 
-        await RunAsync("BuiltIn validation rejects unsafe roots without filesystem mutation", async () =>
+        await RunAsync("BuiltIn validation rejects non-stageable raw roots explicitly", async () =>
         {
             using var root = new TemporaryDirectory("nodecraft-builtin-root-validation-");
-            var sentinelPath = Path.Combine(root.Path, "sentinel.txt");
-            File.WriteAllText(sentinelPath, "keep");
             var projectPath = FindRepositoryFile(
                 "NodeCraft.BuiltIn",
                 "NodeCraft.BuiltIn.csproj");
             var projectDirectory = Path.GetDirectoryName(projectPath)
                 ?? throw new InvalidOperationException("BuiltIn project directory was not found.");
-            var repositoryRoot = FindRepositoryRoot();
             var fileSystemRoot = Path.GetPathRoot(root.Path)
                 ?? throw new InvalidOperationException("Temporary directory root was not found.");
             var driveRelativeRoot = fileSystemRoot.TrimEnd(
@@ -210,6 +207,27 @@ internal static partial class Program
                 new PackageRootValidationCase(
                     "apostrophe",
                     Path.Combine(root.Path, "package's")),
+                new PackageRootValidationCase(
+                    "trailing dot component",
+                    Path.Combine(root.Path, "package.")),
+                new PackageRootValidationCase(
+                    "trailing space component",
+                    Path.Combine(root.Path, "package ")),
+                new PackageRootValidationCase(
+                    "Win32 extended device namespace",
+                    @"\\?\" + Path.Combine(root.Path, "package")),
+                new PackageRootValidationCase(
+                    "Win32 device namespace",
+                    @"\\.\" + Path.Combine(root.Path, "package")),
+                new PackageRootValidationCase(
+                    "NT device namespace",
+                    @"\??\" + Path.Combine(root.Path, "package")),
+                new PackageRootValidationCase(
+                    "slash-equivalent device namespace",
+                    "//?/" + Path.Combine(root.Path, "package").Replace('\\', '/')),
+                new PackageRootValidationCase(
+                    "extended UNC device namespace",
+                    @"\\?\UNC\server\share\package"),
             };
 
             foreach (var testCase in cases)
@@ -233,19 +251,141 @@ internal static partial class Program
                 var result = await RunDotNetAsync(arguments.ToArray()).ConfigureAwait(false);
                 var output = result.StandardOutput + Environment.NewLine + result.StandardError;
                 if (result.ExitCode == 0
-                    || !output.Contains("Built-in plugin package root", StringComparison.OrdinalIgnoreCase)
-                    || !File.Exists(sentinelPath)
-                    || !string.Equals(File.ReadAllText(sentinelPath), "keep", StringComparison.Ordinal))
+                    || !output.Contains("Built-in plugin package root", StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
-                        "Unsafe root case '" + testCase.Name + "' was not rejected safely. " + output);
+                        "Non-stageable root case '" + testCase.Name + "' was not rejected explicitly. " + output);
                 }
             }
 
-            return Directory
-                .EnumerateFileSystemEntries(root.Path)
-                .Select(Path.GetFileName)
-                .SequenceEqual(new[] { "sentinel.txt" }, StringComparer.OrdinalIgnoreCase);
+            return true;
+        });
+
+        await RunAsync("BuiltIn synthetic staging rejects path aliases before package mutation", async () =>
+        {
+            using var root = new TemporaryDirectory("nodecraft-builtin-synthetic-stage-");
+            var targetSource = FindRepositoryFile(
+                "NodeCraft.BuiltIn",
+                "Build",
+                "BuiltInPackaging.targets");
+
+            var rejectionCases = new[]
+            {
+                new SyntheticStageRejectionCase(
+                    "project directory",
+                    project => project.ProjectDirectory,
+                    project => project.ProjectDirectory),
+                new SyntheticStageRejectionCase(
+                    "repo-like ancestor",
+                    project => project.RepositoryDirectory,
+                    project => project.RepositoryDirectory),
+                new SyntheticStageRejectionCase(
+                    "TargetDir",
+                    project => project.TargetDirectory,
+                    project => project.TargetDirectory),
+                new SyntheticStageRejectionCase(
+                    "strict OutputPath ancestor",
+                    project => project.OutputAncestorDirectory,
+                    project => project.OutputAncestorDirectory),
+                new SyntheticStageRejectionCase(
+                    "case and trailing-separator alias",
+                    project => project.ProjectDirectory.ToUpperInvariant()
+                        + Path.DirectorySeparatorChar,
+                    project => project.ProjectDirectory),
+                new SyntheticStageRejectionCase(
+                    "extended device alias",
+                    project => @"\\?\" + project.ProjectDirectory,
+                    project => project.ProjectDirectory),
+                new SyntheticStageRejectionCase(
+                    "DOS short-name-like component",
+                    project => Path.Combine(project.CaseDirectory, "package~1"),
+                    project => Path.Combine(project.CaseDirectory, "package~1")),
+                new SyntheticStageRejectionCase(
+                    "reparse-point package root",
+                    project => CreateSyntheticPackageLink(project),
+                    project => project.LinkedPackageTarget),
+                new SyntheticStageRejectionCase(
+                    "existing package with an unexpected entry",
+                    project => Path.Combine(project.CaseDirectory, "package-with-extra"),
+                    project => Path.Combine(project.CaseDirectory, "package-with-extra")),
+            };
+
+            foreach (var testCase in rejectionCases)
+            {
+                var caseDirectory = Path.Combine(
+                    root.Path,
+                    "reject-" + Guid.NewGuid().ToString("N"));
+                var project = CreateSyntheticBuiltInProject(caseDirectory, targetSource);
+                var rawCandidate = testCase.CreateCandidate(project);
+                var actualCandidate = testCase.GetActualCandidate(project);
+                var candidatePath = NormalizeSyntheticCandidateForGuard(rawCandidate);
+                var isCandidateReparsePoint = Directory.Exists(candidatePath)
+                    && (File.GetAttributes(candidatePath) & FileAttributes.ReparsePoint) != 0;
+                try
+                {
+                    Directory.CreateDirectory(actualCandidate);
+                    var sentinelPath = Path.Combine(actualCandidate, "sentinel.txt");
+                    File.WriteAllText(sentinelPath, "keep");
+
+                    EnsureSyntheticStageScope(
+                        root.Path,
+                        project,
+                        rawCandidate,
+                        actualCandidate,
+                        sentinelPath);
+                    var result = await RunSyntheticStageAsync(project, rawCandidate).ConfigureAwait(false);
+                    var output = result.StandardOutput + Environment.NewLine + result.StandardError;
+                    if (result.ExitCode == 0
+                        || !output.Contains("Built-in plugin package root", StringComparison.OrdinalIgnoreCase)
+                        || !File.Exists(sentinelPath)
+                        || !string.Equals(File.ReadAllText(sentinelPath), "keep", StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            "Synthetic rejection case '" + testCase.Name
+                            + "' did not fail before package mutation. " + output);
+                    }
+                }
+                finally
+                {
+                    if (isCandidateReparsePoint && Directory.Exists(candidatePath))
+                    {
+                        Directory.Delete(candidatePath);
+                    }
+                }
+            }
+
+            var positiveCaseDirectory = Path.Combine(
+                root.Path,
+                "positive-" + Guid.NewGuid().ToString("N"));
+            var positiveProject = CreateSyntheticBuiltInProject(
+                positiveCaseDirectory,
+                targetSource);
+            var prefixSiblingRoot = Path.Combine(
+                positiveCaseDirectory,
+                "repo-sibling",
+                "NodeCraft.BuiltIn");
+            var prefixSiblingSentinel = Path.Combine(
+                positiveCaseDirectory,
+                "repo-sibling-sentinel.txt");
+            File.WriteAllText(prefixSiblingSentinel, "keep");
+            EnsureSyntheticStageScope(
+                root.Path,
+                positiveProject,
+                prefixSiblingRoot,
+                prefixSiblingRoot,
+                Path.Combine(prefixSiblingRoot, "plugin.json"),
+                requireSentinel: false);
+
+            var positiveResult = await RunSyntheticStageAsync(
+                positiveProject,
+                prefixSiblingRoot).ConfigureAwait(false);
+            EnsureProcessSucceeded(positiveResult, "Synthetic prefix-sibling staging");
+            return IsExactBuiltInPackage(prefixSiblingRoot)
+                && File.Exists(prefixSiblingSentinel)
+                && string.Equals(
+                    File.ReadAllText(prefixSiblingSentinel),
+                    "keep",
+                    StringComparison.Ordinal);
         });
 
         await RunAsync("BuiltIn explicit staging creates only the minimal package and preserves siblings", async () =>
@@ -257,7 +397,8 @@ internal static partial class Program
             var sentinelPath = Path.Combine(siblingRoot, "sentinel.txt");
             Directory.CreateDirectory(packageRoot);
             Directory.CreateDirectory(siblingRoot);
-            File.WriteAllText(Path.Combine(packageRoot, "stale.txt"), "stale");
+            File.WriteAllText(Path.Combine(packageRoot, "plugin.json"), "stale manifest");
+            File.WriteAllText(Path.Combine(packageRoot, "NodeCraft.BuiltIn.dll"), "stale assembly");
             File.WriteAllText(sentinelPath, "keep");
 
             var result = await RunDotNetAsync(
@@ -519,6 +660,209 @@ internal static partial class Program
         }
     }
 
+    private static SyntheticBuiltInProject CreateSyntheticBuiltInProject(
+        string caseDirectory,
+        string targetSource)
+    {
+        var repositoryDirectory = Path.Combine(caseDirectory, "repo");
+        var projectDirectory = Path.Combine(repositoryDirectory, "project");
+        var buildDirectory = Path.Combine(projectDirectory, "Build");
+        var targetDirectory = Path.Combine(projectDirectory, "bin")
+            + Path.DirectorySeparatorChar;
+        var outputAncestorDirectory = Path.Combine(projectDirectory, "out");
+        var outputDirectory = Path.Combine(outputAncestorDirectory, "child")
+            + Path.DirectorySeparatorChar;
+        var projectPath = Path.Combine(projectDirectory, "SyntheticBuiltIn.proj");
+        var importedTargetPath = Path.Combine(buildDirectory, "BuiltInPackaging.targets");
+
+        Directory.CreateDirectory(buildDirectory);
+        File.Copy(targetSource, importedTargetPath);
+        File.WriteAllText(Path.Combine(projectDirectory, "plugin.json"), "{}");
+        new XDocument(
+            new XElement(
+                "Project",
+                new XAttribute("DefaultTargets", "Build"),
+                new XElement(
+                    "PropertyGroup",
+                    new XElement("TargetDir", targetDirectory),
+                    new XElement("OutputPath", outputDirectory),
+                    new XElement("TargetPath", "$(TargetDir)NodeCraft.BuiltIn.dll")),
+                new XElement(
+                    "Target",
+                    new XAttribute("Name", "Build"),
+                    new XElement(
+                        "MakeDir",
+                        new XAttribute("Directories", "$(TargetDir)")),
+                    new XElement(
+                        "WriteLinesToFile",
+                        new XAttribute("File", "$(TargetPath)"),
+                        new XAttribute("Lines", "synthetic built-in assembly"),
+                        new XAttribute("Overwrite", "true"))),
+                new XElement(
+                    "Import",
+                    new XAttribute("Project", "Build\\BuiltInPackaging.targets"))))
+            .Save(projectPath);
+
+        return new SyntheticBuiltInProject(
+            caseDirectory,
+            repositoryDirectory,
+            projectDirectory,
+            projectPath,
+            importedTargetPath,
+            targetDirectory,
+            outputAncestorDirectory,
+            Path.Combine(caseDirectory, "linked-package-target"));
+    }
+
+    private static string CreateSyntheticPackageLink(SyntheticBuiltInProject project)
+    {
+        Directory.CreateDirectory(project.LinkedPackageTarget);
+        var linkPath = Path.Combine(project.CaseDirectory, "linked-package");
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, project.LinkedPackageTarget);
+        }
+        catch (IOException exception) when (exception.Message.Contains(
+            "privilege",
+            StringComparison.OrdinalIgnoreCase))
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("/d");
+            startInfo.ArgumentList.Add("/c");
+            startInfo.ArgumentList.Add("mklink");
+            startInfo.ArgumentList.Add("/J");
+            startInfo.ArgumentList.Add(linkPath);
+            startInfo.ArgumentList.Add(project.LinkedPackageTarget);
+            using var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Failed to start junction creation.");
+            var standardOutput = process.StandardOutput.ReadToEnd();
+            var standardError = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    "Failed to create synthetic package junction. "
+                    + standardOutput
+                    + Environment.NewLine
+                    + standardError,
+                    exception);
+            }
+        }
+
+        return linkPath;
+    }
+
+    private static void EnsureSyntheticStageScope(
+        string uniqueRoot,
+        SyntheticBuiltInProject project,
+        string rawCandidate,
+        string expectedActualCandidate,
+        string sentinelPath,
+        bool requireSentinel = true)
+    {
+        var temporaryRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+        var ownedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(uniqueRoot));
+        if (!Path.GetFileName(ownedRoot).StartsWith(
+                "nodecraft-builtin-synthetic-stage-",
+                StringComparison.OrdinalIgnoreCase)
+            || !IsStrictDescendant(temporaryRoot, ownedRoot))
+        {
+            throw new InvalidOperationException(
+                "Synthetic staging root is not an owned unique temporary directory: " + ownedRoot);
+        }
+
+        var candidatePath = NormalizeSyntheticCandidateForGuard(rawCandidate);
+        var resolvedCandidate = candidatePath;
+        if (Directory.Exists(candidatePath))
+        {
+            var candidateInfo = new DirectoryInfo(candidatePath);
+            if ((candidateInfo.Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                resolvedCandidate = candidateInfo.ResolveLinkTarget(true)?.FullName
+                    ?? throw new InvalidOperationException(
+                        "Synthetic package link could not be resolved: " + candidatePath);
+            }
+        }
+
+        var expectedCandidate = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(expectedActualCandidate));
+        resolvedCandidate = Path.TrimEndingDirectorySeparator(Path.GetFullPath(resolvedCandidate));
+        var projectPath = Path.GetFullPath(project.ProjectPath);
+        var importedTargetPath = Path.GetFullPath(project.ImportedTargetPath);
+        var sentinelFullPath = Path.GetFullPath(sentinelPath);
+        foreach (var path in new[]
+                 {
+                     projectPath,
+                     importedTargetPath,
+                     candidatePath,
+                     resolvedCandidate,
+                     expectedCandidate,
+                     sentinelFullPath,
+                 })
+        {
+            if (!IsStrictDescendant(ownedRoot, path))
+            {
+                throw new InvalidOperationException(
+                    "Refusing synthetic Stage outside its owned temporary root: " + path);
+            }
+        }
+
+        if (!string.Equals(
+                resolvedCandidate,
+                expectedCandidate,
+                StringComparison.OrdinalIgnoreCase)
+            || !IsStrictDescendant(expectedCandidate, sentinelFullPath)
+            || (requireSentinel && !File.Exists(sentinelFullPath)))
+        {
+            throw new InvalidOperationException(
+                "Synthetic Stage candidate or sentinel did not resolve to the expected owned path.");
+        }
+    }
+
+    private static string NormalizeSyntheticCandidateForGuard(string rawCandidate)
+    {
+        var normalized = rawCandidate.Replace('/', '\\');
+        if (normalized.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = @"\\" + normalized.Substring(8);
+        }
+        else if (normalized.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith(@"\\.\", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith(@"\??\", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized.Substring(4);
+        }
+
+        return Path.TrimEndingDirectorySeparator(Path.GetFullPath(normalized));
+    }
+
+    private static bool IsStrictDescendant(string ancestor, string descendant)
+    {
+        var canonicalAncestor = Path.TrimEndingDirectorySeparator(Path.GetFullPath(ancestor));
+        var canonicalDescendant = Path.TrimEndingDirectorySeparator(Path.GetFullPath(descendant));
+        return canonicalDescendant.StartsWith(
+            canonicalAncestor + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static Task<ProcessResult> RunSyntheticStageAsync(
+        SyntheticBuiltInProject project,
+        string packageRoot)
+    {
+        return RunDotNetAsync(
+            "msbuild",
+            project.ProjectPath,
+            "-t:StageBuiltInPlugin",
+            "-p:BuiltInPackageRoot=" + EscapeMsBuildCommandLineProperty(packageRoot));
+    }
+
     private static string EscapeMsBuildCommandLineProperty(string value)
     {
         return value
@@ -598,5 +942,63 @@ internal static partial class Program
         public string PackageRoot { get; }
 
         public string? OutputPath { get; }
+    }
+
+    private sealed class SyntheticStageRejectionCase
+    {
+        public SyntheticStageRejectionCase(
+            string name,
+            Func<SyntheticBuiltInProject, string> createCandidate,
+            Func<SyntheticBuiltInProject, string> getActualCandidate)
+        {
+            Name = name;
+            CreateCandidate = createCandidate;
+            GetActualCandidate = getActualCandidate;
+        }
+
+        public string Name { get; }
+
+        public Func<SyntheticBuiltInProject, string> CreateCandidate { get; }
+
+        public Func<SyntheticBuiltInProject, string> GetActualCandidate { get; }
+    }
+
+    private sealed class SyntheticBuiltInProject
+    {
+        public SyntheticBuiltInProject(
+            string caseDirectory,
+            string repositoryDirectory,
+            string projectDirectory,
+            string projectPath,
+            string importedTargetPath,
+            string targetDirectory,
+            string outputAncestorDirectory,
+            string linkedPackageTarget)
+        {
+            CaseDirectory = caseDirectory;
+            RepositoryDirectory = repositoryDirectory;
+            ProjectDirectory = projectDirectory;
+            ProjectPath = projectPath;
+            ImportedTargetPath = importedTargetPath;
+            TargetDirectory = targetDirectory;
+            OutputAncestorDirectory = outputAncestorDirectory;
+            LinkedPackageTarget = linkedPackageTarget;
+        }
+
+        public string CaseDirectory { get; }
+
+        public string RepositoryDirectory { get; }
+
+        public string ProjectDirectory { get; }
+
+        public string ProjectPath { get; }
+
+        public string ImportedTargetPath { get; }
+
+        public string TargetDirectory { get; }
+
+        public string OutputAncestorDirectory { get; }
+
+        public string LinkedPackageTarget { get; }
     }
 }

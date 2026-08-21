@@ -29,6 +29,19 @@
             return false;
         }
 
+        Func<string, bool> isDeviceNamespace = path =>
+        {
+            var normalized = path.Replace('/', '\\');
+            return normalized.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase)
+                || normalized.StartsWith(@"\\.\", StringComparison.OrdinalIgnoreCase)
+                || normalized.StartsWith(@"\??\", StringComparison.OrdinalIgnoreCase);
+        };
+        if (isDeviceNamespace(input))
+        {
+            Log.LogError("Built-in plugin package root must not use a Win32 or NT device namespace.");
+            return false;
+        }
+
         Func<char, bool> isDirectorySeparator = value =>
             value == Path.DirectorySeparatorChar
             || value == Path.AltDirectorySeparatorChar;
@@ -70,6 +83,19 @@
                 Log.LogError("Built-in plugin package root must not contain traversal segments.");
                 return false;
             }
+
+            if (segment.IndexOf('~') >= 0)
+            {
+                Log.LogError("Built-in plugin package root must not contain DOS short-name-like components.");
+                return false;
+            }
+
+            if (segment.EndsWith(".", StringComparison.Ordinal)
+                || segment.EndsWith(" ", StringComparison.Ordinal))
+            {
+                Log.LogError("Built-in plugin package root components must not end in a dot or space.");
+                return false;
+            }
         }
 
         string canonicalPackageRoot;
@@ -80,6 +106,12 @@
         catch (Exception exception)
         {
             Log.LogError("Built-in plugin package root is invalid: " + exception.Message);
+            return false;
+        }
+
+        if (isDeviceNamespace(canonicalPackageRoot))
+        {
+            Log.LogError("Built-in plugin package root canonical path must not use a Win32 or NT device namespace.");
             return false;
         }
 
@@ -147,6 +179,64 @@
                 Log.LogError("Built-in plugin package root must not be an output directory or one of its ancestors.");
                 return false;
             }
+        }
+
+        try
+        {
+            var existingPath = Path.GetPathRoot(canonicalPackageRoot) ?? string.Empty;
+            var remainingPath = canonicalPackageRoot.Substring(existingPath.Length);
+            var existingSegments = remainingPath.Split(
+                new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                StringSplitOptions.RemoveEmptyEntries);
+            foreach (var segment in existingSegments)
+            {
+                existingPath = Path.Combine(existingPath, segment);
+                if (!Directory.Exists(existingPath) && !File.Exists(existingPath))
+                {
+                    break;
+                }
+
+                if ((File.GetAttributes(existingPath) & FileAttributes.ReparsePoint) != 0)
+                {
+                    Log.LogError("Built-in plugin package root must not traverse a reparse point.");
+                    return false;
+                }
+            }
+
+            if (File.Exists(canonicalPackageRoot))
+            {
+                Log.LogError("Built-in plugin package root must be a directory, not a file.");
+                return false;
+            }
+
+            if (Directory.Exists(canonicalPackageRoot))
+            {
+                foreach (var entry in Directory.GetFileSystemEntries(canonicalPackageRoot))
+                {
+                    var entryName = Path.GetFileName(entry);
+                    var isAllowedFile = File.Exists(entry)
+                        && (string.Equals(
+                                entryName,
+                                "plugin.json",
+                                StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(
+                                entryName,
+                                "NodeCraft.BuiltIn.dll",
+                                StringComparison.OrdinalIgnoreCase));
+                    if (!isAllowedFile)
+                    {
+                        Log.LogError(
+                            "Built-in plugin package root contains an unexpected entry and will not be replaced: "
+                            + entryName);
+                        return false;
+                    }
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            Log.LogError("Built-in plugin package root could not be inspected safely: " + exception.Message);
+            return false;
         }
 
         CanonicalPackageRoot = canonicalPackageRoot;
