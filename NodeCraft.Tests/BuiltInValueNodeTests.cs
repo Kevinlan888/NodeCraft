@@ -23,6 +23,16 @@ internal static partial class Program
             var context = new PluginRegistrationContext(NullLogger.Instance, new Version(1, 0));
             plugin.Register(context);
             var registrations = context.Registrations;
+            var expectedTypeKeys = new[]
+            {
+                "nodecraft.builtin.string-value",
+                "nodecraft.builtin.append-text",
+                "nodecraft.builtin.text-preview",
+                "nodecraft.builtin.json-serialize",
+                "nodecraft.builtin.integer-value",
+                "nodecraft.builtin.float-value",
+                "nodecraft.builtin.boolean-value",
+            };
             var expected = new[]
             {
                 new BuiltInValueContract(
@@ -52,6 +62,8 @@ internal static partial class Program
             };
 
             return registrations.Count == 7
+                && registrations.Select(item => item.Definition.TypeKey)
+                    .SequenceEqual(expectedTypeKeys, StringComparer.Ordinal)
                 && registrations.Take(4).All(item => item.Definition.Category == "Preview")
                 && registrations.Skip(4).Select(item => item.Definition.TypeKey)
                     .SequenceEqual(expected.Select(item => item.TypeKey), StringComparer.Ordinal)
@@ -161,56 +173,91 @@ internal static partial class Program
 
         Run("BuiltIn Value integer editor accepts invariant integers and rejects invalid text", () => RunOnSta(() =>
         {
-            var registrations = CreateBuiltInValueRegistry(out var registry);
-            var registration = registrations.Single(item =>
-                item.Definition.TypeKey == "nodecraft.builtin.integer-value");
-            var node = new IntegerValueNodeModel();
-            var canvas = CreateHeadlessCanvas();
-            var graphChanges = 0;
-            canvas.GraphChanged += (_, _) => graphChanges++;
-            var view = (FrameworkElement)registry.BuildNodeContent(canvas, node);
-            var editor = FindLogicalDescendants<TextBox>(view).Single();
+            var originalCulture = CultureInfo.CurrentCulture;
+            var originalUiCulture = CultureInfo.CurrentUICulture;
+            try
+            {
+                var testCulture = CultureInfo.GetCultureInfo("fr-FR");
+                CultureInfo.CurrentCulture = testCulture;
+                CultureInfo.CurrentUICulture = testCulture;
+                var cultureApplied = CultureInfo.CurrentCulture.Name == "fr-FR"
+                    && CultureInfo.CurrentUICulture.Name == "fr-FR";
+                var registrations = CreateBuiltInValueRegistry(out var registry);
+                var registration = registrations.Single(item =>
+                    item.Definition.TypeKey == "nodecraft.builtin.integer-value");
+                var node = new IntegerValueNodeModel();
+                var canvas = CreateHeadlessCanvas();
+                var graphChanges = 0;
+                canvas.GraphChanged += (_, _) => graphChanges++;
+                var view = (FrameworkElement)registry.BuildNodeContent(canvas, node);
+                var editor = FindLogicalDescendants<TextBox>(view).Single();
 
-            var initialText = editor.Text;
-            editor.Text = "17";
-            var firstChange = node.IntegerValue == 17 && graphChanges == 1;
-            editor.Text = "-2";
-            var secondChange = node.IntegerValue == -2 && graphChanges == 2;
-            editor.Text = "NaN";
-            editor.Text = "not an integer";
+                var initialText = editor.Text;
+                editor.Text = "17";
+                var firstChange = node.IntegerValue == 17 && graphChanges == 1;
+                editor.Text = "-2";
+                var secondChange = node.IntegerValue == -2 && graphChanges == 2;
+                editor.Text = "NaN";
+                editor.Text = "not an integer";
 
-            return initialText == "42"
-                && firstChange
-                && secondChange
-                && node.IntegerValue == -2
-                && graphChanges == 2
-                && registration.ContentFactory != null;
+                return cultureApplied
+                    && initialText == "42"
+                    && firstChange
+                    && secondChange
+                    && node.IntegerValue == -2
+                    && graphChanges == 2
+                    && registration.ContentFactory != null;
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = originalCulture;
+                CultureInfo.CurrentUICulture = originalUiCulture;
+            }
         }));
 
         Run("BuiltIn Value float editor accepts invariant finite values and rejects non-finite text", () => RunOnSta(() =>
         {
-            var registrations = CreateBuiltInValueRegistry(out var registry);
-            var registration = registrations.Single(item =>
-                item.Definition.TypeKey == "nodecraft.builtin.float-value");
-            var node = new FloatValueNodeModel();
-            var canvas = CreateHeadlessCanvas();
-            var graphChanges = 0;
-            canvas.GraphChanged += (_, _) => graphChanges++;
-            var view = (FrameworkElement)registry.BuildNodeContent(canvas, node);
-            var editor = FindLogicalDescendants<TextBox>(view).Single();
+            var originalCulture = CultureInfo.CurrentCulture;
+            var originalUiCulture = CultureInfo.CurrentUICulture;
+            try
+            {
+                var testCulture = CultureInfo.GetCultureInfo("fr-FR");
+                CultureInfo.CurrentCulture = testCulture;
+                CultureInfo.CurrentUICulture = testCulture;
+                var cultureApplied = CultureInfo.CurrentCulture.Name == "fr-FR"
+                    && CultureInfo.CurrentUICulture.Name == "fr-FR";
+                var registrations = CreateBuiltInValueRegistry(out var registry);
+                var registration = registrations.Single(item =>
+                    item.Definition.TypeKey == "nodecraft.builtin.float-value");
+                var node = new FloatValueNodeModel();
+                var canvas = CreateHeadlessCanvas();
+                var graphChanges = 0;
+                canvas.GraphChanged += (_, _) => graphChanges++;
+                var view = (FrameworkElement)registry.BuildNodeContent(canvas, node);
+                var editor = FindLogicalDescendants<TextBox>(view).Single();
 
-            var initialText = editor.Text;
-            editor.Text = "3.5";
-            var validChange = node.FloatValue.Equals(3.5d) && graphChanges == 1;
-            editor.Text = "NaN";
-            editor.Text = "Infinity";
-            editor.Text = "not a float";
+                var initialText = editor.Text;
+                editor.Text = "3.5";
+                var validChange = node.FloatValue.Equals(3.5d) && graphChanges == 1;
+                editor.Text = "3,5";
+                var commaRejected = node.FloatValue.Equals(3.5d) && graphChanges == 1;
+                editor.Text = "NaN";
+                editor.Text = "Infinity";
+                editor.Text = "not a float";
 
-            return initialText == "3.140"
-                && validChange
-                && node.FloatValue.Equals(3.5d)
-                && graphChanges == 1
-                && registration.ContentFactory != null;
+                return cultureApplied
+                    && initialText == "3.140"
+                    && validChange
+                    && commaRejected
+                    && node.FloatValue.Equals(3.5d)
+                    && graphChanges == 1
+                    && registration.ContentFactory != null;
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = originalCulture;
+                CultureInfo.CurrentUICulture = originalUiCulture;
+            }
         }));
 
         Run("BuiltIn Value boolean editor synchronizes True False content and notifies once per toggle", () => RunOnSta(() =>
