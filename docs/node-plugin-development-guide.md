@@ -219,7 +219,7 @@ Company.Example.Plugin/
 - `Private="false"` 防止把 `NodeCraft.Flow.dll` 当作插件私有 DLL 复制到输出目录；
 - `UseWPF` 只有使用 WPF 编辑器或 WPF API 时才需要，但 NodeCraft 的插件项目通常按当前示例启用；
 - 当前库项目使用 C# 9 和关闭 nullable，测试项目可以单独启用 nullable；
-- 使用自定义 XAML 时还要从默认 `Page` 项中移除它，并作为 EmbeddedResource 包含，见第 9 节；
+- 使用自定义 XAML 时保持 WPF 默认 `Page` 编译（BAML），在根元素声明 `x:Class`，见第 10 节；
 - 不要把 `CommonControls.WPF.dll`、`NodeCraft.Flow.dll` 或 WPF 框架 DLL 放到插件 `lib/`。
 
 ## 4. 第一个完整节点：Hello Value
@@ -1572,76 +1572,24 @@ public static FrameworkElement CreateContent(FlowCanvas canvas, NodeModel node)
 }
 ```
 
-### 10.2 XAML 的嵌入方式
+### 10.2 XAML 的编译方式
 
-NodeCraft 当前的插件编辑器采用“代码后置 + embedded XAML”。项目文件需要把该 XAML 从 WPF 默认 `Page` 项移除，再以 `EmbeddedResource` 加入：
+NodeCraft 当前的插件编辑器采用标准 WPF “`x:Class` + Page/BAML + `InitializeComponent`”模式。XAML 保持 WPF 默认 `Page` 编译（BAML），不需要从 `Page` 项移除，也不需要作为 `EmbeddedResource` 嵌入：
 
 ```xml
 <ItemGroup>
-  <Page Remove="Views\HelloValueEditor.xaml" />
-  <EmbeddedResource Include="Views\HelloValueEditor.xaml" />
   <None Update="plugin.json">
     <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
   </None>
 </ItemGroup>
 ```
 
-编辑器代码从插件自己的程序集读取资源：
-
-```csharp
-private static FrameworkElement LoadEditorRoot()
-{
-    var assembly = typeof(HelloValueEditor).Assembly;
-    const string resourceName =
-        "Company.Example.Plugin.Views.HelloValueEditor.xaml";
-
-    using (var stream = assembly.GetManifestResourceStream(resourceName))
-    {
-        if (stream == null)
-        {
-            throw new InvalidOperationException(
-                $"Embedded editor resource '{resourceName}' was not found.");
-        }
-
-        using (var reader = new StreamReader(stream))
-        {
-            return (FrameworkElement)System.Windows.Markup.XamlReader.Parse(
-                reader.ReadToEnd());
-        }
-    }
-}
-```
-
-`resourceName` 不是磁盘路径。它通常由 `RootNamespace`、文件夹和文件名拼成，但如果项目设置了 `LogicalName` 或自定义默认命名空间，实际名称会不同。资源找不到时，按以下顺序排查：
-
-1. 用 `assembly.GetManifestResourceNames()` 打印实际资源名；
-2. 检查 `.csproj` 是否仍然把 XAML 当作 `Page`；
-3. 检查 XAML 路径、大小写和 `RootNamespace`；
-4. 确认编辑器类所在的程序集就是包含资源的程序集，而不是宿主程序集；
-5. 检查构建输出是否来自刚刚构建的插件目录。
-
-当前示例还会把解析出的根节点内容取出，再设到编辑器自身的 `Content`，并为需要从代码访问的控件注册名称。这样做可以避免多包一层 UserControl 后出现模板层级和名称作用域不一致：
-
-```csharp
-var root = (UserControl)LoadEditorRoot();
-var parsedContent = root.Content;
-root.Content = null;
-Content = parsedContent;
-
-_valueEditor = FindName("ValueEditor") as TextBox;
-if (_valueEditor == null)
-{
-    throw new InvalidOperationException(
-        "The editor XAML must define a TextBox named ValueEditor.");
-}
-```
-
-如果编辑器直接把解析出的 `UserControl` 作为 `Content`，就不需要搬运 `root.Content`；但必须保持一种层级策略，并对 `FindName` 的名称作用域进行测试。不要只依赖 XAML 文件能编译来判断编辑器可用。
-
-XAML 只放编辑器视觉和绑定所需控件，示例：
+XAML 根元素声明 `x:Class`（指向 code-behind 的类）和可选的 `x:ClassModifier="internal"`（保持插件内部可见性）。WPF 编译时会生成一个 `partial` 类：带 `InitializeComponent()` 方法，并为每个 `x:Name` 控件生成类型化字段：
 
 ```xml
-<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<UserControl x:Class="Company.Example.Plugin.Views.HelloValueEditor"
+             x:ClassModifier="internal"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="{DynamicResource colorSubtleBackground}">
   <Border x:Name="EditorCard"
@@ -1653,7 +1601,29 @@ XAML 只放编辑器视觉和绑定所需控件，示例：
 </UserControl>
 ```
 
-使用 `DynamicResource` 读取宿主主题键。不要在插件里复制一套固定颜色，也不要把宿主主题对象缓存到长期运行的 Executor 中。
+code-behind 类必须与 XAML 的 `x:Class` 同名并声明为 `partial`。构造函数先调用 `InitializeComponent()`，再从生成字段直接赋值到私有字段——不再需要 `XamlReader.Parse`、`GetManifestResourceStream` 或按字符串 `FindName`：
+
+```csharp
+internal sealed partial class HelloValueEditor : UserControl
+{
+    private readonly HelloValueNodeModel _node;
+    private readonly TextBox _valueEditor;
+
+    private HelloValueEditor(HelloValueNodeModel node)
+    {
+        _node = node ?? throw new ArgumentNullException(nameof(node));
+        InitializeComponent();
+        _valueEditor = ValueEditor;
+        _valueEditor.Text = _node.ValueText ?? string.Empty;
+    }
+}
+```
+
+生成字段与手写私有字段同名时要注意：`x:Name="ValueEditor"` 生成一个 `internal` 的 `ValueEditor` 字段，手写字段通常用下划线前缀（`_valueEditor`）避免冲突。`InitializeComponent` 通过 `Application.LoadComponent(this, ...)` 加载同一程序集的 BAML；插件视图在隔离 `AssemblyLoadContext` 中加载时，这一步同样有效（BAML 编译进 `NodeCraft.<X>.g.resources` 资源）。
+
+排查 BAML 加载问题时，从 `assembly.GetManifestResourceNames()` 确认只有单个 `<AssemblyName>.g.resources`，并用 `ResourceReader` 枚举其中的 `views/<name>.baml` 键。
+
+XAML 只放编辑器视觉和绑定所需控件。使用 `DynamicResource` 读取宿主主题键。不要在插件里复制一套固定颜色，也不要把宿主主题对象缓存到长期运行的 Executor 中。
 
 ### 10.3 控件与 NodeModel 同步
 
@@ -2139,7 +2109,7 @@ Session 测试使用可控的假资源，而不是依赖真实相机或远端设
 | `stopOnSendFailure` 看起来不生效 | 错误发生在 encode 还是 send | `NodeCraft.Communication/Nodes/TcpClientSendExecutor.cs`、`TcpPayloadEncoder.cs` | 分别注入编码异常和 `SendAsync` 异常 | 当前策略只包围发送；编码/null/自定义 `ToString` 异常在 try 外 |
 | 编辑器刚创建就产生图变更 | 构造器期间的通知次数 | `Views/*Editor.xaml.cs` | 订阅 GraphChanged 后创建编辑器，断言初始为 0 | 没有初始化标志，或给控件赋初值后立即触发事件 |
 | 输入数字后模型被清零 | 控件文本、模型旧值和解析结果 | `TcpClientSendEditor.xaml.cs` | 输入空串、负数、超范围值，检查模型保持旧值 | 先写模型再校验，或使用当前区域性而不是不变文化 |
-| 编辑器资源找不到 | `GetManifestResourceNames()` 输出 | 对应插件 `Views/*Editor.xaml.cs` 和 `.csproj` | 检查 `Page Remove`、`EmbeddedResource` 和资源全名 | XAML 未嵌入、默认命名空间不一致、加载了旧 DLL |
+| 编辑器资源找不到 | `GetManifestResourceNames()` 输出 | 对应插件 `Views/*Editor.xaml` 和 `.csproj` | 检查是否只有单个 `<AssemblyName>.g.resources`，并用 `ResourceReader` 枚举 `views/<name>.baml` | XAML 仍是 `EmbeddedResource` 而非 `Page`、`x:Class` 命名空间不匹配、加载了旧 DLL |
 | 开发目录能加载，最终包失败 | 包树和 load context 探测日志 | `.csproj` staging、`PluginLoader.cs` | 从全新临时目录冷加载，不依赖 IDE 输出 | 私有 DLL 未复制、共享 DLL 被错误复制、manifest 路径错误 |
 | 执行结果刷新后控件状态丢失 | `ExecutionResultHandler` 和 refresh flag | `FlowNodeRegistry.cs`、`FlowPage.xaml.cs` | 设置 `RefreshContentAfterExecution=false` 做对照 | 结果处理后重建编辑器，焦点/图片/本地状态被清掉 |
 
@@ -2373,7 +2343,7 @@ public sealed class ReplaceEditor : UserControl
     {
         _canvas = canvas;
         _node = node;
-        // 在此加载 embedded XAML 并查找控件。
+        // 在此调用 InitializeComponent() 并从生成字段赋值控件。
         _initializing = false;
     }
 

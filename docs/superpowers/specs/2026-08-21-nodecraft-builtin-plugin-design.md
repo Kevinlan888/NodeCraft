@@ -329,6 +329,6 @@ git diff --check
 - 把内置节点继续拆成多个插件。
 - 兼容或自动迁移旧流程 XML。
 - XAML 热重载、运行时外部 XAML 覆盖或无需编译的主题编辑。
-- 修改 Vision 插件现有的 XAML 加载机制。
+- 修改 Vision 插件现有的 XAML 加载机制（已由后续迁移取代：`NodeCraft.Vision`/`NodeCraft.BuiltIn`/`NodeCraft.Communication` 视图全部改为标准 `x:Class` + Page/BAML + `InitializeComponent`）。
 - 重新设计节点计算语义、端口数据类型或执行器生命周期。
 - 新增插件安装、启停、卸载或市场 UI。
