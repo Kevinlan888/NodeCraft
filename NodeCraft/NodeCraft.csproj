@@ -24,6 +24,9 @@
     <ProjectReference Include="..\NodeCraft.BuiltIn\NodeCraft.BuiltIn.csproj"
                       ReferenceOutputAssembly="false"
                       Private="false" />
+    <ProjectReference Include="..\NodeCraft.Communication\NodeCraft.Communication.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false" />
   </ItemGroup>
 
   <ItemGroup>
@@ -40,5 +43,15 @@
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\NodeCraft.BuiltIn\NodeCraft.BuiltIn.csproj"
              Targets="StageBuiltInPlugin"
              Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);BuiltInPackageRoot=$(_BuiltInHostPackageRootEscaped)" />
+  </Target>
+
+  <Target Name="StageCommunicationPluginForHost" AfterTargets="Build">
+    <PropertyGroup>
+      <_CommunicationHostPackageRoot>$(TargetDir)Plugins\NodeCraft.Communication</_CommunicationHostPackageRoot>
+      <_CommunicationHostPackageRootEscaped>$([MSBuild]::Escape($(_CommunicationHostPackageRoot)))</_CommunicationHostPackageRootEscaped>
+    </PropertyGroup>
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\NodeCraft.Communication\NodeCraft.Communication.csproj"
+             Targets="StageCommunicationPlugin"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);CommunicationPackageRoot=$(_CommunicationHostPackageRootEscaped)" />
   </Target>
 </Project>

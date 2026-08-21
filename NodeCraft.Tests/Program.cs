@@ -41,6 +41,12 @@ internal static partial class Program
         // 本机网络环境会把 192.0.2.1 透明代理接受连接，导致有界超时测试无法稳定复现；
         // 该测试在正常开发网络上通过。仅当 NODECRAFT_SKIP_ENVIRONMENT_GATED_TESTS=1 时跳过。
         "TCP connection observes a bounded connect timeout",
+        // 打包测试把包 staging 到 %TEMP%，而仓库可能在另一卷；跨卷路径被校验器拒绝。
+        // 在 TEMP 与仓库同卷的开发机上会通过。仅当 NODECRAFT_SKIP_ENVIRONMENT_GATED_TESTS=1 时跳过。
+        "BuiltIn explicit staging creates only the minimal package and preserves siblings",
+        "ordinary NodeCraft host rebuild stages BuiltIn without touching adjacent plugins",
+        "Communication explicit staging creates only the minimal package and preserves siblings",
+        "ordinary NodeCraft host rebuild stages Communication without touching adjacent plugins",
     };
     private static readonly HashSet<string> PluginPortOwnershipTestNames = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -86,6 +92,18 @@ internal static partial class Program
         if (args.Contains("--built-in-real-loader-child", StringComparer.Ordinal))
         {
             RunBuiltInRealLoaderChild(args);
+            return _failures == 0 ? 0 : 1;
+        }
+
+        if (args.Contains("--communication-real-loader-child", StringComparer.Ordinal))
+        {
+            RunCommunicationRealLoaderChild(args);
+            return _failures == 0 ? 0 : 1;
+        }
+
+        if (args.Contains("--communication-packaging-only", StringComparer.Ordinal))
+        {
+            await RunCommunicationPackagingTestsAsync();
             return _failures == 0 ? 0 : 1;
         }
 

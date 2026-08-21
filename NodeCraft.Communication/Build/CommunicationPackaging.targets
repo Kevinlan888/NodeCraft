@@ -1,0 +1,302 @@
+<Project>
+  <UsingTask TaskName="ValidateCommunicationPackageRootTask"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <PackageRoot ParameterType="System.String" />
+      <DefaultPackageRoot ParameterType="System.String" />
+      <ProjectDirectory ParameterType="System.String" Required="true" />
+      <TargetDirectory ParameterType="System.String" />
+      <OutputPath ParameterType="System.String" />
+      <CanonicalPackageRoot ParameterType="System.String" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var input = string.IsNullOrEmpty(PackageRoot)
+            ? DefaultPackageRoot
+            : PackageRoot;
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            Log.LogError("Communication plugin package root is required.");
+            return false;
+        }
+
+        if (input.IndexOf(';') >= 0 || input.IndexOf('\'') >= 0)
+        {
+            Log.LogError("Communication plugin package root must not contain semicolons or apostrophes.");
+            return false;
+        }
+
+        Func<string, bool> isDeviceNamespace = path =>
+        {
+            var normalized = path.Replace('/', '\\');
+            return normalized.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase)
+                || normalized.StartsWith(@"\\.\", StringComparison.OrdinalIgnoreCase)
+                || normalized.StartsWith(@"\??\", StringComparison.OrdinalIgnoreCase);
+        };
+        if (isDeviceNamespace(input))
+        {
+            Log.LogError("Communication plugin package root must not use a Win32 or NT device namespace.");
+            return false;
+        }
+
+        Func<char, bool> isDirectorySeparator = value =>
+            value == Path.DirectorySeparatorChar
+            || value == Path.AltDirectorySeparatorChar;
+        Func<string, bool> isUncPath = path =>
+            !string.IsNullOrEmpty(path)
+            && path.Length >= 2
+            && isDirectorySeparator(path[0])
+            && isDirectorySeparator(path[1]);
+        Func<string, bool> isFullyQualified = path =>
+            !string.IsNullOrEmpty(path)
+            && ((path.Length >= 2
+                    && isDirectorySeparator(path[0])
+                    && isDirectorySeparator(path[1]))
+                || (path.Length >= 3
+                    && char.IsLetter(path[0])
+                    && path[1] == Path.VolumeSeparatorChar
+                    && isDirectorySeparator(path[2])));
+        Func<string, string> trimEndingDirectorySeparators = path =>
+        {
+            var pathRoot = Path.GetPathRoot(path) ?? string.Empty;
+            var length = path.Length;
+            while (length > pathRoot.Length && isDirectorySeparator(path[length - 1]))
+            {
+                length--;
+            }
+
+            return path.Substring(0, length);
+        };
+
+        if (isUncPath(input))
+        {
+            Log.LogError("Communication plugin package root must not use a UNC path.");
+            return false;
+        }
+
+        if (!isFullyQualified(input))
+        {
+            Log.LogError("Communication plugin package root must be a fully-qualified path.");
+            return false;
+        }
+
+        var segments = input.Split(
+            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+            StringSplitOptions.None);
+        foreach (var segment in segments)
+        {
+            if (string.Equals(segment, ".", StringComparison.Ordinal)
+                || string.Equals(segment, "..", StringComparison.Ordinal))
+            {
+                Log.LogError("Communication plugin package root must not contain traversal segments.");
+                return false;
+            }
+
+            if (segment.IndexOf('~') >= 0)
+            {
+                Log.LogError("Communication plugin package root must not contain DOS short-name-like components.");
+                return false;
+            }
+
+            if (segment.EndsWith(".", StringComparison.Ordinal)
+                || segment.EndsWith(" ", StringComparison.Ordinal))
+            {
+                Log.LogError("Communication plugin package root components must not end in a dot or space.");
+                return false;
+            }
+        }
+
+        string canonicalPackageRoot;
+        try
+        {
+            canonicalPackageRoot = trimEndingDirectorySeparators(Path.GetFullPath(input));
+        }
+        catch (Exception exception)
+        {
+            Log.LogError("Communication plugin package root is invalid: " + exception.Message);
+            return false;
+        }
+
+        if (isDeviceNamespace(canonicalPackageRoot))
+        {
+            Log.LogError("Communication plugin package root canonical path must not use a Win32 or NT device namespace.");
+            return false;
+        }
+
+        if (isUncPath(canonicalPackageRoot))
+        {
+            Log.LogError("Communication plugin package root canonical path must not use a UNC path.");
+            return false;
+        }
+
+        var fileSystemRoot = Path.GetPathRoot(canonicalPackageRoot);
+        if (!string.IsNullOrEmpty(fileSystemRoot)
+            && string.Equals(
+                canonicalPackageRoot,
+                trimEndingDirectorySeparators(fileSystemRoot),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            Log.LogError("Communication plugin package root must not be a file-system root.");
+            return false;
+        }
+
+        Func<string, string> canonicalizeDirectory = path =>
+        {
+            var rootedPath = isFullyQualified(path)
+                ? path
+                : Path.Combine(ProjectDirectory, path);
+            return trimEndingDirectorySeparators(Path.GetFullPath(rootedPath));
+        };
+        Func<string, string, bool> isSameOrAncestor = (candidate, descendant) =>
+            string.Equals(candidate, descendant, StringComparison.OrdinalIgnoreCase)
+            || descendant.StartsWith(
+                candidate + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase);
+
+        string canonicalProjectDirectory;
+        try
+        {
+            canonicalProjectDirectory = canonicalizeDirectory(ProjectDirectory);
+        }
+        catch (Exception exception)
+        {
+            Log.LogError("Communication plugin project directory is invalid: " + exception.Message);
+            return false;
+        }
+
+        var packageVolume = Path.GetPathRoot(canonicalPackageRoot);
+        var projectVolume = Path.GetPathRoot(canonicalProjectDirectory);
+        if (string.IsNullOrEmpty(packageVolume)
+            || string.IsNullOrEmpty(projectVolume)
+            || !string.Equals(
+                packageVolume,
+                projectVolume,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            Log.LogError("Communication plugin package root must be on the same volume as the plugin project.");
+            return false;
+        }
+
+        if (isSameOrAncestor(canonicalPackageRoot, canonicalProjectDirectory))
+        {
+            Log.LogError("Communication plugin package root must not be the project directory or one of its ancestors.");
+            return false;
+        }
+
+        foreach (var outputDirectory in new[] { TargetDirectory, OutputPath })
+        {
+            if (string.IsNullOrWhiteSpace(outputDirectory))
+            {
+                continue;
+            }
+
+            string canonicalOutputDirectory;
+            try
+            {
+                canonicalOutputDirectory = canonicalizeDirectory(outputDirectory);
+            }
+            catch (Exception exception)
+            {
+                Log.LogError("Communication plugin output directory is invalid: " + exception.Message);
+                return false;
+            }
+
+            if (isSameOrAncestor(canonicalPackageRoot, canonicalOutputDirectory))
+            {
+                Log.LogError("Communication plugin package root must not be an output directory or one of its ancestors.");
+                return false;
+            }
+        }
+
+        try
+        {
+            var existingPath = Path.GetPathRoot(canonicalPackageRoot) ?? string.Empty;
+            var remainingPath = canonicalPackageRoot.Substring(existingPath.Length);
+            var existingSegments = remainingPath.Split(
+                new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                StringSplitOptions.RemoveEmptyEntries);
+            foreach (var segment in existingSegments)
+            {
+                existingPath = Path.Combine(existingPath, segment);
+                if (!Directory.Exists(existingPath) && !File.Exists(existingPath))
+                {
+                    break;
+                }
+
+                if ((File.GetAttributes(existingPath) & FileAttributes.ReparsePoint) != 0)
+                {
+                    Log.LogError("Communication plugin package root must not traverse a reparse point.");
+                    return false;
+                }
+            }
+
+            if (File.Exists(canonicalPackageRoot))
+            {
+                Log.LogError("Communication plugin package root must be a directory, not a file.");
+                return false;
+            }
+
+            if (Directory.Exists(canonicalPackageRoot))
+            {
+                foreach (var entry in Directory.GetFileSystemEntries(canonicalPackageRoot))
+                {
+                    var entryName = Path.GetFileName(entry);
+                    var isAllowedFile = File.Exists(entry)
+                        && (File.GetAttributes(entry) & FileAttributes.ReparsePoint) == 0
+                        && (string.Equals(
+                                entryName,
+                                "plugin.json",
+                                StringComparison.Ordinal)
+                            || string.Equals(
+                                entryName,
+                                "NodeCraft.Communication.dll",
+                                StringComparison.Ordinal));
+                    if (!isAllowedFile)
+                    {
+                        Log.LogError(
+                            "Communication plugin package root contains an unexpected entry and will not be replaced: "
+                            + entryName);
+                        return false;
+                    }
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            Log.LogError("Communication plugin package root could not be inspected safely: " + exception.Message);
+            return false;
+        }
+
+        CanonicalPackageRoot = canonicalPackageRoot;
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="ValidateCommunicationPackageRoot" BeforeTargets="StageCommunicationPlugin">
+    <ValidateCommunicationPackageRootTask PackageRoot="$(CommunicationPackageRoot)"
+                                    DefaultPackageRoot="$(TargetDir)Plugins\NodeCraft.Communication"
+                                    ProjectDirectory="$(MSBuildProjectDirectory)"
+                                    TargetDirectory="$(TargetDir)"
+                                    OutputPath="$(OutputPath)">
+      <Output TaskParameter="CanonicalPackageRoot"
+              PropertyName="_CommunicationPackageRootCanonical" />
+    </ValidateCommunicationPackageRootTask>
+    <PropertyGroup>
+      <_CommunicationPackageRootEscaped>$([MSBuild]::Escape($(_CommunicationPackageRootCanonical)))</_CommunicationPackageRootEscaped>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="StageCommunicationPlugin" DependsOnTargets="Build">
+    <Error Condition="!Exists('$(TargetPath)')"
+           Text="Communication plugin assembly was not built." />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\plugin.json')"
+           Text="Communication plugin manifest is missing." />
+
+    <MakeDir Directories="$(_CommunicationPackageRootEscaped)" />
+    <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)\plugin.json"
+          DestinationFolder="$(_CommunicationPackageRootEscaped)" />
+  </Target>
+</Project>

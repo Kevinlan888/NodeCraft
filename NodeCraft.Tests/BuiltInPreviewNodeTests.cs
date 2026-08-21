@@ -224,12 +224,12 @@ internal static partial class Program
             var node = new TextPreviewNodeModel { Id = "preview" };
             canvas.GraphModel.Nodes.Add(node);
             var emptyView = (FrameworkElement)registry.BuildNodeContent(canvas, node);
-            var emptyTexts = FindLogicalDescendants<TextBlock>(emptyView).Select(item => item.Text).ToArray();
+            var emptyTexts = FindLogicalDescendants<TextBox>(emptyView).Select(item => item.Text).ToArray();
             var execution = new FlowExecutionContext();
             execution.SetPortValue(node.Id, 0, "current preview");
             registry.ApplyExecutionResults(new[] { node }, execution);
             var currentView = (FrameworkElement)registry.BuildNodeContent(canvas, node);
-            var currentTexts = FindLogicalDescendants<TextBlock>(currentView).Select(item => item.Text).ToArray();
+            var currentTexts = FindLogicalDescendants<TextBox>(currentView).Select(item => item.Text).ToArray();
 
             return registration.ExecutionResultHandler != null
                 && emptyTexts.Contains("等待执行后显示文本结果", StringComparer.Ordinal)

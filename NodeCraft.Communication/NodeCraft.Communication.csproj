@@ -17,4 +17,6 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <Import Project="Build\CommunicationPackaging.targets" />
 </Project>
