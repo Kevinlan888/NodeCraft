@@ -45,6 +45,11 @@
         Func<char, bool> isDirectorySeparator = value =>
             value == Path.DirectorySeparatorChar
             || value == Path.AltDirectorySeparatorChar;
+        Func<string, bool> isUncPath = path =>
+            !string.IsNullOrEmpty(path)
+            && path.Length >= 2
+            && isDirectorySeparator(path[0])
+            && isDirectorySeparator(path[1]);
         Func<string, bool> isFullyQualified = path =>
             !string.IsNullOrEmpty(path)
             && ((path.Length >= 2
@@ -65,6 +70,12 @@
 
             return path.Substring(0, length);
         };
+
+        if (isUncPath(input))
+        {
+            Log.LogError("Built-in plugin package root must not use a UNC path.");
+            return false;
+        }
 
         if (!isFullyQualified(input))
         {
@@ -115,6 +126,12 @@
             return false;
         }
 
+        if (isUncPath(canonicalPackageRoot))
+        {
+            Log.LogError("Built-in plugin package root canonical path must not use a UNC path.");
+            return false;
+        }
+
         var fileSystemRoot = Path.GetPathRoot(canonicalPackageRoot);
         if (!string.IsNullOrEmpty(fileSystemRoot)
             && string.Equals(
@@ -147,6 +164,19 @@
         catch (Exception exception)
         {
             Log.LogError("Built-in plugin project directory is invalid: " + exception.Message);
+            return false;
+        }
+
+        var packageVolume = Path.GetPathRoot(canonicalPackageRoot);
+        var projectVolume = Path.GetPathRoot(canonicalProjectDirectory);
+        if (string.IsNullOrEmpty(packageVolume)
+            || string.IsNullOrEmpty(projectVolume)
+            || !string.Equals(
+                packageVolume,
+                projectVolume,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            Log.LogError("Built-in plugin package root must be on the same volume as the plugin project.");
             return false;
         }
 
@@ -215,14 +245,15 @@
                 {
                     var entryName = Path.GetFileName(entry);
                     var isAllowedFile = File.Exists(entry)
+                        && (File.GetAttributes(entry) & FileAttributes.ReparsePoint) == 0
                         && (string.Equals(
                                 entryName,
                                 "plugin.json",
-                                StringComparison.OrdinalIgnoreCase)
+                                StringComparison.Ordinal)
                             || string.Equals(
                                 entryName,
                                 "NodeCraft.BuiltIn.dll",
-                                StringComparison.OrdinalIgnoreCase));
+                                StringComparison.Ordinal));
                     if (!isAllowedFile)
                     {
                         Log.LogError(
@@ -264,7 +295,6 @@
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\plugin.json')"
            Text="Built-in plugin manifest is missing." />
 
-    <RemoveDir Directories="$(_BuiltInPackageRootEscaped)" />
     <MakeDir Directories="$(_BuiltInPackageRootEscaped)" />
     <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)\plugin.json"
           DestinationFolder="$(_BuiltInPackageRootEscaped)" />

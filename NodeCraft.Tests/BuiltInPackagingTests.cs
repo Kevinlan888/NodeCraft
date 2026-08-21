@@ -54,10 +54,12 @@ internal static partial class Program
             var escapedProperty = validationTarget?
                 .Descendants("_BuiltInPackageRootEscaped")
                 .SingleOrDefault();
-            var removeDirectory = target?.Elements("RemoveDir").SingleOrDefault();
             var makeDirectory = target?.Elements("MakeDir").SingleOrDefault();
             var copy = target?.Elements("Copy").SingleOrDefault();
             var errors = target?.Elements("Error").ToArray() ?? Array.Empty<XElement>();
+            var inlineCode = targetDocument.Descendants("Code")
+                .Select(element => element.Value)
+                .ToArray();
 
             return import != null
                 && target != null
@@ -84,10 +86,9 @@ internal static partial class Program
                     ((string?)element.Attribute("Condition"))?.Contains("$(TargetPath)", StringComparison.Ordinal) == true)
                 && errors.Any(element =>
                     ((string?)element.Attribute("Condition"))?.Contains("plugin.json", StringComparison.Ordinal) == true)
-                && string.Equals(
-                    (string?)removeDirectory?.Attribute("Directories"),
-                    "$(_BuiltInPackageRootEscaped)",
-                    StringComparison.Ordinal)
+                && !targetDocument.Descendants("RemoveDir").Any()
+                && inlineCode.All(code =>
+                    !code.Contains("Directory.Delete", StringComparison.Ordinal))
                 && string.Equals(
                     (string?)makeDirectory?.Attribute("Directories"),
                     "$(_BuiltInPackageRootEscaped)",
@@ -188,6 +189,14 @@ internal static partial class Program
                 Path.DirectorySeparatorChar,
                 Path.AltDirectorySeparatorChar);
             var outputDirectory = Path.Combine(root.Path, "output");
+            var projectVolume = Path.GetPathRoot(projectDirectory)
+                ?? throw new InvalidOperationException("BuiltIn project volume was not found.");
+            var otherVolume = Enumerable.Range('A', 26)
+                .Select(value => ((char)value) + @":\")
+                .First(path => !string.Equals(
+                    path,
+                    projectVolume,
+                    StringComparison.OrdinalIgnoreCase));
             var cases = new[]
             {
                 new PackageRootValidationCase("file-system root", fileSystemRoot),
@@ -228,6 +237,12 @@ internal static partial class Program
                 new PackageRootValidationCase(
                     "extended UNC device namespace",
                     @"\\?\UNC\server\share\package"),
+                new PackageRootValidationCase(
+                    "ordinary loopback UNC",
+                    @"\\localhost\C$\nodecraft-builtin-package"),
+                new PackageRootValidationCase(
+                    "cross-volume root",
+                    Path.Combine(otherVolume, "nodecraft-builtin-package")),
             };
 
             foreach (var testCase in cases)
@@ -303,11 +318,22 @@ internal static partial class Program
                 new SyntheticStageRejectionCase(
                     "reparse-point package root",
                     project => CreateSyntheticPackageLink(project),
-                    project => project.LinkedPackageTarget),
+                    project => project.LinkedPackageTarget,
+                    allowFinalCandidateReparse: true),
                 new SyntheticStageRejectionCase(
-                    "existing package with an unexpected entry",
+                    "existing package with an unexpected file",
                     project => Path.Combine(project.CaseDirectory, "package-with-extra"),
                     project => Path.Combine(project.CaseDirectory, "package-with-extra")),
+                new SyntheticStageRejectionCase(
+                    "existing package with unexpected manifest casing",
+                    project => Path.Combine(project.CaseDirectory, "package-with-casing"),
+                    project => Path.Combine(project.CaseDirectory, "package-with-casing"),
+                    sentinelRelativePath: "Plugin.json"),
+                new SyntheticStageRejectionCase(
+                    "existing package with an unexpected directory",
+                    project => Path.Combine(project.CaseDirectory, "package-with-directory"),
+                    project => Path.Combine(project.CaseDirectory, "package-with-directory"),
+                    sentinelRelativePath: Path.Combine("unexpected", "sentinel.txt")),
             };
 
             foreach (var testCase in rejectionCases)
@@ -316,15 +342,19 @@ internal static partial class Program
                     root.Path,
                     "reject-" + Guid.NewGuid().ToString("N"));
                 var project = CreateSyntheticBuiltInProject(caseDirectory, targetSource);
-                var rawCandidate = testCase.CreateCandidate(project);
-                var actualCandidate = testCase.GetActualCandidate(project);
-                var candidatePath = NormalizeSyntheticCandidateForGuard(rawCandidate);
-                var isCandidateReparsePoint = Directory.Exists(candidatePath)
-                    && (File.GetAttributes(candidatePath) & FileAttributes.ReparsePoint) != 0;
+                var syntheticLinkPath = Path.Combine(project.CaseDirectory, "linked-package");
                 try
                 {
+                    var rawCandidate = testCase.CreateCandidate(project);
+                    var actualCandidate = testCase.GetActualCandidate(project);
+                    var candidatePath = NormalizeSyntheticCandidateForGuard(rawCandidate);
                     Directory.CreateDirectory(actualCandidate);
-                    var sentinelPath = Path.Combine(actualCandidate, "sentinel.txt");
+                    var sentinelPath = Path.Combine(
+                        actualCandidate,
+                        testCase.SentinelRelativePath);
+                    Directory.CreateDirectory(
+                        Path.GetDirectoryName(sentinelPath)
+                        ?? throw new InvalidOperationException("Synthetic sentinel directory was not found."));
                     File.WriteAllText(sentinelPath, "keep");
 
                     EnsureSyntheticStageScope(
@@ -332,7 +362,8 @@ internal static partial class Program
                         project,
                         rawCandidate,
                         actualCandidate,
-                        sentinelPath);
+                        sentinelPath,
+                        allowFinalCandidateReparse: testCase.AllowFinalCandidateReparse);
                     var result = await RunSyntheticStageAsync(project, rawCandidate).ConfigureAwait(false);
                     var output = result.StandardOutput + Environment.NewLine + result.StandardError;
                     if (result.ExitCode == 0
@@ -347,9 +378,10 @@ internal static partial class Program
                 }
                 finally
                 {
-                    if (isCandidateReparsePoint && Directory.Exists(candidatePath))
+                    if (Directory.Exists(syntheticLinkPath)
+                        && (File.GetAttributes(syntheticLinkPath) & FileAttributes.ReparsePoint) != 0)
                     {
-                        Directory.Delete(candidatePath);
+                        Directory.Delete(syntheticLinkPath);
                     }
                 }
             }
@@ -359,11 +391,11 @@ internal static partial class Program
                 "positive-" + Guid.NewGuid().ToString("N"));
             var positiveProject = CreateSyntheticBuiltInProject(
                 positiveCaseDirectory,
-                targetSource);
+                targetSource,
+                repositoryName: "repo-sibling");
             var prefixSiblingRoot = Path.Combine(
                 positiveCaseDirectory,
-                "repo-sibling",
-                "NodeCraft.BuiltIn");
+                "repo");
             var prefixSiblingSentinel = Path.Combine(
                 positiveCaseDirectory,
                 "repo-sibling-sentinel.txt");
@@ -375,6 +407,7 @@ internal static partial class Program
                 prefixSiblingRoot,
                 Path.Combine(prefixSiblingRoot, "plugin.json"),
                 requireSentinel: false);
+            EnsureOwnedPathHasNoReparsePoint(root.Path, prefixSiblingSentinel);
 
             var positiveResult = await RunSyntheticStageAsync(
                 positiveProject,
@@ -662,9 +695,10 @@ internal static partial class Program
 
     private static SyntheticBuiltInProject CreateSyntheticBuiltInProject(
         string caseDirectory,
-        string targetSource)
+        string targetSource,
+        string repositoryName = "repo")
     {
-        var repositoryDirectory = Path.Combine(caseDirectory, "repo");
+        var repositoryDirectory = Path.Combine(caseDirectory, repositoryName);
         var projectDirectory = Path.Combine(repositoryDirectory, "project");
         var buildDirectory = Path.Combine(projectDirectory, "Build");
         var targetDirectory = Path.Combine(projectDirectory, "bin")
@@ -765,7 +799,8 @@ internal static partial class Program
         string rawCandidate,
         string expectedActualCandidate,
         string sentinelPath,
-        bool requireSentinel = true)
+        bool requireSentinel = true,
+        bool allowFinalCandidateReparse = false)
     {
         var temporaryRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
         var ownedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(uniqueRoot));
@@ -779,6 +814,35 @@ internal static partial class Program
         }
 
         var candidatePath = NormalizeSyntheticCandidateForGuard(rawCandidate);
+        var expectedCandidate = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(expectedActualCandidate));
+        var projectPath = Path.GetFullPath(project.ProjectPath);
+        var importedTargetPath = Path.GetFullPath(project.ImportedTargetPath);
+        var sentinelFullPath = Path.GetFullPath(sentinelPath);
+        foreach (var path in new[]
+                 {
+                     projectPath,
+                     importedTargetPath,
+                     candidatePath,
+                     expectedCandidate,
+                     sentinelFullPath,
+                 })
+        {
+            if (!IsStrictDescendant(ownedRoot, path))
+            {
+                throw new InvalidOperationException(
+                    "Refusing synthetic Stage outside its owned temporary root: " + path);
+            }
+        }
+
+        EnsureOwnedPathHasNoReparsePoint(temporaryRoot, ownedRoot);
+        EnsureOwnedPathHasNoReparsePoint(ownedRoot, projectPath);
+        EnsureOwnedPathHasNoReparsePoint(ownedRoot, importedTargetPath);
+        EnsureOwnedPathHasNoReparsePoint(
+            ownedRoot,
+            candidatePath,
+            allowFinalCandidateReparse);
+
         var resolvedCandidate = candidatePath;
         if (Directory.Exists(candidatePath))
         {
@@ -791,28 +855,17 @@ internal static partial class Program
             }
         }
 
-        var expectedCandidate = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(expectedActualCandidate));
         resolvedCandidate = Path.TrimEndingDirectorySeparator(Path.GetFullPath(resolvedCandidate));
-        var projectPath = Path.GetFullPath(project.ProjectPath);
-        var importedTargetPath = Path.GetFullPath(project.ImportedTargetPath);
-        var sentinelFullPath = Path.GetFullPath(sentinelPath);
-        foreach (var path in new[]
-                 {
-                     projectPath,
-                     importedTargetPath,
-                     candidatePath,
-                     resolvedCandidate,
-                     expectedCandidate,
-                     sentinelFullPath,
-                 })
+        if (!IsStrictDescendant(ownedRoot, resolvedCandidate))
         {
-            if (!IsStrictDescendant(ownedRoot, path))
-            {
-                throw new InvalidOperationException(
-                    "Refusing synthetic Stage outside its owned temporary root: " + path);
-            }
+            throw new InvalidOperationException(
+                "Refusing resolved synthetic Stage outside its owned temporary root: "
+                + resolvedCandidate);
         }
+
+        EnsureOwnedPathHasNoReparsePoint(ownedRoot, resolvedCandidate);
+        EnsureOwnedPathHasNoReparsePoint(ownedRoot, expectedCandidate);
+        EnsureOwnedPathHasNoReparsePoint(ownedRoot, sentinelFullPath);
 
         if (!string.Equals(
                 resolvedCandidate,
@@ -823,6 +876,49 @@ internal static partial class Program
         {
             throw new InvalidOperationException(
                 "Synthetic Stage candidate or sentinel did not resolve to the expected owned path.");
+        }
+    }
+
+    private static void EnsureOwnedPathHasNoReparsePoint(
+        string ownedRoot,
+        string path,
+        bool allowFinalReparsePoint = false)
+    {
+        var canonicalRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(ownedRoot));
+        var canonicalPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        if (!string.Equals(canonicalRoot, canonicalPath, StringComparison.OrdinalIgnoreCase)
+            && !IsStrictDescendant(canonicalRoot, canonicalPath))
+        {
+            throw new InvalidOperationException(
+                "Path is outside the owned root during reparse validation: " + canonicalPath);
+        }
+
+        var relativePath = Path.GetRelativePath(canonicalRoot, canonicalPath);
+        var segments = string.Equals(relativePath, ".", StringComparison.Ordinal)
+            ? Array.Empty<string>()
+            : relativePath.Split(
+                new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                StringSplitOptions.RemoveEmptyEntries);
+        var currentPath = canonicalRoot;
+        for (var index = -1; index < segments.Length; index++)
+        {
+            if (index >= 0)
+            {
+                currentPath = Path.Combine(currentPath, segments[index]);
+            }
+
+            if (!Directory.Exists(currentPath) && !File.Exists(currentPath))
+            {
+                break;
+            }
+
+            var isFinalPath = index == segments.Length - 1;
+            if ((File.GetAttributes(currentPath) & FileAttributes.ReparsePoint) != 0
+                && !(allowFinalReparsePoint && isFinalPath))
+            {
+                throw new InvalidOperationException(
+                    "Synthetic Stage path traverses a reparse point: " + currentPath);
+            }
         }
     }
 
@@ -949,11 +1045,15 @@ internal static partial class Program
         public SyntheticStageRejectionCase(
             string name,
             Func<SyntheticBuiltInProject, string> createCandidate,
-            Func<SyntheticBuiltInProject, string> getActualCandidate)
+            Func<SyntheticBuiltInProject, string> getActualCandidate,
+            string sentinelRelativePath = "sentinel.txt",
+            bool allowFinalCandidateReparse = false)
         {
             Name = name;
             CreateCandidate = createCandidate;
             GetActualCandidate = getActualCandidate;
+            SentinelRelativePath = sentinelRelativePath;
+            AllowFinalCandidateReparse = allowFinalCandidateReparse;
         }
 
         public string Name { get; }
@@ -961,6 +1061,10 @@ internal static partial class Program
         public Func<SyntheticBuiltInProject, string> CreateCandidate { get; }
 
         public Func<SyntheticBuiltInProject, string> GetActualCandidate { get; }
+
+        public string SentinelRelativePath { get; }
+
+        public bool AllowFinalCandidateReparse { get; }
     }
 
     private sealed class SyntheticBuiltInProject
