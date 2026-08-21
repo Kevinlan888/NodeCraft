@@ -54,6 +54,7 @@ internal static partial class Program
     private static async Task<int> Main()
     {
         RunFlowNodeRegistryPresentationTests();
+        await RunBuiltInPreviewNodeTestsAsync();
         RunVisualContractTests();
         RunAlgorithmPluginTests();
         RunAlgorithmResultTests();

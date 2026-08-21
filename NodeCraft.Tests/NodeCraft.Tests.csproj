@@ -9,6 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="..\NodeCraft\NodeCraft.csproj" />
     <ProjectReference Include="..\NodeCraft.Flow\NodeCraft.Flow.csproj" />
+    <ProjectReference Include="..\NodeCraft.BuiltIn\NodeCraft.BuiltIn.csproj" />
     <ProjectReference Include="..\Node.Algorithm\Node.Algorithm.csproj" />
     <ProjectReference Include="..\NodeCraft.Vision\NodeCraft.Vision.csproj" />
     <ProjectReference Include="..\NodeCraft.Communication\NodeCraft.Communication.csproj" />

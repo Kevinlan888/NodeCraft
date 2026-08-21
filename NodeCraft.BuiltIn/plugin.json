@@ -1,0 +1,7 @@
+{
+  "id": "nodecraft.builtin",
+  "entryAssembly": "NodeCraft.BuiltIn.dll",
+  "entryType": "NodeCraft.BuiltIn.Plugin.BuiltInPlugin",
+  "apiVersion": "1.0",
+  "privateLibraryPath": "lib"
+}
