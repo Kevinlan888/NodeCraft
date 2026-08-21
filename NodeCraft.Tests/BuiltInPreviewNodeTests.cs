@@ -75,7 +75,7 @@ internal static partial class Program
             };
 
             return plugin.Metadata.Id == "nodecraft.builtin"
-                && plugin.Metadata.DisplayName == "Built-In Nodes"
+                && plugin.Metadata.DisplayName == "Built-in Nodes"
                 && plugin.Metadata.Version.Equals(new Version(1, 0, 0))
                 && registrations.Length == expected.Length
                 && registrations.Select(item => item.Definition.TypeKey)

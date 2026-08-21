@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using NodeCraft.Flow;
+using NodeCraft.BuiltIn.Nodes;
 
 internal static partial class Program
 {
@@ -10,7 +11,7 @@ internal static partial class Program
     {
         Run("JSON Serialize exposes an object-to-string palette node", () =>
         {
-            const string typeKey = "node.json-serialize";
+            const string typeKey = "nodecraft.builtin.json-serialize";
             if (!NodeExecutorFactory.Registry.TryResolve(typeKey, out var registration)
                 || !NodeExecutorFactory.Registry.TryCreateNodeByTypeKey(typeKey, out var node))
             {
@@ -40,7 +41,7 @@ internal static partial class Program
             {
                 var canvas = CreateHeadlessCanvas();
                 if (!NodeExecutorFactory.Registry.TryCreateNodeByTypeKey(
-                    "node.json-serialize",
+                    "nodecraft.builtin.json-serialize",
                     out var node))
                 {
                     return false;
@@ -60,7 +61,7 @@ internal static partial class Program
 
         await RunAsync("JSON Serialize feeds indented runtime JSON into Text Preview", async () =>
         {
-            const string typeKey = "node.json-serialize";
+            const string typeKey = "nodecraft.builtin.json-serialize";
             var workflow = new WorkflowDocument();
             workflow.Nodes.Add(new WorkflowNode
             {
@@ -78,7 +79,7 @@ internal static partial class Program
             workflow.Nodes.Add(new WorkflowNode
             {
                 Id = "preview",
-                TypeKey = "node.text-preview",
+                TypeKey = TextPreviewNodeModel.FlowNodeTypeKey,
                 Inputs =
                 {
                     ["input"] = new LinkRef

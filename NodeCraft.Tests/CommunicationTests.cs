@@ -14,7 +14,7 @@ using NodeCraft.Communication.Nodes;
 using NodeCraft.Communication.Plugin;
 using NodeCraft.Communication.Transport;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
+using NodeCraft.BuiltIn.Nodes;
 using NodeCraft.Plugins;
 using System.Windows;
 using System.Windows.Controls;

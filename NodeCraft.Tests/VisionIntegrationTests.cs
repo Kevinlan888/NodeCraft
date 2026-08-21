@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging.Abstractions;
 using NodeCraft;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
+using NodeCraft.BuiltIn.Nodes;
 using NodeCraft.Vision.Camera;
 using NodeCraft.Vision.Nodes;
 using NodeCraft.Vision.Plugin;

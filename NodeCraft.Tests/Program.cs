@@ -19,7 +19,8 @@ using NLog.Targets;
 using NodeCraft.Localization;
 using System.Windows.Input;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
+using NodeCraft.BuiltIn.Nodes;
+using NodeCraft.BuiltIn.Plugin;
 using NodeCraft;
 using NodeCraft.Pages;
 using NodeCraft.Plugins;
@@ -99,6 +100,7 @@ internal static partial class Program
         RunBuiltInValueNodeTests();
         await RunBuiltInMathNodeTestsAsync();
         await RunBuiltInLogicNodeTestsAsync();
+        RegisterBuiltInPluginForTests();
         RunVisualContractTests();
         RunAlgorithmPluginTests();
         RunAlgorithmResultTests();
@@ -2176,7 +2178,7 @@ internal static partial class Program
             {
                 StageTaskFiveFixturePackages(pluginsDirectory);
                 registry = new FlowNodeRegistry();
-                registry.Register(CreateTestRegistration("node.string-value"));
+                registry.Register(CreateTestRegistration(StringValueNodeModel.FlowNodeTypeKey));
 
                 loader = new PluginLoader(
                     registry,
@@ -2207,7 +2209,7 @@ internal static partial class Program
                     && report.Results.Count(result => result.IsSuccess) == 1
                     && report.Results.Count(result => result.Context != null) == 1
                     && report.Results.Single(result => result.IsSuccess).Context?.IsCollectible == true
-                    && registry.Contains("node.string-value")
+                    && registry.Contains(StringValueNodeModel.FlowNodeTypeKey)
                     && registry.Contains("test.valid.node")
                     && !registry.Contains("test.throwing.node")
                     && !report.Failures.Any(result => result.IsSuccess)
@@ -2640,7 +2642,7 @@ namespace Decoy { internal sealed class Notes { } }
                             && string.Equals(failure.Phase, "registration", StringComparison.Ordinal)
                             && registry.Contains("company.sample.nodes.value")
                             && registry.Contains("company.sample.nodes.preview")
-                            && registry.TryResolve("node.string-value", out _)
+                            && registry.TryResolve(StringValueNodeModel.FlowNodeTypeKey, out _)
                             && message.Contains("test.nested-throwing.plugin", StringComparison.Ordinal)
                             && !message.Contains("fixture registration failed", StringComparison.Ordinal)
                             && !message.Contains("System.InvalidOperationException", StringComparison.Ordinal)
@@ -3025,7 +3027,7 @@ namespace Decoy { internal sealed class Notes { } }
         {
             var xml = @"<Graph FormatVersion=""4"">
   <Nodes>
-    <Node ModelType=""Renamed.Plugin.IntegerValueNodeModel, Renamed.Plugin"" Id=""stable"" Name=""Stable"" X=""11"" Y=""12"" Width=""210"" Height=""130"" ExecutorType=""node.integer-value""><InputPorts /><OutputPorts /><Properties><Property Name=""IntegerValue"" Type=""System.Int32"" Value=""42"" /></Properties></Node>
+    <Node ModelType=""NodeCraft.BuiltIn.Nodes.IntegerValueNodeModel, NodeCraft.BuiltIn"" Id=""stable"" Name=""Stable"" X=""11"" Y=""12"" Width=""210"" Height=""130"" ExecutorType=""nodecraft.builtin.integer-value""><InputPorts /><OutputPorts /><Properties><Property Name=""IntegerValue"" Type=""System.Int32"" Value=""42"" /></Properties></Node>
   </Nodes>
   <Links />
 </Graph>";
@@ -3046,7 +3048,7 @@ namespace Decoy { internal sealed class Notes { } }
                     && node.Y == 12
                     && node.Width == 210
                     && node.Height == 130
-                    && node.ExecutorType == "node.integer-value"
+                    && node.ExecutorType == "nodecraft.builtin.integer-value"
                     && integerNode.IntegerValue == 42;
             }
             finally
@@ -3582,7 +3584,14 @@ namespace Decoy { internal sealed class Notes { } }
     private static FlowNodeRegistry CreateRegistryWithBuiltInStringValue()
     {
         var registry = new FlowNodeRegistry();
-        registry.Register(NodeExecutorFactory.ResolveRegistration("node.string-value"));
+        var plugin = new BuiltInPlugin();
+        var context = new PluginRegistrationContext(
+            Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
+            new Version(1, 0));
+        plugin.Register(context);
+        var registration = context.Registrations.Single(
+            item => item.Definition.TypeKey == StringValueNodeModel.FlowNodeTypeKey);
+        registry.Register(registration);
         return registry;
     }
 
@@ -3885,14 +3894,14 @@ namespace Decoy { internal sealed class Notes { } }
                 new XAttribute("FormatVersion", "4"),
                 new XElement("Nodes",
                     new XElement("Node",
-                        new XAttribute("ModelType", "NodeCraft.Flow.Nodes.IntegerValueNodeModel, NodeCraft.Flow"),
+                        new XAttribute("ModelType", "NodeCraft.BuiltIn.Nodes.IntegerValueNodeModel, NodeCraft.BuiltIn"),
                         new XAttribute("Id", "value"),
                         new XAttribute("Name", "Value"),
                         new XAttribute("X", "0"),
                         new XAttribute("Y", "0"),
                         new XAttribute("Width", "200"),
                         new XAttribute("Height", "120"),
-                        new XAttribute("ExecutorType", "node.integer-value"),
+                        new XAttribute("ExecutorType", "nodecraft.builtin.integer-value"),
                         new XElement("InputPorts",
                             CreateSerializedPort("flowIn", "Top", "control", string.Empty)),
                         new XElement("OutputPorts",
@@ -3900,14 +3909,14 @@ namespace Decoy { internal sealed class Notes { } }
                         new XElement("Properties",
                             CreateSerializedProperty("IntegerValue", "System.Int32", "42"))),
                     new XElement("Node",
-                        new XAttribute("ModelType", "NodeCraft.Flow.Nodes.TextPreviewNodeModel, NodeCraft.Flow"),
+                        new XAttribute("ModelType", "NodeCraft.BuiltIn.Nodes.TextPreviewNodeModel, NodeCraft.BuiltIn"),
                         new XAttribute("Id", "preview"),
                         new XAttribute("Name", "Preview"),
                         new XAttribute("X", "240"),
                         new XAttribute("Y", "0"),
                         new XAttribute("Width", "200"),
                         new XAttribute("Height", "120"),
-                        new XAttribute("ExecutorType", "node.text-preview"),
+                        new XAttribute("ExecutorType", "nodecraft.builtin.text-preview"),
                         new XElement("InputPorts",
                             CreateSerializedPort("flowIn", "Top", "control", string.Empty),
                             targetPort),
@@ -3930,12 +3939,12 @@ namespace Decoy { internal sealed class Notes { } }
         _ = NodeExecutorFactory.Registry;
         var doc = new WorkflowDocument();
 
-        doc.Nodes.Add(new WorkflowNode { Id = "n1", TypeKey = "node.integer-value", DisplayName = "IntA", Inputs = { ["value"] = 42 } });
-        doc.Nodes.Add(new WorkflowNode { Id = "n2", TypeKey = "node.integer-value", DisplayName = "IntB", Inputs = { ["value"] = valueB } });
+        doc.Nodes.Add(new WorkflowNode { Id = "n1", TypeKey = "nodecraft.builtin.integer-value", DisplayName = "IntA", Inputs = { ["value"] = 42 } });
+        doc.Nodes.Add(new WorkflowNode { Id = "n2", TypeKey = "nodecraft.builtin.integer-value", DisplayName = "IntB", Inputs = { ["value"] = valueB } });
         doc.Nodes.Add(new WorkflowNode
         {
             Id = "n3",
-            TypeKey = "node.greater-than",
+            TypeKey = "nodecraft.builtin.greater-than",
             DisplayName = "GT",
             Inputs =
             {
@@ -3946,7 +3955,7 @@ namespace Decoy { internal sealed class Notes { } }
         doc.Nodes.Add(new WorkflowNode
         {
             Id = "n4",
-            TypeKey = "node.if",
+            TypeKey = "nodecraft.builtin.if",
             DisplayName = "If",
             Inputs =
             {
@@ -3956,7 +3965,7 @@ namespace Decoy { internal sealed class Notes { } }
         doc.Nodes.Add(new WorkflowNode
         {
             Id = "n5",
-            TypeKey = "node.string-value",
+            TypeKey = "nodecraft.builtin.string-value",
             DisplayName = "TrueStr",
             Inputs =
             {

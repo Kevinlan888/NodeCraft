@@ -5,7 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using NodeCraft.Flow;
-using NodeCraft.Flow.Nodes;
+using NodeCraft.BuiltIn.Nodes;
 
 internal static partial class Program
 {
@@ -352,7 +352,7 @@ internal static partial class Program
             workflow.Nodes.Add(new WorkflowNode
             {
                 Id = "source",
-                TypeKey = "node.integer-value",
+                TypeKey = "nodecraft.builtin.integer-value",
                 Inputs = { ["value"] = 7 },
             });
             workflow.Nodes.Add(new WorkflowNode
