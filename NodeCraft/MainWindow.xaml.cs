@@ -213,19 +213,18 @@ namespace NodeCraft
                 return true;
             }
 
-            var result = MessageBox.Show(
-                this,
+            var result = MessageDialog.ShowResult(
                 "当前方案有未保存的修改，是否保存？",
                 "保存方案",
-                MessageBoxButton.YesNoCancel,
-                MessageBoxImage.Warning);
+                CommonControls.WPF.MessageBoxIcon.Warning,
+                CommonControls.WPF.MessageBoxButtons.YesNoCancel);
 
-            if (result == MessageBoxResult.Yes)
+            if (result == MessageDialogResult.Yes)
             {
                 return FlowEditor.SaveGraph();
             }
 
-            return result == MessageBoxResult.No;
+            return result == MessageDialogResult.No;
         }
 
         private void DarkThemeMenuItem_Checked(object sender, RoutedEventArgs e)
