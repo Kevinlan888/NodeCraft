@@ -46,7 +46,7 @@ namespace NodeCraft.Flow
                 return IsControlType(this) && IsControlType(other);
             }
 
-            // 保留旧 object 通配语义：TextPreview 等节点用 object 接受任意数据。
+            // 保留 object 通配语义：预览类节点用 object 接受任意数据。
             if (Equals(this, Object) || Equals(other, Object))
             {
                 return true;

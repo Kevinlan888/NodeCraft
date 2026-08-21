@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
 using NodeCraft.Flow;
 using NodeCraft.BuiltIn.Nodes;
 
@@ -690,7 +692,37 @@ internal static partial class Program
             new FlowNodeRegistration(definition, () => new DynamicTestExecutor()),
             typeof(DynamicTestNodeModel),
             () => new DynamicTestNodeModel(),
-            showInPalette: false);
+            showInPalette: false,
+            contentFactory: CreateDynamicBindingContent);
+    }
+
+    private static FrameworkElement CreateDynamicBindingContent(FlowCanvas canvas, NodeModel node)
+    {
+        var panel = new StackPanel();
+        if (canvas.NodeRegistry != null && canvas.NodeRegistry.TryResolve(node.ExecutorType, out var contentRegistration))
+        {
+            foreach (var port in FlowDynamicInputResolver.ResolveNodeInputPorts(node, contentRegistration.Definition))
+            {
+                if (port.Definition.IsDynamic)
+                {
+                    panel.Children.Add(new TextBlock { Text = port.Definition.DisplayName });
+                }
+            }
+        }
+
+        if (canvas.GraphModel != null)
+        {
+            foreach (var link in canvas.GraphModel.Links.Where(link => link.TargetNodeId == node.Id))
+            {
+                var origin = canvas.GraphModel.Nodes.FirstOrDefault(candidate => candidate.Id == link.OriginNodeId);
+                if (origin != null)
+                {
+                    panel.Children.Add(new TextBlock { Text = origin.Name ?? origin.Id });
+                }
+            }
+        }
+
+        return panel;
     }
 
     private static NodeModel CreateStringSourceNode(string nodeId)

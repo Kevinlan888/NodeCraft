@@ -1,18 +1,10 @@
-﻿using NodeCraft.Flow.Nodes;
-using System;
-using System.Collections.Generic;
+﻿using System;
 
 namespace NodeCraft.Flow
 {
     public class NodeExecutorFactory
     {
-        static NodeExecutorFactory()
-        {
-            Registry = new FlowNodeRegistry();
-            BuiltInNodeRegistration.RegisterDefaults();
-        }
-
-        public static FlowNodeRegistry Registry { get; }
+        public static FlowNodeRegistry Registry { get; } = new FlowNodeRegistry();
 
         public static FlowNodeRegistration ResolveRegistration(string typeKey)
         {

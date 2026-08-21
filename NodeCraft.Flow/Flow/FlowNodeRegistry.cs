@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -47,7 +46,6 @@ namespace NodeCraft.Flow
         private readonly Dictionary<string, FlowNodeRegistration> _registrations = new Dictionary<string, FlowNodeRegistration>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _typeKeyByNodeTypeName = new Dictionary<string, string>(StringComparer.Ordinal);
         private readonly List<string> _registrationOrder = new List<string>();
-        private readonly ConditionalWeakTable<FlowCanvas, DefaultFlowNodeContentFactory> _defaultContentFactories = new ConditionalWeakTable<FlowCanvas, DefaultFlowNodeContentFactory>();
 
         public void Register(FlowNodeRegistration registration)
         {
@@ -227,19 +225,15 @@ namespace NodeCraft.Flow
 
         public object BuildNodeContent(FlowCanvas canvas, NodeModel node)
         {
-            if (node == null || canvas == null)
+            if (canvas == null || node == null
+                || !TryResolve(node.ExecutorType, out var registration)
+                || registration.ContentFactory == null)
             {
-                return node?.Name;
+                return null;
             }
 
             canvas.NodeRegistry = this;
-
-            if (TryResolve(node.ExecutorType, out var registration) && registration.ContentFactory != null)
-            {
-                return registration.ContentFactory(canvas, node);
-            }
-
-            return _defaultContentFactories.GetValue(canvas, key => new DefaultFlowNodeContentFactory(key)).Build(node);
+            return registration.ContentFactory(canvas, node);
         }
 
         public IList<FlowNodePaletteCategory> CreatePaletteCategories()

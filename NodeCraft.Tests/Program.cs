@@ -95,6 +95,7 @@ internal static partial class Program
             return _failures == 0 ? 0 : 1;
         }
 
+        RunFlowCoreSeparationTests();
         RunFlowNodeRegistryPresentationTests();
         await RunBuiltInPreviewNodeTestsAsync();
         RunBuiltInValueNodeTests();

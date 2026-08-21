@@ -111,7 +111,7 @@ namespace NodeCraft.Flow
 
             // 槽位必须按"定义端口顺序"计算，与 FlowCanvas.ResolveDefinitionSlot 的槽位语义保持一致：
             // EnsureControlInputPort 把 flowIn 注入到定义 InputPorts[0]，而运行时 InputParameters 由
-            // ApplyPortDefinitions/迁移把缺失定义端口追加到末尾（如 AddNumber 运行时 = [inputA,inputB,flowIn]）。
+            // ApplyPortDefinitions/迁移把缺失定义端口追加到末尾（运行时端口顺序可能与定义顺序不同）。
             // 因此插座按定义顺序构建，Slot = 定义下标，flowIn 才能渲染在最上方且连线命中的插座正确。
             if (!string.IsNullOrWhiteSpace(NodeModel.ExecutorType)
                 && NodeExecutorFactory.Registry.TryResolve(NodeModel.ExecutorType, out var registration))
