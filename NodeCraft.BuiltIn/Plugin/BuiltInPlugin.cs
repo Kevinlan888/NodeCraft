@@ -21,7 +21,12 @@ namespace NodeCraft.BuiltIn.Plugin
                 context.Nodes.Register(registration);
             }
 
-            context.Logger.LogInformation("Registered built-in Preview nodes.");
+            foreach (var registration in ValueNodeRegistrations.CreateAll())
+            {
+                context.Nodes.Register(registration);
+            }
+
+            context.Logger.LogInformation("Registered built-in Preview and Value nodes.");
         }
     }
 }

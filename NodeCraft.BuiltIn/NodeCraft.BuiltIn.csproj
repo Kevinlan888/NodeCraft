@@ -17,10 +17,16 @@
     <Page Remove="Views\AppendTextEditor.xaml" />
     <Page Remove="Views\TextPreviewView.xaml" />
     <Page Remove="Views\JsonSerializeView.xaml" />
+    <Page Remove="Views\IntegerValueEditor.xaml" />
+    <Page Remove="Views\FloatValueEditor.xaml" />
+    <Page Remove="Views\BooleanValueEditor.xaml" />
     <EmbeddedResource Include="Views\StringValueEditor.xaml" />
     <EmbeddedResource Include="Views\AppendTextEditor.xaml" />
     <EmbeddedResource Include="Views\TextPreviewView.xaml" />
     <EmbeddedResource Include="Views\JsonSerializeView.xaml" />
+    <EmbeddedResource Include="Views\IntegerValueEditor.xaml" />
+    <EmbeddedResource Include="Views\FloatValueEditor.xaml" />
+    <EmbeddedResource Include="Views\BooleanValueEditor.xaml" />
     <None Update="plugin.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

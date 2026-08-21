@@ -63,7 +63,9 @@ internal static partial class Program
             var plugin = new BuiltInPlugin();
             var context = new PluginRegistrationContext(NullLogger.Instance, new Version(1, 0));
             plugin.Register(context);
-            var registrations = context.Registrations.ToArray();
+            var registrations = context.Registrations
+                .Where(item => item.Definition.Category == "Preview")
+                .ToArray();
             var expected = new[]
             {
                 new PreviewContract("nodecraft.builtin.string-value", "String Value", "固定字符串输出", "FormatText", typeof(StringValueNodeModel), typeof(StringValueExecutor), Array.Empty<PortContract>(), new[] { new PortContract("output", "Value", FlowDataType.String, false) }),
@@ -307,7 +309,9 @@ internal static partial class Program
         plugin.Register(context);
         registry = new FlowNodeRegistry();
         registry.RegisterPlugin(plugin.Metadata.Id, context.Registrations);
-        return context.Registrations;
+        return context.Registrations
+            .Where(item => item.Definition.Category == "Preview")
+            .ToArray();
     }
 
     private static bool RegistrationMatchesContract(FlowNodeRegistration registration, PreviewContract expected)

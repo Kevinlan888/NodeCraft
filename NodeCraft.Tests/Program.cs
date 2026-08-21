@@ -55,6 +55,7 @@ internal static partial class Program
     {
         RunFlowNodeRegistryPresentationTests();
         await RunBuiltInPreviewNodeTestsAsync();
+        RunBuiltInValueNodeTests();
         RunVisualContractTests();
         RunAlgorithmPluginTests();
         RunAlgorithmResultTests();
