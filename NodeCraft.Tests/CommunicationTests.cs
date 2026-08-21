@@ -452,19 +452,38 @@ internal static partial class Program
                 && communicationCategory.IconKind == "LanConnect";
         });
 
-        Run("TCP Client Send editor XAML is embedded with all settings controls", () =>
+        Run("TCP Client Send editor XAML is compiled as a Page with all settings controls", () =>
         {
             var assembly = typeof(CommunicationPlugin).Assembly;
             using var stream = assembly.GetManifestResourceStream(
-                "NodeCraft.Communication.Views.TcpClientSendEditor.xaml");
+                "NodeCraft.Communication.g.resources");
             if (stream == null)
             {
                 return false;
             }
 
-            using var reader = new StreamReader(stream);
-            var xaml = reader.ReadToEnd();
-            return xaml.Contains("HostEditor", StringComparison.Ordinal)
+            var hasBaml = false;
+            using (var reader = new System.Resources.ResourceReader(stream))
+            {
+                foreach (var entry in reader.Cast<System.Collections.DictionaryEntry>())
+                {
+                    if (string.Equals(
+                        (string)entry.Key,
+                        "views/tcpclientsendeditor.baml",
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        hasBaml = true;
+                        break;
+                    }
+                }
+            }
+
+            var xaml = File.ReadAllText(FindRepositoryFile(
+                "NodeCraft.Communication",
+                "Views",
+                "TcpClientSendEditor.xaml"));
+            return hasBaml
+                && xaml.Contains("HostEditor", StringComparison.Ordinal)
                 && xaml.Contains("PortEditor", StringComparison.Ordinal)
                 && xaml.Contains("ConnectTimeoutEditor", StringComparison.Ordinal)
                 && xaml.Contains("StopOnSendFailureEditor", StringComparison.Ordinal);
@@ -585,6 +604,69 @@ internal static partial class Program
                     loader = null!;
                     registry = null!;
                     UnloadPluginLoadContexts(ref report);
+                }
+            });
+
+            Run("isolated-ALC editor content loads through InitializeComponent pack URI", () =>
+            {
+                var pilotRoot = CreateTemporaryPluginDirectory("nodecraft-communication-pilot-");
+                FlowNodeRegistry registry = null!;
+                PluginLoader loader = null!;
+                PluginLoadReport report = null!;
+                object content = null!;
+                object node = null!;
+                FlowNodeRegistration registration = null!;
+
+                try
+                {
+                    var pluginsDirectory = Path.Combine(pilotRoot, "Plugins");
+                    var packageDirectory = Path.Combine(pluginsDirectory, "NodeCraft.Communication");
+                    Directory.CreateDirectory(packageDirectory);
+                    CopyFileToDirectory(FindBuiltCommunicationAssembly(), packageDirectory);
+                    CopyFileToDirectory(FindBuiltCommunicationManifest(), packageDirectory);
+                    registry = new FlowNodeRegistry();
+                    loader = new PluginLoader(
+                        registry,
+                        new Version(1, 0),
+                        NullLoggerFactory.Instance);
+                    report = loader.LoadAll(pluginsDirectory);
+                    if (report.Failures.Count != 0 || !report.Results[0].IsSuccess)
+                    {
+                        return false;
+                    }
+
+                    registration = registry.Resolve(
+                        TcpClientSendNodeModel.FlowNodeTypeKey);
+                    return RunOnSta(() =>
+                    {
+                        var canvas = new FlowCanvas();
+                        node = registration.NodeFactory();
+                        content = registration.ContentFactory.Invoke(canvas, (NodeModel)node);
+                        var host = GetPrivateField<TextBox>(content!, "_hostEditor");
+                        var port = GetPrivateField<TextBox>(content!, "_portEditor");
+                        return content is FrameworkElement
+                            && host != null
+                            && port != null
+                            && host.Text == string.Empty
+                            && int.TryParse(
+                                port.Text,
+                                System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                out _);
+                    });
+                }
+                finally
+                {
+                    content = null!;
+                    node = null!;
+                    registration = null!;
+                    registry = null!;
+                    loader = null!;
+                    UnloadPluginLoadContexts(ref report);
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect();
+                    RegisterDeferredCleanup(pilotRoot);
                 }
             });
         }

@@ -1,15 +1,13 @@
 using System;
 using System.Globalization;
-using System.IO;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Markup;
 using NodeCraft.Communication.Nodes;
 using NodeCraft.Flow;
 
 namespace NodeCraft.Communication.Views
 {
-    internal sealed class TcpClientSendEditor : UserControl
+    public sealed partial class TcpClientSendEditor : UserControl
     {
         private readonly FlowCanvas _canvas;
         private readonly TcpClientSendNodeModel _node;
@@ -24,14 +22,11 @@ namespace NodeCraft.Communication.Views
             _canvas = canvas ?? throw new ArgumentNullException(nameof(canvas));
             _node = node ?? throw new ArgumentNullException(nameof(node));
 
-            var root = LoadEditorRoot();
-            var parsedContent = root.Content;
-            root.Content = null;
-            Content = parsedContent;
-            _hostEditor = Find<TextBox>(root, "HostEditor");
-            _portEditor = Find<TextBox>(root, "PortEditor");
-            _connectTimeoutEditor = Find<TextBox>(root, "ConnectTimeoutEditor");
-            _stopOnSendFailureEditor = Find<CheckBox>(root, "StopOnSendFailureEditor");
+            InitializeComponent();
+            _hostEditor = HostEditor;
+            _portEditor = PortEditor;
+            _connectTimeoutEditor = ConnectTimeoutEditor;
+            _stopOnSendFailureEditor = StopOnSendFailureEditor;
 
             _hostEditor.TextChanged += HostEditor_TextChanged;
             _portEditor.TextChanged += PortEditor_TextChanged;
@@ -56,31 +51,6 @@ namespace NodeCraft.Communication.Views
             }
 
             return new TcpClientSendEditor(canvas, tcpNode);
-        }
-
-        private static T Find<T>(UserControl root, string name)
-            where T : FrameworkElement
-        {
-            return root.FindName(name) as T
-                ?? throw new InvalidOperationException(
-                    $"TcpClientSendEditor is missing {name}.");
-        }
-
-        private static UserControl LoadEditorRoot()
-        {
-            var assembly = typeof(TcpClientSendEditor).Assembly;
-            using var stream = assembly.GetManifestResourceStream(
-                "NodeCraft.Communication.Views.TcpClientSendEditor.xaml");
-            if (stream == null)
-            {
-                throw new InvalidOperationException(
-                    "TcpClientSendEditor.xaml was not embedded into the plugin assembly.");
-            }
-
-            using var reader = new StreamReader(stream);
-            return XamlReader.Parse(reader.ReadToEnd()) as UserControl
-                ?? throw new InvalidOperationException(
-                    "TcpClientSendEditor.xaml did not produce a UserControl root.");
         }
 
         private void HostEditor_TextChanged(object sender, TextChangedEventArgs e)

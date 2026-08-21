@@ -13,8 +13,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\NodeCraft.Flow\NodeCraft.Flow.csproj" Private="false" />
-    <Page Remove="Views\TcpClientSendEditor.xaml" />
-    <EmbeddedResource Include="Views\TcpClientSendEditor.xaml" />
     <None Update="plugin.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
