@@ -27,6 +27,10 @@ namespace NodeCraft.Flow
 
         public string PaletteDescription { get; set; }
 
+        public string PaletteIconKind { get; set; }
+
+        public string PaletteCategoryIconKind { get; set; }
+
         public bool ShowInPalette { get; set; } = true;
 
         public bool IsPaletteCategoryExpanded { get; set; } = true;
@@ -228,6 +232,8 @@ namespace NodeCraft.Flow
                 return node?.Name;
             }
 
+            canvas.NodeRegistry = this;
+
             if (TryResolve(node.ExecutorType, out var registration) && registration.ContentFactory != null)
             {
                 return registration.ContentFactory(canvas, node);
@@ -240,27 +246,31 @@ namespace NodeCraft.Flow
         {
             var categories = new List<FlowNodePaletteCategory>();
             var categoryLookup = new Dictionary<string, FlowNodePaletteCategory>(StringComparer.OrdinalIgnoreCase);
+            var eligibleRegistrations = _registrationOrder
+                .Where(typeKey => _registrations.TryGetValue(typeKey, out var registration)
+                    && registration.ShowInPalette
+                    && registration.NodeModelType != null
+                    && registration.NodeFactory != null)
+                .Select(typeKey => _registrations[typeKey])
+                .ToList();
+            var categoryIcons = eligibleRegistrations
+                .GroupBy(item => ResolveCategoryName(item), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Select(item => item.PaletteCategoryIconKind)
+                        .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? "ShapeOutline",
+                    StringComparer.OrdinalIgnoreCase);
 
-            foreach (var typeKey in _registrationOrder)
+            foreach (var registration in eligibleRegistrations)
             {
-                if (!_registrations.TryGetValue(typeKey, out var registration)
-                    || !registration.ShowInPalette
-                    || registration.NodeModelType == null
-                    || registration.NodeFactory == null)
-                {
-                    continue;
-                }
-
-                var categoryName = string.IsNullOrWhiteSpace(registration.Definition.Category)
-                    ? "Other"
-                    : registration.Definition.Category;
+                var categoryName = ResolveCategoryName(registration);
 
                 if (!categoryLookup.TryGetValue(categoryName, out var category))
                 {
                     category = new FlowNodePaletteCategory
                     {
                         Title = categoryName,
-                        IconKind = ResolveCategoryIconKind(categoryName),
+                        IconKind = categoryIcons[categoryName],
                         IsExpanded = categories.Count == 0,
                     };
                     categoryLookup[categoryName] = category;
@@ -273,8 +283,10 @@ namespace NodeCraft.Flow
                         ? registration.Definition.DisplayName
                         : registration.PaletteDisplayName,
                     Description = registration.PaletteDescription ?? string.Empty,
-                    IconKind = ResolveNodeIconKind(typeKey, categoryName),
-                    TypeKey = typeKey,
+                    IconKind = string.IsNullOrWhiteSpace(registration.PaletteIconKind)
+                        ? categoryIcons[categoryName]
+                        : registration.PaletteIconKind,
+                    TypeKey = registration.Definition.TypeKey,
                     NodeTypeName = registration.NodeModelType.AssemblyQualifiedName,
                 });
             }
@@ -370,40 +382,11 @@ namespace NodeCraft.Flow
             ValidatePluginNodeTypeMapping(registration.NodeModelType, registration.Definition.TypeKey, batchNodeTypeMappings);
         }
 
-        private static string ResolveCategoryIconKind(string categoryName)
+        private static string ResolveCategoryName(FlowNodeRegistration registration)
         {
-            switch (categoryName)
-            {
-                case "Preview": return "ViewDashboardOutline";
-                case "Value": return "FormatListNumbered";
-                case "Math": return "CalculatorVariant";
-                case "Logic": return "SourceBranch";
-                case "Vision": return "CameraOutline";
-                case "Communication": return "LanConnect";
-                default: return "ShapeOutline";
-            }
-        }
-
-        private static string ResolveNodeIconKind(string typeKey, string categoryName)
-        {
-            switch (typeKey)
-            {
-                case "node.string-value": return "FormatText";
-                case "node.integer-value":
-                case "node.float-value": return "Numeric";
-                case "node.boolean-value": return "ToggleSwitchOutline";
-                case "node.add-number": return "Plus";
-                case "node.subtract-number": return "Minus";
-                case "node.multiply-number": return "Close";
-                case "node.divide-number": return "DivisionBox";
-                case "node.image-preview": return "ImageOutline";
-                case "node.text-preview": return "EyeOutline";
-                case "nodecraft.vision.stereo-camera.camera": return "CameraOutline";
-                case "nodecraft.vision.stereo-camera.image-preview": return "ImageOutline";
-                case "nodecraft.communication.tcp-client-send": return "LanConnect";
-                case "node.if": return "SourceBranch";
-                default: return ResolveCategoryIconKind(categoryName);
-            }
+            return string.IsNullOrWhiteSpace(registration.Definition.Category)
+                ? "Other"
+                : registration.Definition.Category;
         }
 
         private void RegisterNodeTypeMapping(Type nodeModelType, string typeKey)

@@ -49,6 +49,8 @@ namespace NodeCraft.Communication.Plugin
                 NodeFactory = () => new TcpClientSendNodeModel(),
                 PaletteDisplayName = "TCP Client Send",
                 PaletteDescription = "Sends each message input over one TCP client session.",
+                PaletteCategoryIconKind = "LanConnect",
+                PaletteIconKind = "LanConnect",
                 ContentFactory = TcpClientSendEditor.CreateContent,
             });
         }

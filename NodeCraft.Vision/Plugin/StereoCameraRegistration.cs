@@ -57,6 +57,8 @@ namespace NodeCraft.Vision.Plugin
                 NodeFactory = () => new StereoCameraNodeModel(),
                 PaletteDisplayName = "Stereo Camera",
                 PaletteDescription = "Streams synchronized color, depth, and independent calibration data.",
+                PaletteCategoryIconKind = "CameraOutline",
+                PaletteIconKind = "CameraOutline",
                 ContentFactory = StereoCameraEditor.CreateContent,
             };
         }

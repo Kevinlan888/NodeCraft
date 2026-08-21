@@ -41,6 +41,10 @@ internal static partial class Program
             var previewOutput = preview.Definition.OutputPorts.Single(port => port.Id == "image");
             var registry = new FlowNodeRegistry();
             registry.RegisterPlugin(plugin.Metadata.Id, context.Registrations);
+            var visionCategory = registry.CreatePaletteCategories().Single(category => category.Title == "Vision");
+            var cameraPaletteItem = visionCategory.Items.Single(item => item.TypeKey == camera.Definition.TypeKey);
+            var stereoPaletteItem = visionCategory.Items.Single(item => item.TypeKey == stereo.Definition.TypeKey);
+            var previewPaletteItem = visionCategory.Items.Single(item => item.TypeKey == preview.Definition.TypeKey);
 
             return plugin.Metadata.Id == "nodecraft.vision"
                 && plugin.Metadata.Version.Equals(new Version(1, 0, 0))
@@ -53,6 +57,12 @@ internal static partial class Program
                 && stereo.NodeFactory != null
                 && stereo.ExecutorFactory != null
                 && stereo.ContentFactory != null
+                && camera.PaletteCategoryIconKind == "CameraOutline"
+                && camera.PaletteIconKind == "CameraOutline"
+                && stereo.PaletteCategoryIconKind == "CameraOutline"
+                && stereo.PaletteIconKind == "CameraOutline"
+                && preview.PaletteCategoryIconKind == "CameraOutline"
+                && preview.PaletteIconKind == "ImageOutline"
                 && stereoOutputIds.SequenceEqual(new[]
                 {
                     "colorImage",
@@ -79,7 +89,11 @@ internal static partial class Program
                 && previewOutput.DataType == FlowDataType.Image
                 && previewInput.IsRequired
                 && registry.Contains(VisionCameraNodeModel.FlowNodeTypeKey)
-                && registry.Contains(FlowImagePreviewNodeModel.FlowNodeTypeKey);
+                && registry.Contains(FlowImagePreviewNodeModel.FlowNodeTypeKey)
+                && visionCategory.IconKind == "CameraOutline"
+                && cameraPaletteItem.IconKind == "CameraOutline"
+                && stereoPaletteItem.IconKind == "CameraOutline"
+                && previewPaletteItem.IconKind == "ImageOutline";
         });
 
         await RunAsync("Stereo camera initializer exposes stable calibration outputs", async () =>

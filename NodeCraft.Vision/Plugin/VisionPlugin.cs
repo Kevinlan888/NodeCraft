@@ -92,6 +92,8 @@ namespace NodeCraft.Vision.Plugin
                 NodeFactory = () => new VisionCameraNodeModel(),
                 PaletteDisplayName = "Vision Camera",
                 PaletteDescription = "Streams complete images from an IMV camera.",
+                PaletteCategoryIconKind = "CameraOutline",
+                PaletteIconKind = "CameraOutline",
                 ContentFactory = VisionCameraEditor.CreateContent,
             };
         }
@@ -129,6 +131,8 @@ namespace NodeCraft.Vision.Plugin
                 NodeFactory = () => new VirtualCameraNodeModel(),
                 PaletteDisplayName = "Virtual Camera",
                 PaletteDescription = "Loops local or builtin images as FlowImage values.",
+                PaletteCategoryIconKind = "CameraOutline",
+                PaletteIconKind = "CameraOutline",
                 ContentFactory = VirtualCameraEditor.CreateContent,
             };
         }
@@ -171,6 +175,8 @@ namespace NodeCraft.Vision.Plugin
                 NodeFactory = () => new FlowImagePreviewNodeModel(),
                 PaletteDisplayName = "Image Preview",
                 PaletteDescription = "Displays a FlowImage without copying or changing the value.",
+                PaletteCategoryIconKind = "CameraOutline",
+                PaletteIconKind = "ImageOutline",
                 ContentFactory = FlowImagePreviewView.CreateContent,
                 RefreshContentAfterExecution = false,
                 ExecutionResultHandler = (node, executionContext) =>

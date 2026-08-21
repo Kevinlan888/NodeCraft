@@ -48,13 +48,20 @@ internal static partial class Program
                 NullLogger.Instance,
                 new Version(1, 0));
             plugin.Register(context);
+            var registration = context.Registrations.Single(item =>
+                item.Definition.TypeKey == TcpClientSendNodeModel.FlowNodeTypeKey);
+            var registry = new FlowNodeRegistry();
+            registry.RegisterPlugin(plugin.Metadata.Id, context.Registrations);
+            var category = registry.CreatePaletteCategories().Single(item => item.Title == "Communication");
+            var paletteItem = category.Items.Single(item => item.TypeKey == TcpClientSendNodeModel.FlowNodeTypeKey);
 
             return plugin.Metadata.Id == "nodecraft.communication"
                 && plugin.Metadata.DisplayName == "Communication"
                 && plugin.Metadata.Version.Equals(new Version(1, 0, 0))
-                && context.Registrations.Any(registration =>
-                    registration.Definition.TypeKey
-                        == "nodecraft.communication.tcp-client-send");
+                && registration.PaletteCategoryIconKind == "LanConnect"
+                && registration.PaletteIconKind == "LanConnect"
+                && category.IconKind == "LanConnect"
+                && paletteItem.IconKind == "LanConnect";
         });
 
         Run("TCP payload encoder preserves bytes and uses UTF-8 fallback", () =>

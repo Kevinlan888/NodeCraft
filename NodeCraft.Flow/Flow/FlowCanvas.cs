@@ -165,6 +165,8 @@ namespace NodeCraft.Flow
 
         public Func<NodeModel, object> NodeContentFactory { get; set; }
 
+        public FlowNodeRegistry NodeRegistry { get; internal set; }
+
         public event EventHandler SelectedNodeChanged;
 
         public event EventHandler GraphChanged;
