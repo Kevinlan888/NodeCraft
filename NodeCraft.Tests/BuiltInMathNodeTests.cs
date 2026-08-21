@@ -87,6 +87,13 @@ internal static partial class Program
             var context = new FlowExecutionContext();
             var node = new WorkflowNode();
             var definition = new FlowNodeDefinition();
+            var contracts = new (IFlowNodeExecutor Executor, double OnlyA, double OnlyB)[]
+            {
+                (new AddNumberExecutor(), 6d, 2d),
+                (new MultiplyNumberExecutor(), 0d, 0d),
+                (new SubtractNumberExecutor(), 6d, -2d),
+                (new DivideNumberExecutor(), 0d, 0d),
+            };
             var add = await new AddNumberExecutor().ExecuteAsync(
                 context, node, definition,
                 new Dictionary<string, object> { ["inputA"] = "3.5", ["inputB"] = true },
@@ -110,18 +117,45 @@ internal static partial class Program
             using var cancelled = new CancellationTokenSource();
             cancelled.Cancel();
 
+            var missingInputsMatch = true;
+            foreach (var contract in contracts)
+            {
+                var neither = await contract.Executor.ExecuteAsync(
+                    context,
+                    node,
+                    definition,
+                    new Dictionary<string, object>(),
+                    CancellationToken.None);
+                var onlyA = await contract.Executor.ExecuteAsync(
+                    context,
+                    node,
+                    definition,
+                    new Dictionary<string, object> { ["inputA"] = 6 },
+                    CancellationToken.None);
+                var onlyB = await contract.Executor.ExecuteAsync(
+                    context,
+                    node,
+                    definition,
+                    new Dictionary<string, object> { ["inputB"] = 2 },
+                    CancellationToken.None);
+                missingInputsMatch &= Equals(neither["output"], 0d)
+                    && Equals(onlyA["output"], contract.OnlyA)
+                    && Equals(onlyB["output"], contract.OnlyB);
+            }
+
             return Equals(add["output"], 4.5d)
                 && Equals(multiply["output"], 10d)
                 && Equals(subtract["output"], 6.5d)
                 && Equals(divide["output"], 4.5d)
                 && Equals(zeroDivide["output"], 0d)
-                && Throws<OperationCanceledException>(() =>
-                    new AddNumberExecutor().ExecuteAsync(
+                && missingInputsMatch
+                && contracts.All(contract => Throws<OperationCanceledException>(() =>
+                    contract.Executor.ExecuteAsync(
                         context,
                         node,
                         definition,
                         new Dictionary<string, object>(),
-                        cancelled.Token).GetAwaiter().GetResult());
+                        cancelled.Token).GetAwaiter().GetResult()));
         });
 
         Run("BuiltIn Math factories return fresh typed XAML views", () => RunOnSta(() =>
@@ -269,27 +303,200 @@ internal static partial class Program
             canvas.GraphModel.Nodes.Add(source);
             canvas.GraphModel.Nodes.Add(target);
             canvas.GraphModel.Links.Add(link);
+            var changes = 0;
+            canvas.GraphChanged += (_, _) => changes++;
             var view = (FrameworkElement)registry.BuildNodeContent(canvas, target);
             var button = FindLogicalDescendants<Button>(view).Single();
             var initial = Equals(button.Content, "Move A -> B") && button.IsEnabled;
             button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var movedView = (FrameworkElement)registry.BuildNodeContent(canvas, target);
             var movedButton = FindLogicalDescendants<Button>(movedView).Single();
+            var moved = link.TargetSlot == 2
+                && target.InputParameters.Single(port => port.PortId == "inputA").LinkId == null
+                && target.InputParameters.Single(port => port.PortId == "inputB").LinkId == link.Id
+                && changes == 1;
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
             var empty = new AddNumberNodeModel { Id = "empty" };
             var emptyCanvas = CreateHeadlessCanvas();
             emptyCanvas.GraphModel.Nodes.Add(empty);
+            var emptyChanges = 0;
+            emptyCanvas.GraphChanged += (_, _) => emptyChanges++;
             var emptyView = (FrameworkElement)registry.BuildNodeContent(emptyCanvas, empty);
             var emptyButton = FindLogicalDescendants<Button>(emptyView).Single();
+            emptyButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
             return initial
-                && link.TargetSlot == 2
-                && target.InputParameters.Single(port => port.PortId == "inputA").LinkId == null
-                && target.InputParameters.Single(port => port.PortId == "inputB").LinkId == link.Id
+                && moved
                 && Equals(movedButton.Content, "Move B -> A")
                 && movedButton.IsEnabled
+                && link.TargetSlot == 1
+                && target.InputParameters.Single(port => port.PortId == "inputA").LinkId == link.Id
+                && target.InputParameters.Single(port => port.PortId == "inputB").LinkId == null
+                && changes == 2
                 && Equals(emptyButton.Content, "Swap A/B")
-                && !emptyButton.IsEnabled;
+                && !emptyButton.IsEnabled
+                && empty.InputParameters.All(port => port.LinkId == null)
+                && emptyChanges == 0;
+        }));
+
+        Run("BuiltIn Math swap rejects duplicate target-slot links without mutation", () => RunOnSta(() =>
+        {
+            CreateBuiltInMathRegistry(out var registry);
+            var target = new AddNumberNodeModel { Id = "duplicate-slot-target" };
+            var firstLink = new GraphLink
+            {
+                Id = "duplicate-slot-first",
+                OriginNodeId = "source-first",
+                OriginSlot = 0,
+                TargetNodeId = target.Id,
+                TargetSlot = 1,
+            };
+            var secondLink = new GraphLink
+            {
+                Id = "duplicate-slot-second",
+                OriginNodeId = "source-second",
+                OriginSlot = 0,
+                TargetNodeId = target.Id,
+                TargetSlot = 1,
+            };
+            target.InputParameters.Single(port => port.PortId == "inputA").LinkId = firstLink.Id;
+            var canvas = CreateHeadlessCanvas();
+            canvas.GraphModel.Nodes.Add(target);
+            canvas.GraphModel.Links.Add(firstLink);
+            canvas.GraphModel.Links.Add(secondLink);
+            var changes = 0;
+            canvas.GraphChanged += (_, _) => changes++;
+            var view = (FrameworkElement)registry.BuildNodeContent(canvas, target);
+            var button = FindLogicalDescendants<Button>(view).Single();
+
+            InvalidOperationException? failure = null;
+            try
+            {
+                button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+            catch (InvalidOperationException exception)
+            {
+                failure = exception;
+            }
+
+            return failure?.Message.Contains(target.Id, StringComparison.Ordinal) == true
+                && failure.Message.Contains("slot 1", StringComparison.OrdinalIgnoreCase)
+                && failure.Message.Contains("at most one", StringComparison.OrdinalIgnoreCase)
+                && firstLink.TargetSlot == 1
+                && secondLink.TargetSlot == 1
+                && target.InputParameters.Single(port => port.PortId == "inputA").LinkId == firstLink.Id
+                && target.InputParameters.Single(port => port.PortId == "inputB").LinkId == null
+                && changes == 0;
+        }));
+
+        Run("BuiltIn Math swap rejects a missing runtime port without mutation", () => RunOnSta(() =>
+        {
+            CreateBuiltInMathRegistry(out var registry);
+            var target = new AddNumberNodeModel { Id = "missing-port-target" };
+            target.InputParameters.RemoveAll(port => port.PortId == "inputB");
+            var firstLink = new GraphLink
+            {
+                Id = "missing-port-first",
+                OriginNodeId = "source-first",
+                OriginSlot = 0,
+                TargetNodeId = target.Id,
+                TargetSlot = 1,
+            };
+            var secondLink = new GraphLink
+            {
+                Id = "missing-port-second",
+                OriginNodeId = "source-second",
+                OriginSlot = 0,
+                TargetNodeId = target.Id,
+                TargetSlot = 2,
+            };
+            target.InputParameters.Single(port => port.PortId == "inputA").LinkId = firstLink.Id;
+            var canvas = CreateHeadlessCanvas();
+            canvas.GraphModel.Nodes.Add(target);
+            canvas.GraphModel.Links.Add(firstLink);
+            canvas.GraphModel.Links.Add(secondLink);
+            var changes = 0;
+            canvas.GraphChanged += (_, _) => changes++;
+            var view = (FrameworkElement)registry.BuildNodeContent(canvas, target);
+            var button = FindLogicalDescendants<Button>(view).Single();
+
+            InvalidOperationException? failure = null;
+            try
+            {
+                button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+            catch (InvalidOperationException exception)
+            {
+                failure = exception;
+            }
+
+            return failure?.Message.Contains("inputB", StringComparison.Ordinal) == true
+                && failure.Message.Contains("exactly one runtime input", StringComparison.OrdinalIgnoreCase)
+                && firstLink.TargetSlot == 1
+                && secondLink.TargetSlot == 2
+                && target.InputParameters.Single().LinkId == firstLink.Id
+                && changes == 0;
+        }));
+
+        Run("BuiltIn Math swap rejects duplicate runtime ports without mutation", () => RunOnSta(() =>
+        {
+            CreateBuiltInMathRegistry(out var registry);
+            var target = new AddNumberNodeModel { Id = "duplicate-port-target" };
+            var firstRuntime = target.InputParameters.Single(port => port.PortId == "inputA");
+            var secondRuntime = target.InputParameters.Single(port => port.PortId == "inputB");
+            firstRuntime.LinkId = "duplicate-port-first";
+            secondRuntime.LinkId = "duplicate-port-second";
+            target.InputParameters.Add(new PortParameter
+            {
+                PortId = "inputB",
+                LinkId = "duplicate-runtime-state",
+                Parameter = new Parameter { ParameterType = FlowDataType.Number.Key },
+                PortDirection = EPortDirection.None,
+            });
+            var firstLink = new GraphLink
+            {
+                Id = firstRuntime.LinkId,
+                OriginNodeId = "source-first",
+                OriginSlot = 0,
+                TargetNodeId = target.Id,
+                TargetSlot = 1,
+            };
+            var secondLink = new GraphLink
+            {
+                Id = secondRuntime.LinkId,
+                OriginNodeId = "source-second",
+                OriginSlot = 0,
+                TargetNodeId = target.Id,
+                TargetSlot = 2,
+            };
+            var canvas = CreateHeadlessCanvas();
+            canvas.GraphModel.Nodes.Add(target);
+            canvas.GraphModel.Links.Add(firstLink);
+            canvas.GraphModel.Links.Add(secondLink);
+            var changes = 0;
+            canvas.GraphChanged += (_, _) => changes++;
+            var view = (FrameworkElement)registry.BuildNodeContent(canvas, target);
+            var button = FindLogicalDescendants<Button>(view).Single();
+
+            InvalidOperationException? failure = null;
+            try
+            {
+                button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+            catch (InvalidOperationException exception)
+            {
+                failure = exception;
+            }
+
+            return failure?.Message.Contains("inputB", StringComparison.Ordinal) == true
+                && failure.Message.Contains("exactly one runtime input", StringComparison.OrdinalIgnoreCase)
+                && firstLink.TargetSlot == 1
+                && secondLink.TargetSlot == 2
+                && firstRuntime.LinkId == "duplicate-port-first"
+                && secondRuntime.LinkId == "duplicate-port-second"
+                && target.InputParameters.Last().LinkId == "duplicate-runtime-state"
+                && changes == 0;
         }));
 
         Run("BuiltIn Math views own formulas descriptions controls spacing and theme in embedded XAML", () =>

@@ -105,21 +105,43 @@ namespace NodeCraft.BuiltIn.Views
             var secondSlot = dataInputs[1].Index;
             var firstLabel = dataInputs[0].Port.DisplayName ?? dataInputs[0].Port.Id;
             var secondLabel = dataInputs[1].Port.DisplayName ?? dataInputs[1].Port.Id;
-            var firstConnection = FindTargetLink(canvas, node.Id, firstSlot);
-            var secondConnection = FindTargetLink(canvas, node.Id, secondSlot);
+            var firstConnections = FindTargetLinks(canvas, node.Id, firstSlot);
+            var secondConnections = FindTargetLinks(canvas, node.Id, secondSlot);
+            var firstConnection = firstConnections.Length == 1 ? firstConnections[0] : null;
+            var secondConnection = secondConnections.Length == 1 ? secondConnections[0] : null;
 
-            firstValue.Text = DescribeConnection(canvas, firstConnection);
-            secondValue.Text = DescribeConnection(canvas, secondConnection);
+            firstValue.Text = firstConnections.Length > 1
+                ? "已连接"
+                : DescribeConnection(canvas, firstConnection);
+            secondValue.Text = secondConnections.Length > 1
+                ? "已连接"
+                : DescribeConnection(canvas, secondConnection);
             swapButton.Content = BuildSwapButtonLabel(
                 firstLabel,
                 secondLabel,
-                firstConnection,
-                secondConnection);
-            swapButton.IsEnabled = firstConnection != null || secondConnection != null;
+                firstConnections.Length > 0,
+                secondConnections.Length > 0);
+            swapButton.IsEnabled = firstConnections.Length > 0 || secondConnections.Length > 0;
             swapButton.Click += (_, __) =>
             {
-                var currentFirstConnection = FindTargetLink(canvas, node.Id, firstSlot);
-                var currentSecondConnection = FindTargetLink(canvas, node.Id, secondSlot);
+                var currentFirstConnections = FindTargetLinks(canvas, node.Id, firstSlot);
+                var currentSecondConnections = FindTargetLinks(canvas, node.Id, secondSlot);
+                var firstRuntimePorts = FindRuntimeInputs(node, dataInputs[0].Port.Id);
+                var secondRuntimePorts = FindRuntimeInputs(node, dataInputs[1].Port.Id);
+
+                ValidateTargetLinkCount(node, firstSlot, currentFirstConnections.Length);
+                ValidateTargetLinkCount(node, secondSlot, currentSecondConnections.Length);
+                ValidateRuntimePortCount(node, dataInputs[0].Port.Id, firstRuntimePorts.Length);
+                ValidateRuntimePortCount(node, dataInputs[1].Port.Id, secondRuntimePorts.Length);
+
+                var currentFirstConnection = currentFirstConnections.Length == 1
+                    ? currentFirstConnections[0]
+                    : null;
+                var currentSecondConnection = currentSecondConnections.Length == 1
+                    ? currentSecondConnections[0]
+                    : null;
+                var firstRuntimePort = firstRuntimePorts[0];
+                var secondRuntimePort = secondRuntimePorts[0];
                 if (currentFirstConnection == null && currentSecondConnection == null)
                 {
                     return;
@@ -135,8 +157,8 @@ namespace NodeCraft.BuiltIn.Views
                     currentSecondConnection.TargetSlot = firstSlot;
                 }
 
-                SetPortLinkId(node, dataInputs[0].Port.Id, currentSecondConnection?.Id);
-                SetPortLinkId(node, dataInputs[1].Port.Id, currentFirstConnection?.Id);
+                firstRuntimePort.LinkId = currentSecondConnection?.Id;
+                secondRuntimePort.LinkId = currentFirstConnection?.Id;
                 canvas.NotifyGraphChanged();
             };
         }
@@ -160,11 +182,41 @@ namespace NodeCraft.BuiltIn.Views
             return registration;
         }
 
-        private static GraphLink FindTargetLink(FlowCanvas canvas, string nodeId, int slot)
+        private static GraphLink[] FindTargetLinks(FlowCanvas canvas, string nodeId, int slot)
         {
-            return canvas.GraphModel?.Links?.FirstOrDefault(link =>
-                string.Equals(link?.TargetNodeId, nodeId, StringComparison.Ordinal)
-                && link.TargetSlot == slot);
+            return canvas.GraphModel?.Links?
+                .Where(link => string.Equals(link?.TargetNodeId, nodeId, StringComparison.Ordinal)
+                    && link.TargetSlot == slot)
+                .ToArray()
+                ?? Array.Empty<GraphLink>();
+        }
+
+        private static PortParameter[] FindRuntimeInputs(NodeModel node, string portId)
+        {
+            return node.InputParameters?
+                .Where(port => string.Equals(port?.PortId, portId, StringComparison.Ordinal))
+                .ToArray()
+                ?? Array.Empty<PortParameter>();
+        }
+
+        private static void ValidateTargetLinkCount(NodeModel node, int slot, int count)
+        {
+            if (count > 1)
+            {
+                throw new InvalidOperationException(
+                    "Node '" + node.Id + "' binary input slot " + slot
+                    + " must have at most one target link; found " + count + ".");
+            }
+        }
+
+        private static void ValidateRuntimePortCount(NodeModel node, string portId, int count)
+        {
+            if (count != 1)
+            {
+                throw new InvalidOperationException(
+                    "Node '" + node.Id + "' binary input '" + portId
+                    + "' must have exactly one runtime input parameter; found " + count + ".");
+            }
         }
 
         private static string DescribeConnection(FlowCanvas canvas, GraphLink link)
@@ -198,35 +250,25 @@ namespace NodeCraft.BuiltIn.Views
         private static string BuildSwapButtonLabel(
             string firstLabel,
             string secondLabel,
-            GraphLink firstConnection,
-            GraphLink secondConnection)
+            bool firstConnected,
+            bool secondConnected)
         {
-            if (firstConnection != null && secondConnection != null)
+            if (firstConnected && secondConnected)
             {
                 return "Swap " + firstLabel + "/" + secondLabel;
             }
 
-            if (firstConnection != null)
+            if (firstConnected)
             {
                 return "Move " + firstLabel + " -> " + secondLabel;
             }
 
-            if (secondConnection != null)
+            if (secondConnected)
             {
                 return "Move " + secondLabel + " -> " + firstLabel;
             }
 
             return "Swap " + firstLabel + "/" + secondLabel;
-        }
-
-        private static void SetPortLinkId(NodeModel node, string portId, string linkId)
-        {
-            var runtimePort = node.InputParameters?.SingleOrDefault(port =>
-                string.Equals(port?.PortId, portId, StringComparison.Ordinal));
-            if (runtimePort != null)
-            {
-                runtimePort.LinkId = linkId;
-            }
         }
     }
 }
