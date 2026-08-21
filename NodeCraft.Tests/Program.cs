@@ -80,6 +80,7 @@ internal static partial class Program
         RunThemeTests();
         RunDocumentLifecycleTests();
         RunDynamicInputPortTests();
+        await RunJsonSerializeNodeTestsAsync();
         await RunCommunicationTestsAsync();
 
         Run("NodeCraft Flow owns its localization resources", () =>

@@ -105,6 +105,10 @@ namespace NodeCraft.Flow
             {
                 container.Children.Add(BuildUnaryOperationNode(node, "!A", "对布尔输入取反"));
             }
+            else if (node is JsonSerializeNodeModel)
+            {
+                container.Children.Add(BuildUnaryOperationNode(node, "JSON", "将任意输入格式化为多行 JSON"));
+            }
             else if (node is IfNodeModel)
             {
                 container.Children.Add(BuildIfNode(node));

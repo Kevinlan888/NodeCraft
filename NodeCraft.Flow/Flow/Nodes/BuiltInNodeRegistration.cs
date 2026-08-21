@@ -100,6 +100,38 @@ namespace NodeCraft.Flow.Nodes
             NodeExecutorFactory.Registry.Register(new FlowNodeRegistration(
                 new FlowNodeDefinition
                 {
+                    TypeKey = JsonSerializeExecutor.FlowNodeTypeKey,
+                    DisplayName = "JSON Serialize",
+                    Category = "Preview",
+                    InputPorts =
+                    {
+                        new FlowPortDefinition
+                        {
+                            Id = BuiltInNodePorts.Input,
+                            DisplayName = "Input",
+                            IOType = EIOType.Input,
+                            DataType = FlowDataType.Object,
+                            PreferredDirection = EPortDirection.Left,
+                            IsRequired = true,
+                        }
+                    },
+                    OutputPorts =
+                    {
+                        new FlowPortDefinition
+                        {
+                            Id = BuiltInNodePorts.Output,
+                            DisplayName = "JSON",
+                            IOType = EIOType.Output,
+                            DataType = FlowDataType.String,
+                            PreferredDirection = EPortDirection.Right,
+                        }
+                    }
+                },
+                () => new JsonSerializeExecutor()));
+
+            NodeExecutorFactory.Registry.Register(new FlowNodeRegistration(
+                new FlowNodeDefinition
+                {
                     TypeKey = IntegerValueExecutor.FlowNodeTypeKey,
                     DisplayName = "Integer Value",
                     Category = "Value",
@@ -621,6 +653,7 @@ namespace NodeCraft.Flow.Nodes
             ConfigureBuiltInNode(BooleanNotExecutor.FlowNodeTypeKey, typeof(BooleanNotNodeModel), () => new BooleanNotNodeModel(), "!A", true);
             ConfigureBuiltInNode(IfExecutor.FlowNodeTypeKey, typeof(IfNodeModel), () => new IfNodeModel(), "condition ? true : false", true);
             ConfigureBuiltInNode(AppendTextExecutor.FlowNodeTypeKey, typeof(AppendTextNodeModel), () => new AppendTextNodeModel(), "给字符串追加后缀", false);
+            ConfigureBuiltInNode(JsonSerializeExecutor.FlowNodeTypeKey, typeof(JsonSerializeNodeModel), () => new JsonSerializeNodeModel(), "将任意输入格式化为多行 JSON", true);
             ConfigureBuiltInNode(
                 TextPreviewExecutor.FlowNodeTypeKey,
                 typeof(TextPreviewNodeModel),
