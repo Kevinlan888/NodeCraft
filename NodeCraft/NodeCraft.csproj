@@ -21,6 +21,9 @@
   <ItemGroup>
     <PackageReference Include="CommonControls.WPF" Version="1.0.0" />
     <ProjectReference Include="..\NodeCraft.Flow\NodeCraft.Flow.csproj" />
+    <ProjectReference Include="..\NodeCraft.BuiltIn\NodeCraft.BuiltIn.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false" />
   </ItemGroup>
 
   <ItemGroup>
@@ -28,4 +31,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <Target Name="StageBuiltInPluginForHost" AfterTargets="Build">
+    <MSBuild Projects="$(MSBuildProjectDirectory)\..\NodeCraft.BuiltIn\NodeCraft.BuiltIn.csproj"
+             Targets="StageBuiltInPlugin"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);BuiltInPackageRoot=$(TargetDir)Plugins\NodeCraft.BuiltIn" />
+  </Target>
 </Project>

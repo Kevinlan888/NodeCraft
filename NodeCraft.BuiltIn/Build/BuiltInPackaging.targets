@@ -1,0 +1,23 @@
+<Project>
+  <Target Name="StageBuiltInPlugin" DependsOnTargets="Build">
+    <PropertyGroup>
+      <BuiltInPackageRoot Condition="'$(BuiltInPackageRoot)' == ''">$(TargetDir)Plugins\NodeCraft.BuiltIn</BuiltInPackageRoot>
+      <_BuiltInPackageRootFullPath Condition="'$(BuiltInPackageRoot)' != ''">$([System.IO.Path]::GetFullPath('$(BuiltInPackageRoot)'))</_BuiltInPackageRootFullPath>
+      <_BuiltInPackageRootPathRoot Condition="'$(_BuiltInPackageRootFullPath)' != ''">$([System.IO.Path]::GetPathRoot('$(_BuiltInPackageRootFullPath)'))</_BuiltInPackageRootPathRoot>
+    </PropertyGroup>
+
+    <Error Condition="'$(BuiltInPackageRoot)' == ''"
+           Text="Built-in plugin package root is required." />
+    <Error Condition="'$(_BuiltInPackageRootFullPath)' == '$(_BuiltInPackageRootPathRoot)'"
+           Text="Built-in plugin package root must not be a file-system root." />
+    <Error Condition="!Exists('$(TargetPath)')"
+           Text="Built-in plugin assembly was not built." />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\plugin.json')"
+           Text="Built-in plugin manifest is missing." />
+
+    <RemoveDir Directories="$(BuiltInPackageRoot)" />
+    <MakeDir Directories="$(BuiltInPackageRoot)" />
+    <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)\plugin.json"
+          DestinationFolder="$(BuiltInPackageRoot)" />
+  </Target>
+</Project>

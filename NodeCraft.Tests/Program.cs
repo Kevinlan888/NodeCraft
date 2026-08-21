@@ -53,6 +53,18 @@ internal static partial class Program
 
     private static async Task<int> Main(string[] args)
     {
+        if (args.Contains("--built-in-real-loader-child", StringComparer.Ordinal))
+        {
+            RunBuiltInRealLoaderChild(args);
+            return _failures == 0 ? 0 : 1;
+        }
+
+        if (args.Contains("--built-in-packaging-only", StringComparer.Ordinal))
+        {
+            await RunBuiltInPackagingTestsAsync();
+            return _failures == 0 ? 0 : 1;
+        }
+
         if (args.Contains("--built-in-contract-only", StringComparer.Ordinal))
         {
             await RunBuiltInPluginContractTestsAsync();

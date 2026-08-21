@@ -53,4 +53,6 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <Import Project="Build\BuiltInPackaging.targets" />
 </Project>
