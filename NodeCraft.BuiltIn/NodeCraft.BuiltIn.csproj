@@ -20,6 +20,10 @@
     <Page Remove="Views\IntegerValueEditor.xaml" />
     <Page Remove="Views\FloatValueEditor.xaml" />
     <Page Remove="Views\BooleanValueEditor.xaml" />
+    <Page Remove="Views\AddNumberView.xaml" />
+    <Page Remove="Views\MultiplyNumberView.xaml" />
+    <Page Remove="Views\SubtractNumberView.xaml" />
+    <Page Remove="Views\DivideNumberView.xaml" />
     <EmbeddedResource Include="Views\StringValueEditor.xaml" />
     <EmbeddedResource Include="Views\AppendTextEditor.xaml" />
     <EmbeddedResource Include="Views\TextPreviewView.xaml" />
@@ -27,6 +31,10 @@
     <EmbeddedResource Include="Views\IntegerValueEditor.xaml" />
     <EmbeddedResource Include="Views\FloatValueEditor.xaml" />
     <EmbeddedResource Include="Views\BooleanValueEditor.xaml" />
+    <EmbeddedResource Include="Views\AddNumberView.xaml" />
+    <EmbeddedResource Include="Views\MultiplyNumberView.xaml" />
+    <EmbeddedResource Include="Views\SubtractNumberView.xaml" />
+    <EmbeddedResource Include="Views\DivideNumberView.xaml" />
     <None Update="plugin.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

@@ -22,7 +22,10 @@ internal static partial class Program
             var plugin = new BuiltInPlugin();
             var context = new PluginRegistrationContext(NullLogger.Instance, new Version(1, 0));
             plugin.Register(context);
-            var registrations = context.Registrations;
+            var registrations = context.Registrations
+                .Where(item => item.Definition.Category == "Preview"
+                    || item.Definition.Category == "Value")
+                .ToArray();
             var expectedTypeKeys = new[]
             {
                 "nodecraft.builtin.string-value",
@@ -61,7 +64,7 @@ internal static partial class Program
                     FlowDataType.Boolean),
             };
 
-            return registrations.Count == 7
+            return registrations.Length == 7
                 && registrations.Select(item => item.Definition.TypeKey)
                     .SequenceEqual(expectedTypeKeys, StringComparer.Ordinal)
                 && registrations.Take(4).All(item => item.Definition.Category == "Preview")
