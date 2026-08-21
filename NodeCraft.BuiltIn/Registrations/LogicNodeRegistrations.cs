@@ -1,0 +1,159 @@
+using System;
+using System.Collections.Generic;
+using System.Windows;
+using NodeCraft.BuiltIn.Nodes;
+using NodeCraft.BuiltIn.Views;
+using NodeCraft.Flow;
+
+namespace NodeCraft.BuiltIn.Registrations
+{
+    internal static class LogicNodeRegistrations
+    {
+        internal static IReadOnlyList<FlowNodeRegistration> CreateAll()
+        {
+            return new[]
+            {
+                CreateBinary(GreaterThanNodeModel.FlowNodeTypeKey, "Greater Than", "A > B", FlowDataType.Number, typeof(GreaterThanNodeModel), () => new GreaterThanNodeModel(), () => new GreaterThanExecutor(), GreaterThanView.CreateContent),
+                CreateBinary(LessThanNodeModel.FlowNodeTypeKey, "Less Than", "A < B", FlowDataType.Number, typeof(LessThanNodeModel), () => new LessThanNodeModel(), () => new LessThanExecutor(), LessThanView.CreateContent),
+                CreateBinary(EqualNodeModel.FlowNodeTypeKey, "Equal", "A == B", FlowDataType.Object, typeof(EqualNodeModel), () => new EqualNodeModel(), () => new EqualExecutor(), EqualView.CreateContent),
+                CreateBinary(BooleanAndNodeModel.FlowNodeTypeKey, "Boolean And", "A && B", FlowDataType.Boolean, typeof(BooleanAndNodeModel), () => new BooleanAndNodeModel(), () => new BooleanAndExecutor(), BooleanAndView.CreateContent),
+                CreateBinary(BooleanOrNodeModel.FlowNodeTypeKey, "Boolean Or", "A || B", FlowDataType.Boolean, typeof(BooleanOrNodeModel), () => new BooleanOrNodeModel(), () => new BooleanOrExecutor(), BooleanOrView.CreateContent),
+                CreateBooleanNot(),
+                CreateIf(),
+            };
+        }
+
+        private static FlowNodeRegistration CreateBinary(
+            string typeKey,
+            string displayName,
+            string description,
+            FlowDataType inputType,
+            Type modelType,
+            Func<NodeModel> nodeFactory,
+            Func<IFlowNodeExecutor> executorFactory,
+            Func<FlowCanvas, NodeModel, FrameworkElement> contentFactory)
+        {
+            return CreateRegistration(
+                new FlowNodeDefinition
+                {
+                    TypeKey = typeKey,
+                    DisplayName = displayName,
+                    Category = "Logic",
+                    InputPorts =
+                    {
+                        Input(BuiltInPortIds.InputA, "A", inputType),
+                        Input(BuiltInPortIds.InputB, "B", inputType),
+                    },
+                    OutputPorts =
+                    {
+                        Output(BuiltInPortIds.Output, "Result", FlowDataType.Boolean),
+                    },
+                },
+                description,
+                modelType,
+                nodeFactory,
+                executorFactory,
+                contentFactory);
+        }
+
+        private static FlowNodeRegistration CreateBooleanNot()
+        {
+            return CreateRegistration(
+                new FlowNodeDefinition
+                {
+                    TypeKey = BooleanNotNodeModel.FlowNodeTypeKey,
+                    DisplayName = "Boolean Not",
+                    Category = "Logic",
+                    InputPorts =
+                    {
+                        Input(BuiltInPortIds.Input, "Input", FlowDataType.Boolean),
+                    },
+                    OutputPorts =
+                    {
+                        Output(BuiltInPortIds.Output, "Result", FlowDataType.Boolean),
+                    },
+                },
+                "!A",
+                typeof(BooleanNotNodeModel),
+                () => new BooleanNotNodeModel(),
+                () => new BooleanNotExecutor(),
+                BooleanNotView.CreateContent);
+        }
+
+        private static FlowNodeRegistration CreateIf()
+        {
+            return CreateRegistration(
+                new FlowNodeDefinition
+                {
+                    TypeKey = IfNodeModel.FlowNodeTypeKey,
+                    DisplayName = "If",
+                    Category = "Logic",
+                    InputPorts =
+                    {
+                        Input(BuiltInPortIds.Condition, "Condition", FlowDataType.Boolean),
+                    },
+                    OutputPorts =
+                    {
+                        Output(BuiltInPortIds.True, "True", FlowDataType.Control),
+                        Output(BuiltInPortIds.False, "False", FlowDataType.Control),
+                    },
+                },
+                "condition ? true : false",
+                typeof(IfNodeModel),
+                () => new IfNodeModel(),
+                () => new IfExecutor(),
+                IfView.CreateContent);
+        }
+
+        private static FlowNodeRegistration CreateRegistration(
+            FlowNodeDefinition definition,
+            string description,
+            Type modelType,
+            Func<NodeModel> nodeFactory,
+            Func<IFlowNodeExecutor> executorFactory,
+            Func<FlowCanvas, NodeModel, FrameworkElement> contentFactory)
+        {
+            return new FlowNodeRegistration(definition, executorFactory)
+            {
+                NodeModelType = modelType,
+                NodeFactory = nodeFactory,
+                PaletteDisplayName = definition.DisplayName,
+                PaletteDescription = description,
+                PaletteCategoryIconKind = "SourceBranch",
+                PaletteIconKind = "SourceBranch",
+                ContentFactory = contentFactory,
+            };
+        }
+
+        private static FlowPortDefinition Input(
+            string id,
+            string displayName,
+            FlowDataType dataType)
+        {
+            return new FlowPortDefinition
+            {
+                Id = id,
+                DisplayName = displayName,
+                IOType = EIOType.Input,
+                DataType = dataType,
+                PreferredDirection = EPortDirection.Left,
+                IsRequired = true,
+            };
+        }
+
+        private static FlowPortDefinition Output(
+            string id,
+            string displayName,
+            FlowDataType dataType)
+        {
+            return new FlowPortDefinition
+            {
+                Id = id,
+                DisplayName = displayName,
+                IOType = EIOType.Output,
+                DataType = dataType,
+                PreferredDirection = EPortDirection.Right,
+            };
+        }
+    }
+}

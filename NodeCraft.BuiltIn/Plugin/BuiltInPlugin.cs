@@ -31,7 +31,12 @@ namespace NodeCraft.BuiltIn.Plugin
                 context.Nodes.Register(registration);
             }
 
-            context.Logger.LogInformation("Registered built-in Preview, Value, and Math nodes.");
+            foreach (var registration in LogicNodeRegistrations.CreateAll())
+            {
+                context.Nodes.Register(registration);
+            }
+
+            context.Logger.LogInformation("Registered built-in Preview, Value, Math, and Logic nodes.");
         }
     }
 }

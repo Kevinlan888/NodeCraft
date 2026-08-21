@@ -7,6 +7,19 @@ namespace NodeCraft.BuiltIn.Views
 {
     internal static class BuiltInInputViewSupport
     {
+        internal static void BindUnary(
+            FlowCanvas canvas,
+            NodeModel node,
+            TextBlock inputValue)
+        {
+            if (inputValue == null)
+            {
+                throw new ArgumentNullException(nameof(inputValue));
+            }
+
+            inputValue.Text = DescribeUnaryInput(canvas, node);
+        }
+
         internal static string DescribeUnaryInput(FlowCanvas canvas, NodeModel node)
         {
             if (canvas?.NodeRegistry == null)

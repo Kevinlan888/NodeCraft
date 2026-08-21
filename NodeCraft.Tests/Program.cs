@@ -51,12 +51,19 @@ internal static partial class Program
         };
     }
 
-    private static async Task<int> Main()
+    private static async Task<int> Main(string[] args)
     {
+        if (args.Contains("--built-in-logic-only", StringComparer.Ordinal))
+        {
+            await RunBuiltInLogicNodeTestsAsync();
+            return _failures == 0 ? 0 : 1;
+        }
+
         RunFlowNodeRegistryPresentationTests();
         await RunBuiltInPreviewNodeTestsAsync();
         RunBuiltInValueNodeTests();
         await RunBuiltInMathNodeTestsAsync();
+        await RunBuiltInLogicNodeTestsAsync();
         RunVisualContractTests();
         RunAlgorithmPluginTests();
         RunAlgorithmResultTests();
