@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -264,10 +265,10 @@ internal static partial class Program
             });
         }));
 
-        Run("BuiltIn Logic views are seven independent embedded XAML resources with complete policy", () =>
+        Run("BuiltIn Logic views are seven independent BAML-compiled XAML resources with complete policy", () =>
         {
             var project = XDocument.Load(FindRepositoryFile("NodeCraft.BuiltIn", "NodeCraft.BuiltIn.csproj"));
-            var resources = typeof(GreaterThanView).Assembly.GetManifestResourceNames();
+            var assembly = typeof(GreaterThanView).Assembly;
             var binary = new[]
             {
                 new LogicViewContract("GreaterThanView", "A > B", "当 A 大于 B 时输出 true"),
@@ -286,17 +287,17 @@ internal static partial class Program
             };
 
             return binary.All(view =>
-                LogicViewIsEmbedded(project, resources, view.ViewName)
+                LogicViewCompilesToBaml(assembly, project, view.ViewName)
                 && ReadBuiltInView(view.ViewName).Contains("Text=\"" + view.Formula + "\"", StringComparison.Ordinal)
                 && ReadBuiltInView(view.ViewName).Contains("Text=\"" + view.Description + "\"", StringComparison.Ordinal)
                 && ReadBuiltInView(view.ViewName).Contains("x:Name=\"InputAValue\"", StringComparison.Ordinal)
                 && ReadBuiltInView(view.ViewName).Contains("x:Name=\"InputBValue\"", StringComparison.Ordinal)
                 && ReadBuiltInView(view.ViewName).Contains("x:Name=\"SwapInputsButton\"", StringComparison.Ordinal))
-                && LogicViewIsEmbedded(project, resources, "BooleanNotView")
+                && LogicViewCompilesToBaml(assembly, project, "BooleanNotView")
                 && ReadBuiltInView("BooleanNotView").Contains("Text=\"!A\"", StringComparison.Ordinal)
                 && ReadBuiltInView("BooleanNotView").Contains("Text=\"反转布尔输入\"", StringComparison.Ordinal)
                 && ReadBuiltInView("BooleanNotView").Contains("x:Name=\"InputValue\"", StringComparison.Ordinal)
-                && LogicViewIsEmbedded(project, resources, "IfView")
+                && LogicViewCompilesToBaml(assembly, project, "IfView")
                 && ReadBuiltInView("IfView").Contains("x:Name=\"IF\"", StringComparison.Ordinal)
                 && ReadBuiltInView("IfView").Contains("x:Name=\"TrueLabel\"", StringComparison.Ordinal)
                 && ReadBuiltInView("IfView").Contains("x:Name=\"FalseLabel\"", StringComparison.Ordinal)
@@ -451,19 +452,17 @@ internal static partial class Program
             && port.IsRequired == expected.IsRequired;
     }
 
-    private static bool LogicViewIsEmbedded(
+    private static bool LogicViewCompilesToBaml(
+        Assembly assembly,
         XDocument project,
-        string[] resources,
         string viewName)
     {
         var relativePath = @"Views\" + viewName + ".xaml";
-        return project.Descendants("Page").Any(item =>
+        return !project.Descendants("Page").Any(item =>
                 (string?)item.Attribute("Remove") == relativePath)
-            && project.Descendants("EmbeddedResource").Any(item =>
+            && !project.Descendants("EmbeddedResource").Any(item =>
                 (string?)item.Attribute("Include") == relativePath)
-            && resources.Contains(
-                "NodeCraft.BuiltIn.Views." + viewName + ".xaml",
-                StringComparer.Ordinal);
+            && ViewCompilesToBaml(assembly, viewName);
     }
 
     private static string ReadBuiltInView(string viewName)

@@ -7,7 +7,7 @@ using NodeCraft.Flow;
 
 namespace NodeCraft.BuiltIn.Views
 {
-    internal sealed class FloatValueEditor : UserControl
+    internal sealed partial class FloatValueEditor : UserControl
     {
         private readonly FlowCanvas _canvas;
         private readonly FloatValueNodeModel _node;
@@ -18,11 +18,8 @@ namespace NodeCraft.BuiltIn.Views
         {
             _canvas = canvas ?? throw new ArgumentNullException(nameof(canvas));
             _node = node ?? throw new ArgumentNullException(nameof(node));
-            var root = BuiltInXamlViewLoader.LoadAndAttach(this, nameof(FloatValueEditor));
-            _floatEditor = BuiltInXamlViewLoader.RequireElement<TextBox>(
-                root,
-                nameof(FloatValueEditor),
-                "FloatEditor");
+            InitializeComponent();
+            _floatEditor = FloatEditor;
             _floatEditor.TextChanged += FloatEditor_TextChanged;
             _floatEditor.Text = _node.FloatValue.ToString(
                 "F3",

@@ -13,42 +13,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\NodeCraft.Flow\NodeCraft.Flow.csproj" Private="false" />
-    <Page Remove="Views\StringValueEditor.xaml" />
-    <Page Remove="Views\AppendTextEditor.xaml" />
-    <Page Remove="Views\TextPreviewView.xaml" />
-    <Page Remove="Views\JsonSerializeView.xaml" />
-    <Page Remove="Views\IntegerValueEditor.xaml" />
-    <Page Remove="Views\FloatValueEditor.xaml" />
-    <Page Remove="Views\BooleanValueEditor.xaml" />
-    <Page Remove="Views\AddNumberView.xaml" />
-    <Page Remove="Views\MultiplyNumberView.xaml" />
-    <Page Remove="Views\SubtractNumberView.xaml" />
-    <Page Remove="Views\DivideNumberView.xaml" />
-    <Page Remove="Views\GreaterThanView.xaml" />
-    <Page Remove="Views\LessThanView.xaml" />
-    <Page Remove="Views\EqualView.xaml" />
-    <Page Remove="Views\BooleanAndView.xaml" />
-    <Page Remove="Views\BooleanOrView.xaml" />
-    <Page Remove="Views\BooleanNotView.xaml" />
-    <Page Remove="Views\IfView.xaml" />
-    <EmbeddedResource Include="Views\StringValueEditor.xaml" />
-    <EmbeddedResource Include="Views\AppendTextEditor.xaml" />
-    <EmbeddedResource Include="Views\TextPreviewView.xaml" />
-    <EmbeddedResource Include="Views\JsonSerializeView.xaml" />
-    <EmbeddedResource Include="Views\IntegerValueEditor.xaml" />
-    <EmbeddedResource Include="Views\FloatValueEditor.xaml" />
-    <EmbeddedResource Include="Views\BooleanValueEditor.xaml" />
-    <EmbeddedResource Include="Views\AddNumberView.xaml" />
-    <EmbeddedResource Include="Views\MultiplyNumberView.xaml" />
-    <EmbeddedResource Include="Views\SubtractNumberView.xaml" />
-    <EmbeddedResource Include="Views\DivideNumberView.xaml" />
-    <EmbeddedResource Include="Views\GreaterThanView.xaml" />
-    <EmbeddedResource Include="Views\LessThanView.xaml" />
-    <EmbeddedResource Include="Views\EqualView.xaml" />
-    <EmbeddedResource Include="Views\BooleanAndView.xaml" />
-    <EmbeddedResource Include="Views\BooleanOrView.xaml" />
-    <EmbeddedResource Include="Views\BooleanNotView.xaml" />
-    <EmbeddedResource Include="Views\IfView.xaml" />
     <None Update="plugin.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

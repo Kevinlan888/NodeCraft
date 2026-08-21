@@ -4199,6 +4199,24 @@ namespace Decoy { internal sealed class Notes { } }
         throw new FileNotFoundException($"Could not locate repository file: {string.Join(Path.DirectorySeparatorChar, pathSegments)}");
     }
 
+    private static bool ViewCompilesToBaml(Assembly assembly, string viewName)
+    {
+        using var stream = assembly.GetManifestResourceStream(
+            assembly.GetName().Name + ".g.resources");
+        if (stream == null)
+        {
+            return false;
+        }
+
+        var key = "views/" + viewName.ToLowerInvariant() + ".baml";
+        using var reader = new System.Resources.ResourceReader(stream);
+        return reader.Cast<System.Collections.DictionaryEntry>()
+            .Any(entry => string.Equals(
+                (string)entry.Key,
+                key,
+                StringComparison.OrdinalIgnoreCase));
+    }
+
     private static bool SampleSourcesAvoidLegacyPortDependencies(
         IEnumerable<(string Path, string Text)> sources)
     {

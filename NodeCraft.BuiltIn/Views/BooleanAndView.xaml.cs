@@ -6,17 +6,17 @@ using NodeCraft.Flow;
 
 namespace NodeCraft.BuiltIn.Views
 {
-    internal sealed class BooleanAndView : UserControl
+    internal sealed partial class BooleanAndView : UserControl
     {
         private BooleanAndView(FlowCanvas canvas, BooleanAndNodeModel node)
         {
-            var root = BuiltInXamlViewLoader.LoadAndAttach(this, nameof(BooleanAndView));
+            InitializeComponent();
             BuiltInInputViewSupport.BindBinary(
                 canvas,
                 node,
-                BuiltInXamlViewLoader.RequireElement<TextBlock>(root, nameof(BooleanAndView), "InputAValue"),
-                BuiltInXamlViewLoader.RequireElement<TextBlock>(root, nameof(BooleanAndView), "InputBValue"),
-                BuiltInXamlViewLoader.RequireElement<Button>(root, nameof(BooleanAndView), "SwapInputsButton"));
+                InputAValue,
+                InputBValue,
+                SwapInputsButton);
         }
 
         internal static FrameworkElement CreateContent(FlowCanvas canvas, NodeModel node)

@@ -6,17 +6,17 @@ using NodeCraft.Flow;
 
 namespace NodeCraft.BuiltIn.Views
 {
-    internal sealed class GreaterThanView : UserControl
+    internal sealed partial class GreaterThanView : UserControl
     {
         private GreaterThanView(FlowCanvas canvas, GreaterThanNodeModel node)
         {
-            var root = BuiltInXamlViewLoader.LoadAndAttach(this, nameof(GreaterThanView));
+            InitializeComponent();
             BuiltInInputViewSupport.BindBinary(
                 canvas,
                 node,
-                BuiltInXamlViewLoader.RequireElement<TextBlock>(root, nameof(GreaterThanView), "InputAValue"),
-                BuiltInXamlViewLoader.RequireElement<TextBlock>(root, nameof(GreaterThanView), "InputBValue"),
-                BuiltInXamlViewLoader.RequireElement<Button>(root, nameof(GreaterThanView), "SwapInputsButton"));
+                InputAValue,
+                InputBValue,
+                SwapInputsButton);
         }
 
         internal static FrameworkElement CreateContent(FlowCanvas canvas, NodeModel node)

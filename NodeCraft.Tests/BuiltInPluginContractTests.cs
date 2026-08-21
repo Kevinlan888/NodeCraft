@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -120,10 +121,7 @@ internal static partial class Program
             var registry = new FlowNodeRegistry();
             registry.RegisterPlugin(plugin.Metadata.Id, registrations);
             var assembly = typeof(BuiltInPlugin).Assembly;
-            var expectedResourceNames = contracts
-                .Select(contract => "NodeCraft.BuiltIn.Views." + contract.ViewType.Name + ".xaml")
-                .OrderBy(name => name, StringComparer.Ordinal)
-                .ToArray();
+            var expectedResourceNames = new[] { "NodeCraft.BuiltIn.g.resources" };
             var actualResourceNames = assembly.GetManifestResourceNames()
                 .OrderBy(name => name, StringComparer.Ordinal)
                 .ToArray();
@@ -138,8 +136,18 @@ internal static partial class Program
                 .Select(Path.GetFileName)
                 .OrderBy(name => name, StringComparer.Ordinal)
                 .ToArray();
+            var expectedBamlKeys = contracts
+                .Select(contract => "views/" + contract.ViewType.Name.ToLowerInvariant() + ".baml")
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
+            var actualBamlKeys = EnumerateResourceKeys(
+                    assembly,
+                    "NodeCraft.BuiltIn.g.resources")
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
 
             return actualResourceNames.SequenceEqual(expectedResourceNames, StringComparer.Ordinal)
+                && actualBamlKeys.SequenceEqual(expectedBamlKeys, StringComparer.Ordinal)
                 && actualXamlFiles.SequenceEqual(expectedXamlFiles, StringComparer.Ordinal)
                 && actualXamlFiles.All(name => File.Exists(
                     Path.Combine(viewsDirectory, name + ".cs")))
@@ -389,6 +397,22 @@ internal static partial class Program
             new Version(1, 0));
         plugin.Register(context);
         return context.Registrations;
+    }
+
+    private static IEnumerable<string> EnumerateResourceKeys(
+        Assembly assembly,
+        string resourceName)
+    {
+        using var stream = assembly.GetManifestResourceStream(resourceName);
+        if (stream == null)
+        {
+            return Array.Empty<string>();
+        }
+
+        using var reader = new System.Resources.ResourceReader(stream);
+        return reader.Cast<DictionaryEntry>()
+            .Select(entry => (string)entry.Key)
+            .ToArray();
     }
 
     private static bool RegistrationFactoriesMatch(

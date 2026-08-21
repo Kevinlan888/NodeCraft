@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Linq;
 using System.Threading;
 using System.Windows;
@@ -292,11 +293,10 @@ internal static partial class Program
                 && registration.ContentFactory != null;
         }));
 
-        Run("BuiltIn Value views keep labels styles and named editors in embedded XAML", () =>
+        Run("BuiltIn Value views keep labels styles and named editors in XAML", () =>
         {
             var projectPath = FindRepositoryFile("NodeCraft.BuiltIn", "NodeCraft.BuiltIn.csproj");
             var project = XDocument.Load(projectPath);
-            var resources = typeof(IntegerValueEditor).Assembly.GetManifestResourceNames();
             var views = new[]
             {
                 new BuiltInValueViewContract("IntegerValueEditor", "IntegerEditor", "Integer"),
@@ -323,13 +323,13 @@ internal static partial class Program
                     "NodeCraft.BuiltIn",
                     "Views",
                     view.ViewName + ".xaml.cs"));
-                return project.Descendants("Page").Any(item =>
+                return !project.Descendants("Page").Any(item =>
                         (string?)item.Attribute("Remove") == relativePath)
-                    && project.Descendants("EmbeddedResource").Any(item =>
+                    && !project.Descendants("EmbeddedResource").Any(item =>
                         (string?)item.Attribute("Include") == relativePath)
-                    && resources.Contains(
-                        "NodeCraft.BuiltIn.Views." + view.ViewName + ".xaml",
-                        StringComparer.Ordinal)
+                    && ViewCompilesToBaml(
+                        typeof(IntegerValueEditor).Assembly,
+                        view.ViewName)
                     && xaml.Contains("x:Name=\"" + view.EditorName + "\"", StringComparison.Ordinal)
                     && xaml.Contains("Text=\"" + view.Label + "\"", StringComparison.Ordinal)
                     && xaml.Contains("Margin=", StringComparison.Ordinal)

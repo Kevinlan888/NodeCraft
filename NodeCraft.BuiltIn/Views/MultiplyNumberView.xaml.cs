@@ -6,15 +6,12 @@ using NodeCraft.Flow;
 
 namespace NodeCraft.BuiltIn.Views
 {
-    internal sealed class MultiplyNumberView : UserControl
+    internal sealed partial class MultiplyNumberView : UserControl
     {
         private MultiplyNumberView(FlowCanvas canvas, MultiplyNumberNodeModel node)
         {
-            var root = BuiltInXamlViewLoader.LoadAndAttach(this, nameof(MultiplyNumberView));
-            var inputAValue = BuiltInXamlViewLoader.RequireElement<TextBlock>(root, nameof(MultiplyNumberView), "InputAValue");
-            var inputBValue = BuiltInXamlViewLoader.RequireElement<TextBlock>(root, nameof(MultiplyNumberView), "InputBValue");
-            var swapInputsButton = BuiltInXamlViewLoader.RequireElement<Button>(root, nameof(MultiplyNumberView), "SwapInputsButton");
-            BuiltInInputViewSupport.BindBinary(canvas, node, inputAValue, inputBValue, swapInputsButton);
+            InitializeComponent();
+            BuiltInInputViewSupport.BindBinary(canvas, node, InputAValue, InputBValue, SwapInputsButton);
         }
 
         internal static FrameworkElement CreateContent(FlowCanvas canvas, NodeModel node)

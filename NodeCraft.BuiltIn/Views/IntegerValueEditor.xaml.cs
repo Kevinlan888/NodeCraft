@@ -7,7 +7,7 @@ using NodeCraft.Flow;
 
 namespace NodeCraft.BuiltIn.Views
 {
-    internal sealed class IntegerValueEditor : UserControl
+    internal sealed partial class IntegerValueEditor : UserControl
     {
         private readonly FlowCanvas _canvas;
         private readonly IntegerValueNodeModel _node;
@@ -18,11 +18,8 @@ namespace NodeCraft.BuiltIn.Views
         {
             _canvas = canvas ?? throw new ArgumentNullException(nameof(canvas));
             _node = node ?? throw new ArgumentNullException(nameof(node));
-            var root = BuiltInXamlViewLoader.LoadAndAttach(this, nameof(IntegerValueEditor));
-            _integerEditor = BuiltInXamlViewLoader.RequireElement<TextBox>(
-                root,
-                nameof(IntegerValueEditor),
-                "IntegerEditor");
+            InitializeComponent();
+            _integerEditor = IntegerEditor;
             _integerEditor.TextChanged += IntegerEditor_TextChanged;
             _integerEditor.Text = _node.IntegerValue.ToString(CultureInfo.InvariantCulture);
             _initializing = false;

@@ -6,17 +6,17 @@ using NodeCraft.Flow;
 
 namespace NodeCraft.BuiltIn.Views
 {
-    internal sealed class EqualView : UserControl
+    internal sealed partial class EqualView : UserControl
     {
         private EqualView(FlowCanvas canvas, EqualNodeModel node)
         {
-            var root = BuiltInXamlViewLoader.LoadAndAttach(this, nameof(EqualView));
+            InitializeComponent();
             BuiltInInputViewSupport.BindBinary(
                 canvas,
                 node,
-                BuiltInXamlViewLoader.RequireElement<TextBlock>(root, nameof(EqualView), "InputAValue"),
-                BuiltInXamlViewLoader.RequireElement<TextBlock>(root, nameof(EqualView), "InputBValue"),
-                BuiltInXamlViewLoader.RequireElement<Button>(root, nameof(EqualView), "SwapInputsButton"));
+                InputAValue,
+                InputBValue,
+                SwapInputsButton);
         }
 
         internal static FrameworkElement CreateContent(FlowCanvas canvas, NodeModel node)

@@ -6,7 +6,7 @@ using NodeCraft.Flow;
 
 namespace NodeCraft.BuiltIn.Views
 {
-    internal sealed class AppendTextEditor : UserControl
+    internal sealed partial class AppendTextEditor : UserControl
     {
         private readonly FlowCanvas _canvas;
         private readonly AppendTextNodeModel _node;
@@ -17,11 +17,8 @@ namespace NodeCraft.BuiltIn.Views
         {
             _canvas = canvas ?? throw new ArgumentNullException(nameof(canvas));
             _node = node ?? throw new ArgumentNullException(nameof(node));
-            var root = BuiltInXamlViewLoader.LoadAndAttach(this, nameof(AppendTextEditor));
-            _suffixEditor = BuiltInXamlViewLoader.RequireElement<TextBox>(
-                root,
-                nameof(AppendTextEditor),
-                "SuffixEditor");
+            InitializeComponent();
+            _suffixEditor = SuffixEditor;
             _suffixEditor.TextChanged += SuffixEditor_TextChanged;
             _suffixEditor.Text = _node.SuffixText ?? string.Empty;
             _initializing = false;

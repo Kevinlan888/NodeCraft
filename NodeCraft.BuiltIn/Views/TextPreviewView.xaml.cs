@@ -6,7 +6,7 @@ using NodeCraft.Flow;
 
 namespace NodeCraft.BuiltIn.Views
 {
-    internal sealed class TextPreviewView : UserControl
+    internal sealed partial class TextPreviewView : UserControl
     {
         private const string PlaceholderText = "等待执行后显示文本结果";
 
@@ -17,12 +17,8 @@ namespace NodeCraft.BuiltIn.Views
                 throw new ArgumentNullException(nameof(node));
             }
 
-            var root = BuiltInXamlViewLoader.LoadAndAttach(this, nameof(TextPreviewView));
-            var previewText = BuiltInXamlViewLoader.RequireElement<TextBlock>(
-                root,
-                nameof(TextPreviewView),
-                "PreviewText");
-            previewText.Text = string.IsNullOrEmpty(node.LastPreviewText)
+            InitializeComponent();
+            PreviewText.Text = string.IsNullOrEmpty(node.LastPreviewText)
                 ? PlaceholderText
                 : node.LastPreviewText;
         }

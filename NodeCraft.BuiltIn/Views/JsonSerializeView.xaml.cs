@@ -6,7 +6,7 @@ using NodeCraft.Flow;
 
 namespace NodeCraft.BuiltIn.Views
 {
-    internal sealed class JsonSerializeView : UserControl
+    internal sealed partial class JsonSerializeView : UserControl
     {
         private JsonSerializeView(FlowCanvas canvas, JsonSerializeNodeModel node)
         {
@@ -20,12 +20,8 @@ namespace NodeCraft.BuiltIn.Views
                 throw new ArgumentNullException(nameof(node));
             }
 
-            var root = BuiltInXamlViewLoader.LoadAndAttach(this, nameof(JsonSerializeView));
-            var inputValue = BuiltInXamlViewLoader.RequireElement<TextBlock>(
-                root,
-                nameof(JsonSerializeView),
-                "InputValue");
-            inputValue.Text = BuiltInInputViewSupport.DescribeUnaryInput(canvas, node);
+            InitializeComponent();
+            InputValue.Text = BuiltInInputViewSupport.DescribeUnaryInput(canvas, node);
         }
 
         internal static FrameworkElement CreateContent(FlowCanvas canvas, NodeModel node)

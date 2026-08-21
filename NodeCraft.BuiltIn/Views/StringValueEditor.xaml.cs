@@ -6,7 +6,7 @@ using NodeCraft.Flow;
 
 namespace NodeCraft.BuiltIn.Views
 {
-    internal sealed class StringValueEditor : UserControl
+    internal sealed partial class StringValueEditor : UserControl
     {
         private readonly FlowCanvas _canvas;
         private readonly StringValueNodeModel _node;
@@ -17,11 +17,8 @@ namespace NodeCraft.BuiltIn.Views
         {
             _canvas = canvas ?? throw new ArgumentNullException(nameof(canvas));
             _node = node ?? throw new ArgumentNullException(nameof(node));
-            var root = BuiltInXamlViewLoader.LoadAndAttach(this, nameof(StringValueEditor));
-            _valueEditor = BuiltInXamlViewLoader.RequireElement<TextBox>(
-                root,
-                nameof(StringValueEditor),
-                "ValueEditor");
+            InitializeComponent();
+            _valueEditor = ValueEditor;
             _valueEditor.TextChanged += ValueEditor_TextChanged;
             _valueEditor.Text = _node.ValueText ?? string.Empty;
             _initializing = false;

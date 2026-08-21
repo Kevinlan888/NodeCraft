@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -48,8 +49,9 @@ internal static partial class Program
                 && (string?)properties?.Element("RootNamespace") == "NodeCraft.BuiltIn"
                 && (string?)projectReference.Attribute("Include") == @"..\NodeCraft.Flow\NodeCraft.Flow.csproj"
                 && (string?)projectReference.Attribute("Private") == "false"
-                && xamlPaths.All(path => projectText.Contains($"<Page Remove=\"{path}\" />", StringComparison.Ordinal)
-                    && projectText.Contains($"<EmbeddedResource Include=\"{path}\" />", StringComparison.Ordinal))
+                && xamlPaths.All(path => !projectText.Contains($"<Page Remove=\"{path}\" />", StringComparison.Ordinal)
+                    && !projectText.Contains($"<EmbeddedResource Include=\"{path}\" />", StringComparison.Ordinal))
+                && PreviewViewsCompileToBaml(xamlPaths)
                 && root.GetProperty("id").GetString() == "nodecraft.builtin"
                 && root.GetProperty("entryAssembly").GetString() == "NodeCraft.BuiltIn.dll"
                 && root.GetProperty("entryType").GetString() == "NodeCraft.BuiltIn.Plugin.BuiltInPlugin"
@@ -371,4 +373,32 @@ internal static partial class Program
         string DisplayName,
         FlowDataType DataType,
         bool IsRequired);
+
+    private static bool PreviewViewsCompileToBaml(string[] xamlPaths)
+    {
+        var assembly = typeof(NodeCraft.BuiltIn.Plugin.BuiltInPlugin).Assembly;
+        using var stream = assembly.GetManifestResourceStream(
+            "NodeCraft.BuiltIn.g.resources");
+        if (stream == null)
+        {
+            return false;
+        }
+
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        using (var reader = new System.Resources.ResourceReader(stream))
+        {
+            foreach (var entry in reader.Cast<System.Collections.DictionaryEntry>())
+            {
+                keys.Add((string)entry.Key);
+            }
+        }
+
+        return xamlPaths.All(path =>
+        {
+            var viewName = System.IO.Path.GetFileNameWithoutExtension(path);
+            return keys.Contains(
+                "views/" + viewName.ToLowerInvariant() + ".baml",
+                StringComparer.Ordinal);
+        });
+    }
 }

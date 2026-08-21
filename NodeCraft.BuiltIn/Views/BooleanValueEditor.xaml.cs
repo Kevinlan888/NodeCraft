@@ -6,7 +6,7 @@ using NodeCraft.Flow;
 
 namespace NodeCraft.BuiltIn.Views
 {
-    internal sealed class BooleanValueEditor : UserControl
+    internal sealed partial class BooleanValueEditor : UserControl
     {
         private readonly FlowCanvas _canvas;
         private readonly BooleanValueNodeModel _node;
@@ -17,11 +17,8 @@ namespace NodeCraft.BuiltIn.Views
         {
             _canvas = canvas ?? throw new ArgumentNullException(nameof(canvas));
             _node = node ?? throw new ArgumentNullException(nameof(node));
-            var root = BuiltInXamlViewLoader.LoadAndAttach(this, nameof(BooleanValueEditor));
-            _booleanEditor = BuiltInXamlViewLoader.RequireElement<CheckBox>(
-                root,
-                nameof(BooleanValueEditor),
-                "BooleanEditor");
+            InitializeComponent();
+            _booleanEditor = BooleanEditor;
             _booleanEditor.Checked += BooleanEditor_Changed;
             _booleanEditor.Unchecked += BooleanEditor_Changed;
             _booleanEditor.IsChecked = _node.BooleanValue;

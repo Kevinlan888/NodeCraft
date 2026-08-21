@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -503,11 +504,10 @@ internal static partial class Program
                 && changes == 0;
         }));
 
-        Run("BuiltIn Math views own formulas descriptions controls spacing and theme in embedded XAML", () =>
+        Run("BuiltIn Math views own formulas descriptions controls spacing and theme in XAML", () =>
         {
             var projectPath = FindRepositoryFile("NodeCraft.BuiltIn", "NodeCraft.BuiltIn.csproj");
             var project = XDocument.Load(projectPath);
-            var resources = typeof(AddNumberView).Assembly.GetManifestResourceNames();
             var views = new[]
             {
                 new BuiltInMathViewContract("AddNumberView", "A + B", "输出两个数字输入的和"),
@@ -532,13 +532,13 @@ internal static partial class Program
                     "NodeCraft.BuiltIn", "Views", view.ViewName + ".xaml"));
                 var codeBehind = File.ReadAllText(FindRepositoryFile(
                     "NodeCraft.BuiltIn", "Views", view.ViewName + ".xaml.cs"));
-                return project.Descendants("Page").Any(item =>
+                return !project.Descendants("Page").Any(item =>
                         (string?)item.Attribute("Remove") == relativePath)
-                    && project.Descendants("EmbeddedResource").Any(item =>
+                    && !project.Descendants("EmbeddedResource").Any(item =>
                         (string?)item.Attribute("Include") == relativePath)
-                    && resources.Contains(
-                        "NodeCraft.BuiltIn.Views." + view.ViewName + ".xaml",
-                        StringComparer.Ordinal)
+                    && ViewCompilesToBaml(
+                        typeof(AddNumberView).Assembly,
+                        view.ViewName)
                     && xaml.Contains("Text=\"" + view.Formula + "\"", StringComparison.Ordinal)
                     && xaml.Contains("Text=\"" + view.Description + "\"", StringComparison.Ordinal)
                     && xaml.Contains("x:Name=\"InputAValue\"", StringComparison.Ordinal)
