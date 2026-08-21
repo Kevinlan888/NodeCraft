@@ -8,18 +8,23 @@
             Background="{DynamicResource colorSubtleBackground}"
             BorderBrush="{DynamicResource colorNeutralStroke1}"
             BorderThickness="1">
-        <StackPanel>
-            <TextBlock Text="Preview"
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Text="Preview"
                        FontWeight="SemiBold"
                        Foreground="{DynamicResource colorNeutralForeground1}"
                        Margin="0,0,0,4" />
-            <TextBlock Text="显示任意输入的文本结果"
+                    <TextBlock Text="显示任意输入的文本结果"
                        Foreground="{DynamicResource colorNeutralForeground3}"
                        Margin="0,0,0,6" />
-            <TextBlock x:Name="PreviewText"
-                       Text="等待执行后显示文本结果"
-                       TextWrapping="Wrap"
-                       Foreground="{DynamicResource colorNeutralForeground2}" />
-        </StackPanel>
+                </StackPanel>
+                <TextBox x:Name="PreviewText"
+                   Text="等待执行后显示文本结果"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource colorNeutralForeground2}"
+                   IsReadOnly="True" VerticalContentAlignment="Stretch"/>
+            </DockPanel>
+        </ScrollViewer>
     </Border>
 </UserControl>
