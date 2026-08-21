@@ -1,4 +1,6 @@
-<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<UserControl x:Class="NodeCraft.Vision.Views.VirtualCameraEditor"
+             x:ClassModifier="internal"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              MinWidth="220">
     <Border Padding="8"

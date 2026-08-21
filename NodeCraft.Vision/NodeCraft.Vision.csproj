@@ -13,14 +13,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\NodeCraft.Flow\NodeCraft.Flow.csproj" Private="false" />
-    <Page Remove="Views\VisionCameraEditor.xaml" />
-    <Page Remove="Views\StereoCameraEditor.xaml" />
-    <Page Remove="Views\FlowImagePreviewView.xaml" />
-    <Page Remove="Views\VirtualCameraEditor.xaml" />
-    <EmbeddedResource Include="Views\VisionCameraEditor.xaml" />
-    <EmbeddedResource Include="Views\StereoCameraEditor.xaml" />
-    <EmbeddedResource Include="Views\FlowImagePreviewView.xaml" />
-    <EmbeddedResource Include="Views\VirtualCameraEditor.xaml" />
     <None Include="Build\VisionRuntimeFiles.txt" />
     <None Include="Build\StereoCameraRuntimeFiles.txt" />
     <None Include="Build\VisionPackaging.targets" />

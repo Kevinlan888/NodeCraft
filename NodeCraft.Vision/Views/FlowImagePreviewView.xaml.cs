@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -9,7 +8,7 @@ using NodeCraft.Vision.Preview;
 
 namespace NodeCraft.Vision.Views
 {
-    public sealed class FlowImagePreviewView : UserControl
+    public sealed partial class FlowImagePreviewView : UserControl
     {
         private readonly FlowImagePreviewNodeModel _node;
         private readonly LatestPreviewRenderQueue _renderQueue;
@@ -21,16 +20,10 @@ namespace NodeCraft.Vision.Views
         private FlowImagePreviewView(FlowImagePreviewNodeModel node)
         {
             _node = node ?? throw new ArgumentNullException(nameof(node));
-            var root = LoadViewRoot();
-            var parsedContent = root.Content;
-            root.Content = null;
-            Content = parsedContent;
-            _previewImage = root.FindName("PreviewImage") as Image
-                ?? throw new InvalidOperationException("FlowImagePreviewView is missing PreviewImage.");
-            _frameText = root.FindName("FrameText") as TextBlock
-                ?? throw new InvalidOperationException("FlowImagePreviewView is missing FrameText.");
-            _statusText = root.FindName("StatusText") as TextBlock
-                ?? throw new InvalidOperationException("FlowImagePreviewView is missing StatusText.");
+            InitializeComponent();
+            _previewImage = PreviewImage;
+            _frameText = FrameText;
+            _statusText = StatusText;
             _renderQueue = new LatestPreviewRenderQueue(
                 FlowImageBitmapConverter.Convert,
                 ApplyRenderResultAsync);
@@ -42,21 +35,6 @@ namespace NodeCraft.Vision.Views
             {
                 _renderQueue.Submit(_node.CurrentImage);
             }
-        }
-
-        private static UserControl LoadViewRoot()
-        {
-            var assembly = typeof(FlowImagePreviewView).Assembly;
-            using var stream = assembly.GetManifestResourceStream(
-                "NodeCraft.Vision.Views.FlowImagePreviewView.xaml");
-            if (stream == null)
-            {
-                throw new InvalidOperationException("FlowImagePreviewView.xaml was not embedded into the plugin assembly.");
-            }
-
-            using var reader = new StreamReader(stream);
-            return System.Windows.Markup.XamlReader.Parse(reader.ReadToEnd()) as UserControl
-                ?? throw new InvalidOperationException("FlowImagePreviewView.xaml did not produce a UserControl root.");
         }
 
         internal static FrameworkElement CreateContent(FlowCanvas canvas, NodeModel node)
