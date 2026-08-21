@@ -1,23 +1,182 @@
 <Project>
-  <Target Name="StageBuiltInPlugin" DependsOnTargets="Build">
-    <PropertyGroup>
-      <BuiltInPackageRoot Condition="'$(BuiltInPackageRoot)' == ''">$(TargetDir)Plugins\NodeCraft.BuiltIn</BuiltInPackageRoot>
-      <_BuiltInPackageRootFullPath Condition="'$(BuiltInPackageRoot)' != ''">$([System.IO.Path]::GetFullPath('$(BuiltInPackageRoot)'))</_BuiltInPackageRootFullPath>
-      <_BuiltInPackageRootPathRoot Condition="'$(_BuiltInPackageRootFullPath)' != ''">$([System.IO.Path]::GetPathRoot('$(_BuiltInPackageRootFullPath)'))</_BuiltInPackageRootPathRoot>
-    </PropertyGroup>
+  <UsingTask TaskName="ValidateBuiltInPackageRootTask"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <PackageRoot ParameterType="System.String" />
+      <DefaultPackageRoot ParameterType="System.String" />
+      <ProjectDirectory ParameterType="System.String" Required="true" />
+      <TargetDirectory ParameterType="System.String" />
+      <OutputPath ParameterType="System.String" />
+      <CanonicalPackageRoot ParameterType="System.String" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var input = string.IsNullOrEmpty(PackageRoot)
+            ? DefaultPackageRoot
+            : PackageRoot;
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            Log.LogError("Built-in plugin package root is required.");
+            return false;
+        }
 
-    <Error Condition="'$(BuiltInPackageRoot)' == ''"
-           Text="Built-in plugin package root is required." />
-    <Error Condition="'$(_BuiltInPackageRootFullPath)' == '$(_BuiltInPackageRootPathRoot)'"
-           Text="Built-in plugin package root must not be a file-system root." />
+        if (input.IndexOf(';') >= 0 || input.IndexOf('\'') >= 0)
+        {
+            Log.LogError("Built-in plugin package root must not contain semicolons or apostrophes.");
+            return false;
+        }
+
+        Func<char, bool> isDirectorySeparator = value =>
+            value == Path.DirectorySeparatorChar
+            || value == Path.AltDirectorySeparatorChar;
+        Func<string, bool> isFullyQualified = path =>
+            !string.IsNullOrEmpty(path)
+            && ((path.Length >= 2
+                    && isDirectorySeparator(path[0])
+                    && isDirectorySeparator(path[1]))
+                || (path.Length >= 3
+                    && char.IsLetter(path[0])
+                    && path[1] == Path.VolumeSeparatorChar
+                    && isDirectorySeparator(path[2])));
+        Func<string, string> trimEndingDirectorySeparators = path =>
+        {
+            var pathRoot = Path.GetPathRoot(path) ?? string.Empty;
+            var length = path.Length;
+            while (length > pathRoot.Length && isDirectorySeparator(path[length - 1]))
+            {
+                length--;
+            }
+
+            return path.Substring(0, length);
+        };
+
+        if (!isFullyQualified(input))
+        {
+            Log.LogError("Built-in plugin package root must be a fully-qualified path.");
+            return false;
+        }
+
+        var segments = input.Split(
+            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+            StringSplitOptions.None);
+        foreach (var segment in segments)
+        {
+            if (string.Equals(segment, ".", StringComparison.Ordinal)
+                || string.Equals(segment, "..", StringComparison.Ordinal))
+            {
+                Log.LogError("Built-in plugin package root must not contain traversal segments.");
+                return false;
+            }
+        }
+
+        string canonicalPackageRoot;
+        try
+        {
+            canonicalPackageRoot = trimEndingDirectorySeparators(Path.GetFullPath(input));
+        }
+        catch (Exception exception)
+        {
+            Log.LogError("Built-in plugin package root is invalid: " + exception.Message);
+            return false;
+        }
+
+        var fileSystemRoot = Path.GetPathRoot(canonicalPackageRoot);
+        if (!string.IsNullOrEmpty(fileSystemRoot)
+            && string.Equals(
+                canonicalPackageRoot,
+                trimEndingDirectorySeparators(fileSystemRoot),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            Log.LogError("Built-in plugin package root must not be a file-system root.");
+            return false;
+        }
+
+        Func<string, string> canonicalizeDirectory = path =>
+        {
+            var rootedPath = isFullyQualified(path)
+                ? path
+                : Path.Combine(ProjectDirectory, path);
+            return trimEndingDirectorySeparators(Path.GetFullPath(rootedPath));
+        };
+        Func<string, string, bool> isSameOrAncestor = (candidate, descendant) =>
+            string.Equals(candidate, descendant, StringComparison.OrdinalIgnoreCase)
+            || descendant.StartsWith(
+                candidate + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase);
+
+        string canonicalProjectDirectory;
+        try
+        {
+            canonicalProjectDirectory = canonicalizeDirectory(ProjectDirectory);
+        }
+        catch (Exception exception)
+        {
+            Log.LogError("Built-in plugin project directory is invalid: " + exception.Message);
+            return false;
+        }
+
+        if (isSameOrAncestor(canonicalPackageRoot, canonicalProjectDirectory))
+        {
+            Log.LogError("Built-in plugin package root must not be the project directory or one of its ancestors.");
+            return false;
+        }
+
+        foreach (var outputDirectory in new[] { TargetDirectory, OutputPath })
+        {
+            if (string.IsNullOrWhiteSpace(outputDirectory))
+            {
+                continue;
+            }
+
+            string canonicalOutputDirectory;
+            try
+            {
+                canonicalOutputDirectory = canonicalizeDirectory(outputDirectory);
+            }
+            catch (Exception exception)
+            {
+                Log.LogError("Built-in plugin output directory is invalid: " + exception.Message);
+                return false;
+            }
+
+            if (isSameOrAncestor(canonicalPackageRoot, canonicalOutputDirectory))
+            {
+                Log.LogError("Built-in plugin package root must not be an output directory or one of its ancestors.");
+                return false;
+            }
+        }
+
+        CanonicalPackageRoot = canonicalPackageRoot;
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="ValidateBuiltInPackageRoot" BeforeTargets="StageBuiltInPlugin">
+    <ValidateBuiltInPackageRootTask PackageRoot="$(BuiltInPackageRoot)"
+                                    DefaultPackageRoot="$(TargetDir)Plugins\NodeCraft.BuiltIn"
+                                    ProjectDirectory="$(MSBuildProjectDirectory)"
+                                    TargetDirectory="$(TargetDir)"
+                                    OutputPath="$(OutputPath)">
+      <Output TaskParameter="CanonicalPackageRoot"
+              PropertyName="_BuiltInPackageRootCanonical" />
+    </ValidateBuiltInPackageRootTask>
+    <PropertyGroup>
+      <_BuiltInPackageRootEscaped>$([MSBuild]::Escape($(_BuiltInPackageRootCanonical)))</_BuiltInPackageRootEscaped>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="StageBuiltInPlugin" DependsOnTargets="Build">
     <Error Condition="!Exists('$(TargetPath)')"
            Text="Built-in plugin assembly was not built." />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\plugin.json')"
            Text="Built-in plugin manifest is missing." />
 
-    <RemoveDir Directories="$(BuiltInPackageRoot)" />
-    <MakeDir Directories="$(BuiltInPackageRoot)" />
+    <RemoveDir Directories="$(_BuiltInPackageRootEscaped)" />
+    <MakeDir Directories="$(_BuiltInPackageRootEscaped)" />
     <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)\plugin.json"
-          DestinationFolder="$(BuiltInPackageRoot)" />
+          DestinationFolder="$(_BuiltInPackageRootEscaped)" />
   </Target>
 </Project>

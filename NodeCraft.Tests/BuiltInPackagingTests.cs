@@ -35,10 +35,27 @@ internal static partial class Program
                     (string?)element.Attribute("Name"),
                     "StageBuiltInPlugin",
                     StringComparison.Ordinal));
-            var packageRootProperty = targetDocument
-                .Descendants("BuiltInPackageRoot")
+            var validationTarget = targetDocument.Descendants("Target").SingleOrDefault(element =>
+                string.Equals(
+                    (string?)element.Attribute("Name"),
+                    "ValidateBuiltInPackageRoot",
+                    StringComparison.Ordinal));
+            var validator = validationTarget?.Elements()
+                .SingleOrDefault(element =>
+                    string.Equals(
+                        element.Name.LocalName,
+                        "ValidateBuiltInPackageRootTask",
+                        StringComparison.Ordinal));
+            var canonicalOutput = validator?.Elements("Output").SingleOrDefault(element =>
+                string.Equals(
+                    (string?)element.Attribute("PropertyName"),
+                    "_BuiltInPackageRootCanonical",
+                    StringComparison.Ordinal));
+            var escapedProperty = validationTarget?
+                .Descendants("_BuiltInPackageRootEscaped")
                 .SingleOrDefault();
             var removeDirectory = target?.Elements("RemoveDir").SingleOrDefault();
+            var makeDirectory = target?.Elements("MakeDir").SingleOrDefault();
             var copy = target?.Elements("Copy").SingleOrDefault();
             var errors = target?.Elements("Error").ToArray() ?? Array.Empty<XElement>();
 
@@ -48,20 +65,32 @@ internal static partial class Program
                     (string?)target.Attribute("DependsOnTargets"),
                     "Build",
                     StringComparison.Ordinal)
-                && packageRootProperty != null
+                && validationTarget != null
                 && string.Equals(
-                    NormalizeCondition((string?)packageRootProperty.Attribute("Condition")),
-                    "'$(BuiltInPackageRoot)'==''",
+                    (string?)validationTarget.Attribute("BeforeTargets"),
+                    "StageBuiltInPlugin",
+                    StringComparison.Ordinal)
+                && !validationTarget.Descendants("RemoveDir").Any()
+                && !validationTarget.Descendants("MakeDir").Any()
+                && !validationTarget.Descendants("Copy").Any()
+                && validator != null
+                && canonicalOutput != null
+                && escapedProperty != null
+                && string.Equals(
+                    escapedProperty.Value,
+                    "$([MSBuild]::Escape($(_BuiltInPackageRootCanonical)))",
                     StringComparison.Ordinal)
                 && errors.Any(element =>
                     ((string?)element.Attribute("Condition"))?.Contains("$(TargetPath)", StringComparison.Ordinal) == true)
                 && errors.Any(element =>
                     ((string?)element.Attribute("Condition"))?.Contains("plugin.json", StringComparison.Ordinal) == true)
-                && errors.Any(element =>
-                    ((string?)element.Attribute("Text"))?.Contains("root", StringComparison.OrdinalIgnoreCase) == true)
                 && string.Equals(
                     (string?)removeDirectory?.Attribute("Directories"),
-                    "$(BuiltInPackageRoot)",
+                    "$(_BuiltInPackageRootEscaped)",
+                    StringComparison.Ordinal)
+                && string.Equals(
+                    (string?)makeDirectory?.Attribute("Directories"),
+                    "$(_BuiltInPackageRootEscaped)",
                     StringComparison.Ordinal)
                 && string.Equals(
                     (string?)copy?.Attribute("SourceFiles"),
@@ -69,7 +98,7 @@ internal static partial class Program
                     StringComparison.Ordinal)
                 && string.Equals(
                     (string?)copy?.Attribute("DestinationFolder"),
-                    "$(BuiltInPackageRoot)",
+                    "$(_BuiltInPackageRootEscaped)",
                     StringComparison.Ordinal);
         });
 
@@ -89,6 +118,12 @@ internal static partial class Program
                     StringComparison.Ordinal));
             var msbuild = target?.Elements("MSBuild").SingleOrDefault();
             var properties = (string?)msbuild?.Attribute("Properties") ?? string.Empty;
+            var rawPackageRoot = target?
+                .Descendants("_BuiltInHostPackageRoot")
+                .SingleOrDefault();
+            var escapedPackageRoot = target?
+                .Descendants("_BuiltInHostPackageRootEscaped")
+                .SingleOrDefault();
             var hostSourceRoot = Path.GetDirectoryName(projectPath)
                 ?? throw new InvalidOperationException("Host project directory was not found.");
             var hostSources = Directory
@@ -120,12 +155,97 @@ internal static partial class Program
                     StringComparison.OrdinalIgnoreCase) == true
                 && properties.Contains("Configuration=$(Configuration)", StringComparison.Ordinal)
                 && properties.Contains("TargetFramework=$(TargetFramework)", StringComparison.Ordinal)
-                && properties.Contains(
-                    "BuiltInPackageRoot=$(TargetDir)Plugins\\NodeCraft.BuiltIn",
+                && rawPackageRoot != null
+                && string.Equals(
+                    rawPackageRoot.Value,
+                    "$(TargetDir)Plugins\\NodeCraft.BuiltIn",
                     StringComparison.Ordinal)
+                && escapedPackageRoot != null
+                && string.Equals(
+                    escapedPackageRoot.Value,
+                    "$([MSBuild]::Escape($(_BuiltInHostPackageRoot)))",
+                    StringComparison.Ordinal)
+                && properties.Contains(
+                    "BuiltInPackageRoot=$(_BuiltInHostPackageRootEscaped)",
+                    StringComparison.Ordinal)
+                && !properties.Contains("BuiltInPackageRoot=$(TargetDir)", StringComparison.Ordinal)
                 && hostSources.All(source =>
                     !source.Contains("using NodeCraft.BuiltIn", StringComparison.Ordinal)
                     && !source.Contains("BuiltInPlugin.Register", StringComparison.Ordinal));
+        });
+
+        await RunAsync("BuiltIn validation rejects unsafe roots without filesystem mutation", async () =>
+        {
+            using var root = new TemporaryDirectory("nodecraft-builtin-root-validation-");
+            var sentinelPath = Path.Combine(root.Path, "sentinel.txt");
+            File.WriteAllText(sentinelPath, "keep");
+            var projectPath = FindRepositoryFile(
+                "NodeCraft.BuiltIn",
+                "NodeCraft.BuiltIn.csproj");
+            var projectDirectory = Path.GetDirectoryName(projectPath)
+                ?? throw new InvalidOperationException("BuiltIn project directory was not found.");
+            var repositoryRoot = FindRepositoryRoot();
+            var fileSystemRoot = Path.GetPathRoot(root.Path)
+                ?? throw new InvalidOperationException("Temporary directory root was not found.");
+            var driveRelativeRoot = fileSystemRoot.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            var outputDirectory = Path.Combine(root.Path, "output");
+            var cases = new[]
+            {
+                new PackageRootValidationCase("file-system root", fileSystemRoot),
+                new PackageRootValidationCase("current directory", "."),
+                new PackageRootValidationCase(
+                    "repository ancestor traversal",
+                    Path.Combine(projectDirectory, "..")),
+                new PackageRootValidationCase("project directory", projectDirectory),
+                new PackageRootValidationCase("drive-relative root", driveRelativeRoot),
+                new PackageRootValidationCase(
+                    "output directory",
+                    outputDirectory,
+                    outputDirectory),
+                new PackageRootValidationCase(
+                    "semicolon",
+                    Path.Combine(root.Path, "package;injected")),
+                new PackageRootValidationCase(
+                    "apostrophe",
+                    Path.Combine(root.Path, "package's")),
+            };
+
+            foreach (var testCase in cases)
+            {
+                var arguments = new List<string>
+                {
+                    "msbuild",
+                    projectPath,
+                    "-t:ValidateBuiltInPackageRoot",
+                    "-p:Configuration=Release",
+                    "-p:TargetFramework=net8.0-windows",
+                    "-p:BuiltInPackageRoot=" + EscapeMsBuildCommandLineProperty(testCase.PackageRoot),
+                };
+                if (testCase.OutputPath != null)
+                {
+                    arguments.Add(
+                        "-p:OutputPath="
+                        + EscapeMsBuildCommandLineProperty(testCase.OutputPath));
+                }
+
+                var result = await RunDotNetAsync(arguments.ToArray()).ConfigureAwait(false);
+                var output = result.StandardOutput + Environment.NewLine + result.StandardError;
+                if (result.ExitCode == 0
+                    || !output.Contains("Built-in plugin package root", StringComparison.OrdinalIgnoreCase)
+                    || !File.Exists(sentinelPath)
+                    || !string.Equals(File.ReadAllText(sentinelPath), "keep", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "Unsafe root case '" + testCase.Name + "' was not rejected safely. " + output);
+                }
+            }
+
+            return Directory
+                .EnumerateFileSystemEntries(root.Path)
+                .Select(Path.GetFileName)
+                .SequenceEqual(new[] { "sentinel.txt" }, StringComparer.OrdinalIgnoreCase);
         });
 
         await RunAsync("BuiltIn explicit staging creates only the minimal package and preserves siblings", async () =>
@@ -339,11 +459,6 @@ internal static partial class Program
         }
     }
 
-    private static string NormalizeCondition(string? value)
-    {
-        return (value ?? string.Empty).Replace(" ", string.Empty);
-    }
-
     private static bool IsExactBuiltInPackage(string packageRoot)
     {
         if (!Directory.Exists(packageRoot))
@@ -404,6 +519,13 @@ internal static partial class Program
         }
     }
 
+    private static string EscapeMsBuildCommandLineProperty(string value)
+    {
+        return value
+            .Replace("%", "%25", StringComparison.Ordinal)
+            .Replace(";", "%3B", StringComparison.Ordinal);
+    }
+
     private static async Task<ProcessResult> RunDotNetAsync(params string[] arguments)
     {
         var startInfo = new ProcessStartInfo
@@ -457,5 +579,24 @@ internal static partial class Program
         public string StandardOutput { get; }
 
         public string StandardError { get; }
+    }
+
+    private sealed class PackageRootValidationCase
+    {
+        public PackageRootValidationCase(
+            string name,
+            string packageRoot,
+            string? outputPath = null)
+        {
+            Name = name;
+            PackageRoot = packageRoot;
+            OutputPath = outputPath;
+        }
+
+        public string Name { get; }
+
+        public string PackageRoot { get; }
+
+        public string? OutputPath { get; }
     }
 }

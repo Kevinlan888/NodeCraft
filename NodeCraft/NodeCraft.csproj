@@ -33,8 +33,12 @@
   </ItemGroup>
 
   <Target Name="StageBuiltInPluginForHost" AfterTargets="Build">
+    <PropertyGroup>
+      <_BuiltInHostPackageRoot>$(TargetDir)Plugins\NodeCraft.BuiltIn</_BuiltInHostPackageRoot>
+      <_BuiltInHostPackageRootEscaped>$([MSBuild]::Escape($(_BuiltInHostPackageRoot)))</_BuiltInHostPackageRootEscaped>
+    </PropertyGroup>
     <MSBuild Projects="$(MSBuildProjectDirectory)\..\NodeCraft.BuiltIn\NodeCraft.BuiltIn.csproj"
              Targets="StageBuiltInPlugin"
-             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);BuiltInPackageRoot=$(TargetDir)Plugins\NodeCraft.BuiltIn" />
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);BuiltInPackageRoot=$(_BuiltInHostPackageRootEscaped)" />
   </Target>
 </Project>
