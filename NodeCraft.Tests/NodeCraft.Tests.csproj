@@ -20,4 +20,7 @@
     <AssemblyMetadata Include="BuildConfiguration" Value="$(Configuration)" />
     <AssemblyMetadata Include="BuildTargetFramework" Value="$(TargetFramework)" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" PrivateAssets="all" />
+  </ItemGroup>
 </Project>

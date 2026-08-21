@@ -78,15 +78,19 @@ namespace NodeCraft.Cli.Tests
                     var input = "\n\n\n" + FindFlowProjectPath() + "\n\n";
                     var exitCode = RunNew("new MyPlugin", input, root, out _);
                     var projectDirectory = Path.Combine(root, "MyPlugin");
-                    var generatedCSharp = string.Join(
-                        "\n",
-                        Directory.EnumerateFiles(projectDirectory, "*.cs", SearchOption.AllDirectories)
-                            .Select(File.ReadAllText));
+                    var generatedCSharp = Directory
+                        .EnumerateFiles(projectDirectory, "*.cs", SearchOption.AllDirectories)
+                        .Select(path => new CSharpSourceFile(
+                            Path.GetRelativePath(projectDirectory, path),
+                            File.ReadAllText(path)))
+                        .ToArray();
 
                     return exitCode == 0
-                        && generatedCSharp.Split("internal static class NodePortIds").Length - 1 == 1
-                        && !generatedCSharp.Contains("using NodeCraft.Flow.Nodes;", StringComparison.Ordinal)
-                        && !generatedCSharp.Contains("BuiltInNodePorts", StringComparison.Ordinal);
+                        && PluginPortOwnershipSyntax.ValidateGeneratedSources(
+                            generatedCSharp,
+                            Path.Combine("Plugin", "MyPlugin.cs"),
+                            Path.Combine("Nodes", "MyPluginNodeModel.cs"),
+                            Path.Combine("Nodes", "MyPluginNodeExecutor.cs"));
                 }
                 finally
                 {

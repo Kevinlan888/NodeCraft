@@ -9,6 +9,9 @@ using System.Threading.Tasks;
 using System.Xml.Linq;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using NLog;
 using NLog.Config;
 using NLog.Extensions.Logging;
@@ -29,6 +32,7 @@ internal static partial class Program
     private static readonly HashSet<string> PluginPortOwnershipTestNames = new HashSet<string>(StringComparer.Ordinal)
     {
         "sample plugin C# sources own their port identifiers",
+        "sample source policy ignores trivia and strings but rejects semantic legacy imports",
         "sample plugin package output contains the manifest, entry assembly, and only a private lib copy",
         "plugin palette exposes a stable type key for drag creation",
         "sample plugin loads successfully, renders custom content, and executes through its private formatter",
@@ -2248,12 +2252,52 @@ internal static partial class Program
             var sources = Directory
                 .EnumerateFiles(projectDirectory!, "*.cs", SearchOption.AllDirectories)
                 .Where(path => !IsBuildOutputPath(path))
-                .Select(File.ReadAllText)
+                .Select(path => (Path: path, Text: File.ReadAllText(path)))
                 .ToArray();
 
             return sources.Length > 0
-                && sources.All(source => !source.Contains("using NodeCraft.Flow.Nodes;", StringComparison.Ordinal))
-                && sources.All(source => !source.Contains("BuiltInNodePorts", StringComparison.Ordinal));
+                && SampleSourcesAvoidLegacyPortDependencies(sources);
+        });
+        Run("sample source policy ignores trivia and strings but rejects semantic legacy imports", () =>
+        {
+            const string validTriviaAndString = @"
+namespace Decoy
+{
+    // using NodeCraft.Flow.Nodes;
+    internal sealed class Notes
+    {
+        internal const string Text = ""BuiltInNodePorts"";
+    }
+}";
+            const string semanticLegacyUsing = @"
+using NodeCraft.Flow . Nodes;
+namespace Decoy { internal sealed class Notes { } }
+";
+            const string globalAliasUsing = @"
+using global::NodeCraft.Flow.Nodes;
+namespace Decoy { internal sealed class Notes { } }
+";
+            const string escapedIdentifierUsing = @"
+using NodeCraft.Flow.@Nodes;
+namespace Decoy { internal sealed class Notes { } }
+";
+
+            return SampleSourcesAvoidLegacyPortDependencies(new[]
+                {
+                    (Path: "ValidTriviaAndString.cs", Text: validTriviaAndString),
+                })
+                && !SampleSourcesAvoidLegacyPortDependencies(new[]
+                {
+                    (Path: "SemanticLegacyUsing.cs", Text: semanticLegacyUsing),
+                })
+                && !SampleSourcesAvoidLegacyPortDependencies(new[]
+                {
+                    (Path: "GlobalAliasUsing.cs", Text: globalAliasUsing),
+                })
+                && !SampleSourcesAvoidLegacyPortDependencies(new[]
+                {
+                    (Path: "EscapedIdentifierUsing.cs", Text: escapedIdentifierUsing),
+                });
         });
         Run("sample plugin package output contains the manifest, entry assembly, and only a private lib copy", () =>
         {
@@ -4119,6 +4163,39 @@ internal static partial class Program
         }
 
         throw new FileNotFoundException($"Could not locate repository file: {string.Join(Path.DirectorySeparatorChar, pathSegments)}");
+    }
+
+    private static bool SampleSourcesAvoidLegacyPortDependencies(
+        IEnumerable<(string Path, string Text)> sources)
+    {
+        var roots = sources
+            .Select(source => CSharpSyntaxTree.ParseText(source.Text, path: source.Path))
+            .Select(tree => new { Tree = tree, Diagnostics = tree.GetDiagnostics().ToArray() })
+            .ToArray();
+        if (roots.Length == 0 || roots.Any(item => item.Diagnostics.Length != 0))
+        {
+            return false;
+        }
+
+        return roots
+            .Select(item => item.Tree.GetCompilationUnitRoot())
+            .All(root =>
+                !root.DescendantNodes().OfType<UsingDirectiveSyntax>().Any(usingDirective =>
+                    usingDirective.Name != null
+                    && IsLegacyFlowNodesName(usingDirective.Name))
+                && !root.DescendantNodes().OfType<IdentifierNameSyntax>().Any(identifier =>
+                    identifier.Identifier.ValueText == "BuiltInNodePorts"));
+    }
+
+    private static bool IsLegacyFlowNodesName(NameSyntax name)
+    {
+        var identifiers = name
+            .DescendantNodesAndSelf()
+            .OfType<IdentifierNameSyntax>()
+            .Select(identifier => identifier.Identifier.ValueText)
+            .Where(identifier => identifier != "global")
+            .ToArray();
+        return identifiers.SequenceEqual(new[] { "NodeCraft", "Flow", "Nodes" });
     }
 
     private static bool IsBuildOutputPath(string path)
