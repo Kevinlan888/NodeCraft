@@ -10,7 +10,7 @@ namespace NodeCraft.BuiltIn.Plugin
         public PluginMetadata Metadata { get; } = new PluginMetadata
         {
             Id = "nodecraft.builtin",
-            DisplayName = "Built-In Nodes",
+            DisplayName = "Built-in Nodes",
             Version = new Version(1, 0, 0),
         };
 

@@ -53,6 +53,12 @@ internal static partial class Program
 
     private static async Task<int> Main(string[] args)
     {
+        if (args.Contains("--built-in-contract-only", StringComparer.Ordinal))
+        {
+            await RunBuiltInPluginContractTestsAsync();
+            return _failures == 0 ? 0 : 1;
+        }
+
         if (args.Contains("--built-in-logic-only", StringComparer.Ordinal))
         {
             await RunBuiltInLogicNodeTestsAsync();
