@@ -494,7 +494,7 @@ internal static partial class Program
                 && string.Equals(File.ReadAllText(sentinelPath), "keep", StringComparison.Ordinal);
         });
 
-        Run("real PluginLoader loads and creates all 18 staged BuiltIn nodes", () =>
+        Run("real PluginLoader loads and creates all 25 staged BuiltIn nodes", () =>
         {
             var root = CreateTemporaryPluginDirectory("nodecraft-builtin-real-loader-");
             var passed = false;
@@ -568,7 +568,7 @@ internal static partial class Program
             if (report.Results.Count != 1
                 || report.Failures.Count != 0
                 || !report.Results[0].IsSuccess
-                || typeKeys.Length != 18)
+                || typeKeys.Length != 25)
             {
                 return false;
             }
@@ -616,8 +616,8 @@ internal static partial class Program
                     }
 
                     window.UpdateLayout();
-                    return loadedNodes.Count == 18
-                        && loadedContents.Count == 18;
+                    return loadedNodes.Count == 25
+                        && loadedContents.Count == 25;
                 }));
         }
         finally

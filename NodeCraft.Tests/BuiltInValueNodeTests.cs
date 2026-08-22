@@ -33,6 +33,8 @@ internal static partial class Program
                 "nodecraft.builtin.append-text",
                 "nodecraft.builtin.text-preview",
                 "nodecraft.builtin.json-serialize",
+                "nodecraft.builtin.to-string",
+                "nodecraft.builtin.string-concat",
                 "nodecraft.builtin.integer-value",
                 "nodecraft.builtin.float-value",
                 "nodecraft.builtin.boolean-value",
@@ -65,13 +67,13 @@ internal static partial class Program
                     FlowDataType.Boolean),
             };
 
-            return registrations.Length == 7
+            return registrations.Length == 9
                 && registrations.Select(item => item.Definition.TypeKey)
                     .SequenceEqual(expectedTypeKeys, StringComparer.Ordinal)
-                && registrations.Take(4).All(item => item.Definition.Category == "Preview")
-                && registrations.Skip(4).Select(item => item.Definition.TypeKey)
+                && registrations.Take(6).All(item => item.Definition.Category == "Preview")
+                && registrations.Skip(6).Select(item => item.Definition.TypeKey)
                     .SequenceEqual(expected.Select(item => item.TypeKey), StringComparer.Ordinal)
-                && registrations.Skip(4).Zip(expected, BuiltInValueRegistrationMatches).All(value => value);
+                && registrations.Skip(6).Zip(expected, BuiltInValueRegistrationMatches).All(value => value);
         });
 
         Run("BuiltIn Value models preserve defaults and plugin-local output contracts", () =>
@@ -105,7 +107,7 @@ internal static partial class Program
 
         Run("BuiltIn Value factories return fresh matching models executors and XAML views", () => RunOnSta(() =>
         {
-            var registrations = CreateBuiltInValueRegistry(out var registry).Skip(4).ToArray();
+            var registrations = CreateBuiltInValueRegistry(out var registry).Skip(6).ToArray();
             var expectedViews = new[]
             {
                 typeof(IntegerValueEditor),

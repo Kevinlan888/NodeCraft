@@ -34,6 +34,8 @@ internal static partial class Program
                 "nodecraft.builtin.append-text",
                 "nodecraft.builtin.text-preview",
                 "nodecraft.builtin.json-serialize",
+                "nodecraft.builtin.to-string",
+                "nodecraft.builtin.string-concat",
                 "nodecraft.builtin.integer-value",
                 "nodecraft.builtin.float-value",
                 "nodecraft.builtin.boolean-value",
@@ -51,7 +53,7 @@ internal static partial class Program
             };
 
             var math = registrations.Where(item => item.Definition.Category == "Math").ToArray();
-            return registrations.Length == 11
+            return registrations.Length == 13
                 && registrations.Select(item => item.Definition.TypeKey)
                     .SequenceEqual(expectedTypeKeys, StringComparer.Ordinal)
                 && math.Length == expectedMath.Length

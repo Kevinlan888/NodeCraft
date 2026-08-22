@@ -16,6 +16,8 @@ namespace NodeCraft.BuiltIn.Registrations
                 CreateAppendText(),
                 CreateTextPreview(),
                 CreateJsonSerialize(),
+                CreateToString(),
+                CreateStringConcat(),
             };
         }
 
@@ -125,6 +127,71 @@ namespace NodeCraft.BuiltIn.Registrations
             };
         }
 
+        private static FlowNodeRegistration CreateToString()
+        {
+            return new FlowNodeRegistration(
+                new FlowNodeDefinition
+                {
+                    TypeKey = ToStringNodeModel.FlowNodeTypeKey,
+                    DisplayName = "To String",
+                    Category = "Preview",
+                    InputPorts =
+                    {
+                        Input(BuiltInPortIds.Input, "Input", FlowDataType.Object),
+                    },
+                    OutputPorts =
+                    {
+                        Output(BuiltInPortIds.Output, "Output", FlowDataType.String),
+                    },
+                },
+                () => new ToStringExecutor())
+            {
+                NodeModelType = typeof(ToStringNodeModel),
+                NodeFactory = () => new ToStringNodeModel(),
+                PaletteDisplayName = "To String",
+                PaletteDescription = "将任意输入转换为字符串",
+                PaletteCategoryIconKind = "ViewDashboardOutline",
+                PaletteIconKind = "FormatText",
+                ContentFactory = ToStringView.CreateContent,
+            };
+        }
+
+        private static FlowNodeRegistration CreateStringConcat()
+        {
+            return new FlowNodeRegistration(
+                new FlowNodeDefinition
+                {
+                    TypeKey = StringConcatNodeModel.FlowNodeTypeKey,
+                    DisplayName = "String Concat",
+                    Category = "Preview",
+                    OutputPorts =
+                    {
+                        Output(BuiltInPortIds.Output, "Output", FlowDataType.String),
+                    },
+                    DynamicInputTemplate = new FlowDynamicInputTemplate
+                    {
+                        PortIdPrefix = "input",
+                        DisplayNamePrefix = "Input",
+                        DataType = FlowDataType.String,
+                        PreferredDirection = EPortDirection.Left,
+                        IsRequired = true,
+                        Availability = FlowPortAvailability.Iteration,
+                        MinCount = 2,
+                        InitialCount = 2,
+                        MaxCount = null,
+                    },
+                },
+                () => new StringConcatExecutor())
+            {
+                NodeModelType = typeof(StringConcatNodeModel),
+                NodeFactory = () => new StringConcatNodeModel(),
+                PaletteDisplayName = "String Concat",
+                PaletteDescription = "按顺序连接多个字符串",
+                PaletteCategoryIconKind = "ViewDashboardOutline",
+                PaletteIconKind = "ViewDashboardOutline",
+                ContentFactory = StringConcatEditor.CreateContent,
+            };
+        }
         private static FlowNodeRegistration CreateJsonSerialize()
         {
             return new FlowNodeRegistration(

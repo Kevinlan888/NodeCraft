@@ -18,7 +18,7 @@ internal static partial class Program
 {
     private static async Task RunBuiltInLogicNodeTestsAsync()
     {
-        Run("BuiltIn Logic completes the exact eighteen-node plugin order", () =>
+        Run("BuiltIn plugin order includes the exact 25 node registrations", () =>
         {
             var plugin = new BuiltInPlugin();
             var context = new PluginRegistrationContext(NullLogger.Instance, new Version(1, 0));
@@ -29,6 +29,8 @@ internal static partial class Program
                 "nodecraft.builtin.append-text",
                 "nodecraft.builtin.text-preview",
                 "nodecraft.builtin.json-serialize",
+                "nodecraft.builtin.to-string",
+                "nodecraft.builtin.string-concat",
                 "nodecraft.builtin.integer-value",
                 "nodecraft.builtin.float-value",
                 "nodecraft.builtin.boolean-value",
@@ -43,14 +45,19 @@ internal static partial class Program
                 "nodecraft.builtin.boolean-or",
                 "nodecraft.builtin.boolean-not",
                 "nodecraft.builtin.if",
+                "nodecraft.builtin.not-equal",
+                "nodecraft.builtin.greater-than-or-equal",
+                "nodecraft.builtin.less-than-or-equal",
+                "nodecraft.builtin.select",
+                "nodecraft.builtin.merge-flow",
             };
 
-            return context.Registrations.Count == 18
+            return context.Registrations.Count == 25
                 && context.Registrations.Select(item => item.Definition.TypeKey)
                     .SequenceEqual(expectedTypeKeys, StringComparer.Ordinal);
         });
 
-        Run("BuiltIn Logic registrations preserve seven exact definitions and presentation contracts", () =>
+        Run("BuiltIn Logic registrations preserve twelve exact definitions and presentation contracts", () =>
         {
             var registrations = CreateBuiltInLogicRegistry(out _);
             var expected = new[]
@@ -66,6 +73,11 @@ internal static partial class Program
                     new LogicPortContract("true", "True", FlowDataType.Control, false),
                     new LogicPortContract("false", "False", FlowDataType.Control, false),
                 }),
+                new LogicContract("nodecraft.builtin.not-equal", "!=", "A != B", typeof(NotEqualNodeModel), typeof(NotEqualExecutor), new[] { FlowDataType.Object, FlowDataType.Object }, new[] { new LogicPortContract("output", "Result", FlowDataType.Boolean, false) }),
+                new LogicContract("nodecraft.builtin.greater-than-or-equal", ">=", "A >= B", typeof(GreaterThanOrEqualNodeModel), typeof(GreaterThanOrEqualExecutor), new[] { FlowDataType.Number, FlowDataType.Number }, new[] { new LogicPortContract("output", "Result", FlowDataType.Boolean, false) }),
+                new LogicContract("nodecraft.builtin.less-than-or-equal", "<=", "A <= B", typeof(LessThanOrEqualNodeModel), typeof(LessThanOrEqualExecutor), new[] { FlowDataType.Number, FlowDataType.Number }, new[] { new LogicPortContract("output", "Result", FlowDataType.Boolean, false) }),
+                new LogicContract("nodecraft.builtin.select", "Select", "condition ? trueValue : falseValue", typeof(SelectNodeModel), typeof(SelectExecutor), new[] { FlowDataType.Boolean, FlowDataType.Object, FlowDataType.Object }, new[] { new LogicPortContract("output", "Result", FlowDataType.Object, false) }),
+                new LogicContract("nodecraft.builtin.merge-flow", "Merge Flow", "merge active control branches", typeof(MergeFlowNodeModel), typeof(MergeFlowExecutor), Array.Empty<FlowDataType>(), new[] { new LogicPortContract("flowOut", "Flow Out", FlowDataType.Control, false) }),
             };
 
             return registrations.Length == expected.Length
@@ -83,6 +95,11 @@ internal static partial class Program
                 new BooleanOrNodeModel(),
                 new BooleanNotNodeModel(),
                 new IfNodeModel(),
+                new NotEqualNodeModel(),
+                new GreaterThanOrEqualNodeModel(),
+                new LessThanOrEqualNodeModel(),
+                new SelectNodeModel(),
+                new MergeFlowNodeModel(),
             };
             var expected = new[]
             {
@@ -93,6 +110,11 @@ internal static partial class Program
                 ("nodecraft.builtin.boolean-or", "Boolean Or", new[] { "inputA", "inputB" }, new[] { "output" }),
                 ("nodecraft.builtin.boolean-not", "Boolean Not", new[] { "input" }, new[] { "output" }),
                 ("nodecraft.builtin.if", "If", new[] { "condition" }, new[] { "true", "false" }),
+                ("nodecraft.builtin.not-equal", "!=", new[] { "inputA", "inputB" }, new[] { "output" }),
+                ("nodecraft.builtin.greater-than-or-equal", ">=", new[] { "inputA", "inputB" }, new[] { "output" }),
+                ("nodecraft.builtin.less-than-or-equal", "<=", new[] { "inputA", "inputB" }, new[] { "output" }),
+                ("nodecraft.builtin.select", "Select", new[] { "condition", "trueValue", "falseValue" }, new[] { "output" }),
+                ("nodecraft.builtin.merge-flow", "Merge Flow", Array.Empty<string>(), new[] { "flowOut" }),
             };
 
             return models.Zip(expected, (model, contract) =>
@@ -117,6 +139,11 @@ internal static partial class Program
                 typeof(BooleanOrView),
                 typeof(BooleanNotView),
                 typeof(IfView),
+                typeof(NotEqualView),
+                typeof(GreaterThanOrEqualView),
+                typeof(LessThanOrEqualView),
+                typeof(SelectView),
+                typeof(MergeFlowView),
             };
 
             return registrations.Zip(expectedViews, (registration, viewType) =>
@@ -265,7 +292,7 @@ internal static partial class Program
             });
         }));
 
-        Run("BuiltIn Logic views are seven independent BAML-compiled XAML resources with complete policy", () =>
+        Run("BuiltIn Logic views are twelve independent BAML-compiled XAML resources with complete policy", () =>
         {
             var project = XDocument.Load(FindRepositoryFile("NodeCraft.BuiltIn", "NodeCraft.BuiltIn.csproj"));
             var assembly = typeof(GreaterThanView).Assembly;
@@ -278,7 +305,7 @@ internal static partial class Program
                 new LogicViewContract("BooleanOrView", "A || B", "当 A 或 B 任一为 true 时输出 true"),
             };
             var allViews = binary.Select(item => item.ViewName)
-                .Concat(new[] { "BooleanNotView", "IfView" })
+                .Concat(new[] { "BooleanNotView", "IfView", "NotEqualView", "GreaterThanOrEqualView", "LessThanOrEqualView", "SelectView", "MergeFlowView" })
                 .ToArray();
             var forbidden = new[]
             {
@@ -411,6 +438,21 @@ internal static partial class Program
         var dataInputs = registration.Definition.InputPorts
             .Where(port => !port.IsControlPort)
             .ToArray();
+        var expectedInputIds = expected.TypeKey.EndsWith(".select", StringComparison.Ordinal)
+            ? new[] { "condition", "trueValue", "falseValue" }
+            : expected.InputTypes.Length == 0
+                ? Array.Empty<string>()
+                : expected.InputTypes.Length == 1
+                    ? new[] { expected.TypeKey.EndsWith(".if", StringComparison.Ordinal) ? "condition" : "input" }
+                    : new[] { "inputA", "inputB" };
+        var expectedInputDisplayNames = expected.TypeKey.EndsWith(".select", StringComparison.Ordinal)
+            ? new[] { "Condition", "True Value", "False Value" }
+            : expected.InputTypes.Length == 0
+                ? Array.Empty<string>()
+                : expected.InputTypes.Length == 1
+                    ? new[] { expected.TypeKey.EndsWith(".if", StringComparison.Ordinal) ? "Condition" : "Input" }
+                    : new[] { "A", "B" };
+
         return registration.Definition.TypeKey == expected.TypeKey
             && registration.Definition.DisplayName == expected.DisplayName
             && registration.Definition.Category == "Logic"
@@ -424,16 +466,8 @@ internal static partial class Program
             && registration.ExecutorFactory().GetType() == expected.ExecutorType
             && registration.ContentFactory != null
             && dataInputs.Length == expected.InputTypes.Length
-            && dataInputs.Select(input => input.Id).SequenceEqual(
-                expected.InputTypes.Length == 1
-                    ? new[] { expected.TypeKey.EndsWith(".if", StringComparison.Ordinal) ? "condition" : "input" }
-                    : new[] { "inputA", "inputB" },
-                StringComparer.Ordinal)
-            && dataInputs.Select(input => input.DisplayName).SequenceEqual(
-                expected.InputTypes.Length == 1
-                    ? new[] { expected.TypeKey.EndsWith(".if", StringComparison.Ordinal) ? "Condition" : "Input" }
-                    : new[] { "A", "B" },
-                StringComparer.Ordinal)
+            && dataInputs.Select(input => input.Id).SequenceEqual(expectedInputIds, StringComparer.Ordinal)
+            && dataInputs.Select(input => input.DisplayName).SequenceEqual(expectedInputDisplayNames, StringComparer.Ordinal)
             && dataInputs.Select(input => input.DataType).SequenceEqual(expected.InputTypes)
             && dataInputs.All(input => input.IOType == EIOType.Input
                 && input.PreferredDirection == EPortDirection.Left

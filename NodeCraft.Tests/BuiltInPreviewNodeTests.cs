@@ -32,6 +32,8 @@ internal static partial class Program
                 @"Views\AppendTextEditor.xaml",
                 @"Views\TextPreviewView.xaml",
                 @"Views\JsonSerializeView.xaml",
+                @"Views\ToStringView.xaml",
+                @"Views\StringConcatEditor.xaml",
             };
 
             using var manifest = JsonDocument.Parse(File.ReadAllText(
@@ -60,7 +62,7 @@ internal static partial class Program
                 && solution.Contains("{C8F6B4D1-1F73-4D7C-A58E-9B2E6F307A41}", StringComparison.Ordinal);
         });
 
-        Run("BuiltIn plugin stages exactly four Preview node contracts", () =>
+        Run("BuiltIn plugin stages exactly six Preview node contracts", () =>
         {
             var plugin = new BuiltInPlugin();
             var context = new PluginRegistrationContext(NullLogger.Instance, new Version(1, 0));
@@ -74,6 +76,8 @@ internal static partial class Program
                 new PreviewContract("nodecraft.builtin.append-text", "Append Text", "给字符串追加后缀", "ViewDashboardOutline", typeof(AppendTextNodeModel), typeof(AppendTextExecutor), new[] { new PortContract("input", "Input", FlowDataType.String, true) }, new[] { new PortContract("output", "Output", FlowDataType.String, false) }),
                 new PreviewContract("nodecraft.builtin.text-preview", "Text Preview", "显示任意输入的文本结果", "EyeOutline", typeof(TextPreviewNodeModel), typeof(TextPreviewExecutor), new[] { new PortContract("input", "Input", FlowDataType.Object, true) }, new[] { new PortContract("output", "Output", FlowDataType.Object, false) }),
                 new PreviewContract("nodecraft.builtin.json-serialize", "JSON Serialize", "将任意输入格式化为多行 JSON", "ViewDashboardOutline", typeof(JsonSerializeNodeModel), typeof(JsonSerializeExecutor), new[] { new PortContract("input", "Input", FlowDataType.Object, true) }, new[] { new PortContract("output", "JSON", FlowDataType.String, false) }),
+                new PreviewContract("nodecraft.builtin.to-string", "To String", "将任意输入转换为字符串", "FormatText", typeof(ToStringNodeModel), typeof(ToStringExecutor), new[] { new PortContract("input", "Input", FlowDataType.Object, true) }, new[] { new PortContract("output", "Output", FlowDataType.String, false) }),
+                new PreviewContract("nodecraft.builtin.string-concat", "String Concat", "按顺序连接多个字符串", "ViewDashboardOutline", typeof(StringConcatNodeModel), typeof(StringConcatExecutor), Array.Empty<PortContract>(), new[] { new PortContract("output", "Output", FlowDataType.String, false) }),
             };
 
             return plugin.Metadata.Id == "nodecraft.builtin"
@@ -153,6 +157,8 @@ internal static partial class Program
                 typeof(AppendTextEditor),
                 typeof(TextPreviewView),
                 typeof(JsonSerializeView),
+                typeof(ToStringView),
+                typeof(StringConcatEditor),
             };
 
             return registrations.Zip(expectedViewTypes, (registration, viewType) =>
@@ -264,7 +270,7 @@ internal static partial class Program
             var linkedTexts = FindLogicalDescendants<TextBlock>(linkedView).Select(item => item.Text).ToArray();
             var unlinkedTexts = FindLogicalDescendants<TextBlock>(unlinkedView).Select(item => item.Text).ToArray();
 
-            return registrations.Count == 4
+            return registrations.Count == 6
                 && linkedTexts.Contains("Prompt · Value", StringComparer.Ordinal)
                 && unlinkedTexts.Contains("未连接", StringComparer.Ordinal);
         }));
@@ -290,6 +296,8 @@ internal static partial class Program
                 new[] { "AppendTextEditor", "SuffixEditor" },
                 new[] { "TextPreviewView", "PreviewText" },
                 new[] { "JsonSerializeView", "InputValue" },
+                new[] { "ToStringView", "Input" },
+                new[] { "StringConcatEditor", "SeparatorEditor" },
             };
             var forbidden = new[] { "new StackPanel", "new TextBlock", "new TextBox", "new Button", "new Border" };
             return views.All(view =>

@@ -9,7 +9,11 @@ namespace NodeCraft.BuiltIn.Nodes
         internal const string Value = "value";
         internal const string Suffix = "suffix";
         internal const string Condition = "condition";
+        internal const string TrueValue = "trueValue";
+        internal const string FalseValue = "falseValue";
         internal const string True = "true";
         internal const string False = "false";
+        internal const string FlowOut = "flowOut";
+        internal const string Separator = "separator";
     }
 }

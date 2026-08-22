@@ -125,12 +125,25 @@ internal static partial class Program
             return _failures == 0 ? 0 : 1;
         }
 
+        if (args.Contains("--built-in-preview-only", StringComparer.Ordinal))
+        {
+            await RunBuiltInPreviewNodeTestsAsync();
+            return _failures == 0 ? 0 : 1;
+        }
+
+        if (args.Contains("--built-in-first-batch-only", StringComparer.Ordinal))
+        {
+            await RunFirstBatchFlowNodeTestsAsync();
+            return _failures == 0 ? 0 : 1;
+        }
+
         RunFlowCoreSeparationTests();
         RunFlowNodeRegistryPresentationTests();
         await RunBuiltInPreviewNodeTestsAsync();
         RunBuiltInValueNodeTests();
         await RunBuiltInMathNodeTestsAsync();
         await RunBuiltInLogicNodeTestsAsync();
+        await RunFirstBatchFlowNodeTestsAsync();
         RegisterBuiltInPluginForTests();
         RunVisualContractTests();
         RunAlgorithmPluginTests();

@@ -20,6 +20,11 @@ namespace NodeCraft.BuiltIn.Registrations
                 CreateBinary(BooleanOrNodeModel.FlowNodeTypeKey, "Boolean Or", "A || B", FlowDataType.Boolean, typeof(BooleanOrNodeModel), () => new BooleanOrNodeModel(), () => new BooleanOrExecutor(), BooleanOrView.CreateContent),
                 CreateBooleanNot(),
                 CreateIf(),
+                CreateBinary(NotEqualNodeModel.FlowNodeTypeKey, "!=", "A != B", FlowDataType.Object, typeof(NotEqualNodeModel), () => new NotEqualNodeModel(), () => new NotEqualExecutor(), NotEqualView.CreateContent),
+                CreateBinary(GreaterThanOrEqualNodeModel.FlowNodeTypeKey, ">=", "A >= B", FlowDataType.Number, typeof(GreaterThanOrEqualNodeModel), () => new GreaterThanOrEqualNodeModel(), () => new GreaterThanOrEqualExecutor(), GreaterThanOrEqualView.CreateContent),
+                CreateBinary(LessThanOrEqualNodeModel.FlowNodeTypeKey, "<=", "A <= B", FlowDataType.Number, typeof(LessThanOrEqualNodeModel), () => new LessThanOrEqualNodeModel(), () => new LessThanOrEqualExecutor(), LessThanOrEqualView.CreateContent),
+                CreateSelect(),
+                CreateMergeFlow(),
             };
         }
 
@@ -105,6 +110,63 @@ namespace NodeCraft.BuiltIn.Registrations
                 IfView.CreateContent);
         }
 
+        private static FlowNodeRegistration CreateSelect()
+        {
+            return CreateRegistration(
+                new FlowNodeDefinition
+                {
+                    TypeKey = SelectNodeModel.FlowNodeTypeKey,
+                    DisplayName = "Select",
+                    Category = "Logic",
+                    InputPorts =
+                    {
+                        Input(BuiltInPortIds.Condition, "Condition", FlowDataType.Boolean),
+                        Input(BuiltInPortIds.TrueValue, "True Value", FlowDataType.Object),
+                        Input(BuiltInPortIds.FalseValue, "False Value", FlowDataType.Object),
+                    },
+                    OutputPorts =
+                    {
+                        Output(BuiltInPortIds.Output, "Result", FlowDataType.Object),
+                    },
+                },
+                "condition ? trueValue : falseValue",
+                typeof(SelectNodeModel),
+                () => new SelectNodeModel(),
+                () => new SelectExecutor(),
+                SelectView.CreateContent);
+        }
+
+        private static FlowNodeRegistration CreateMergeFlow()
+        {
+            return CreateRegistration(
+                new FlowNodeDefinition
+                {
+                    TypeKey = MergeFlowNodeModel.FlowNodeTypeKey,
+                    DisplayName = "Merge Flow",
+                    Category = "Logic",
+                    OutputPorts =
+                    {
+                        Output(BuiltInPortIds.FlowOut, "Flow Out", FlowDataType.Control),
+                    },
+                    DynamicInputTemplate = new FlowDynamicInputTemplate
+                    {
+                        PortIdPrefix = "branch",
+                        DisplayNamePrefix = "Branch",
+                        DataType = FlowDataType.Control,
+                        PreferredDirection = EPortDirection.Left,
+                        IsRequired = false,
+                        Availability = FlowPortAvailability.Iteration,
+                        MinCount = 2,
+                        InitialCount = 2,
+                        MaxCount = null,
+                    },
+                },
+                "merge active control branches",
+                typeof(MergeFlowNodeModel),
+                () => new MergeFlowNodeModel(),
+                () => new MergeFlowExecutor(),
+                MergeFlowView.CreateContent);
+        }
         private static FlowNodeRegistration CreateRegistration(
             FlowNodeDefinition definition,
             string description,

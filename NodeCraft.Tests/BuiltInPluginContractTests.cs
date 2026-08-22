@@ -22,7 +22,7 @@ internal static partial class Program
 {
     private static async Task RunBuiltInPluginContractTestsAsync()
     {
-        Run("BuiltIn plugin stages the exact 18 node registrations", () =>
+        Run("BuiltIn plugin stages the exact 25 node registrations", () =>
         {
             var expectedTypeKeys = new[]
             {
@@ -30,6 +30,8 @@ internal static partial class Program
                 "nodecraft.builtin.append-text",
                 "nodecraft.builtin.text-preview",
                 "nodecraft.builtin.json-serialize",
+                "nodecraft.builtin.to-string",
+                "nodecraft.builtin.string-concat",
                 "nodecraft.builtin.integer-value",
                 "nodecraft.builtin.float-value",
                 "nodecraft.builtin.boolean-value",
@@ -44,6 +46,11 @@ internal static partial class Program
                 "nodecraft.builtin.boolean-or",
                 "nodecraft.builtin.boolean-not",
                 "nodecraft.builtin.if",
+                "nodecraft.builtin.not-equal",
+                "nodecraft.builtin.greater-than-or-equal",
+                "nodecraft.builtin.less-than-or-equal",
+                "nodecraft.builtin.select",
+                "nodecraft.builtin.merge-flow",
             };
             var contracts = CreateBuiltInContracts();
             var registrations = StageBuiltInPlugin(out var plugin);
@@ -61,9 +68,9 @@ internal static partial class Program
             return plugin.Metadata.Id == "nodecraft.builtin"
                 && plugin.Metadata.DisplayName == "Built-in Nodes"
                 && plugin.Metadata.Version.Equals(new Version(1, 0, 0))
-                && registrations.Count == 18
+                && registrations.Count == 25
                 && actualTypeKeys.SequenceEqual(expectedTypeKeys, StringComparer.Ordinal)
-                && actualTypeKeys.Distinct(StringComparer.OrdinalIgnoreCase).Count() == 18
+                && actualTypeKeys.Distinct(StringComparer.OrdinalIgnoreCase).Count() == 25
                 && actualTypeKeys.All(key => key.StartsWith("nodecraft.builtin.", StringComparison.Ordinal))
                 && legacyTypeKeys.All(key => !actualTypeKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
                 && registrations.Zip(contracts, RegistrationFactoriesMatch).All(value => value);
@@ -184,7 +191,7 @@ internal static partial class Program
                     }
 
                     window.UpdateLayout();
-                    return views.Count == 36 && ReferencesAreUnique(views);
+                    return views.Count == 50 && ReferencesAreUnique(views);
                 });
         }));
 
@@ -323,6 +330,8 @@ internal static partial class Program
             Contract("nodecraft.builtin.append-text", "Append Text", "Preview", "ViewDashboardOutline", "ViewDashboardOutline", typeof(AppendTextNodeModel), typeof(AppendTextExecutor), typeof(AppendTextEditor), new[] { Port("input", "Input", FlowDataType.String, true) }, new[] { Port("output", "Output", FlowDataType.String, false) }),
             Contract("nodecraft.builtin.text-preview", "Text Preview", "Preview", "ViewDashboardOutline", "EyeOutline", typeof(TextPreviewNodeModel), typeof(TextPreviewExecutor), typeof(TextPreviewView), new[] { Port("input", "Input", FlowDataType.Object, true) }, new[] { Port("output", "Output", FlowDataType.Object, false) }),
             Contract("nodecraft.builtin.json-serialize", "JSON Serialize", "Preview", "ViewDashboardOutline", "ViewDashboardOutline", typeof(JsonSerializeNodeModel), typeof(JsonSerializeExecutor), typeof(JsonSerializeView), new[] { Port("input", "Input", FlowDataType.Object, true) }, new[] { Port("output", "JSON", FlowDataType.String, false) }),
+            Contract("nodecraft.builtin.to-string", "To String", "Preview", "ViewDashboardOutline", "FormatText", typeof(ToStringNodeModel), typeof(ToStringExecutor), typeof(ToStringView), new[] { Port("input", "Input", FlowDataType.Object, true) }, new[] { Port("output", "Output", FlowDataType.String, false) }),
+            Contract("nodecraft.builtin.string-concat", "String Concat", "Preview", "ViewDashboardOutline", "ViewDashboardOutline", typeof(StringConcatNodeModel), typeof(StringConcatExecutor), typeof(StringConcatEditor), Array.Empty<BuiltInPortContract>(), new[] { Port("output", "Output", FlowDataType.String, false) }),
             Contract("nodecraft.builtin.integer-value", "Integer Value", "Value", "FormatListNumbered", "Numeric", typeof(IntegerValueNodeModel), typeof(IntegerValueExecutor), typeof(IntegerValueEditor), Array.Empty<BuiltInPortContract>(), new[] { Port("output", "Value", FlowDataType.Number, false) }),
             Contract("nodecraft.builtin.float-value", "Float Value", "Value", "FormatListNumbered", "Numeric", typeof(FloatValueNodeModel), typeof(FloatValueExecutor), typeof(FloatValueEditor), Array.Empty<BuiltInPortContract>(), new[] { Port("output", "Value", FlowDataType.Number, false) }),
             Contract("nodecraft.builtin.boolean-value", "Boolean Value", "Value", "FormatListNumbered", "ToggleSwitchOutline", typeof(BooleanValueNodeModel), typeof(BooleanValueExecutor), typeof(BooleanValueEditor), Array.Empty<BuiltInPortContract>(), new[] { Port("output", "Value", FlowDataType.Boolean, false) }),
@@ -337,6 +346,11 @@ internal static partial class Program
             Contract("nodecraft.builtin.boolean-or", "Boolean Or", "Logic", "SourceBranch", "SourceBranch", typeof(BooleanOrNodeModel), typeof(BooleanOrExecutor), typeof(BooleanOrView), BinaryInputs(FlowDataType.Boolean), new[] { Port("output", "Result", FlowDataType.Boolean, false) }),
             Contract("nodecraft.builtin.boolean-not", "Boolean Not", "Logic", "SourceBranch", "SourceBranch", typeof(BooleanNotNodeModel), typeof(BooleanNotExecutor), typeof(BooleanNotView), new[] { Port("input", "Input", FlowDataType.Boolean, true) }, new[] { Port("output", "Result", FlowDataType.Boolean, false) }),
             Contract("nodecraft.builtin.if", "If", "Logic", "SourceBranch", "SourceBranch", typeof(IfNodeModel), typeof(IfExecutor), typeof(IfView), new[] { Port("condition", "Condition", FlowDataType.Boolean, true) }, new[] { Port("true", "True", FlowDataType.Control, false), Port("false", "False", FlowDataType.Control, false) }),
+            Contract("nodecraft.builtin.not-equal", "!=", "Logic", "SourceBranch", "SourceBranch", typeof(NotEqualNodeModel), typeof(NotEqualExecutor), typeof(NotEqualView), BinaryInputs(FlowDataType.Object), new[] { Port("output", "Result", FlowDataType.Boolean, false) }),
+            Contract("nodecraft.builtin.greater-than-or-equal", ">=", "Logic", "SourceBranch", "SourceBranch", typeof(GreaterThanOrEqualNodeModel), typeof(GreaterThanOrEqualExecutor), typeof(GreaterThanOrEqualView), BinaryInputs(FlowDataType.Number), new[] { Port("output", "Result", FlowDataType.Boolean, false) }),
+            Contract("nodecraft.builtin.less-than-or-equal", "<=", "Logic", "SourceBranch", "SourceBranch", typeof(LessThanOrEqualNodeModel), typeof(LessThanOrEqualExecutor), typeof(LessThanOrEqualView), BinaryInputs(FlowDataType.Number), new[] { Port("output", "Result", FlowDataType.Boolean, false) }),
+            Contract("nodecraft.builtin.select", "Select", "Logic", "SourceBranch", "SourceBranch", typeof(SelectNodeModel), typeof(SelectExecutor), typeof(SelectView), new[] { Port("condition", "Condition", FlowDataType.Boolean, true), Port("trueValue", "True Value", FlowDataType.Object, true), Port("falseValue", "False Value", FlowDataType.Object, true) }, new[] { Port("output", "Result", FlowDataType.Object, false) }),
+            Contract("nodecraft.builtin.merge-flow", "Merge Flow", "Logic", "SourceBranch", "SourceBranch", typeof(MergeFlowNodeModel), typeof(MergeFlowExecutor), typeof(MergeFlowView), Array.Empty<BuiltInPortContract>(), new[] { Port("flowOut", "Flow Out", FlowDataType.Control, false) }),
         };
     }
 
