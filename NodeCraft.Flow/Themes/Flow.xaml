@@ -258,7 +258,7 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type flow:FlowNodePalette}">
-                    <Border Padding="4"
+                    <Border Padding="6"
                             CornerRadius="{DynamicResource cornerRadiusXLarge}"
                             Background="{DynamicResource colorNeutralBackground1}"
                             BorderBrush="{DynamicResource colorNeutralStroke1}"
